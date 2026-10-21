@@ -3,6 +3,7 @@
 pub mod controls;
 pub mod diagnosis;
 pub mod error;
+pub mod events;
 pub mod fsx;
 pub mod hostcpu;
 pub mod launch;
