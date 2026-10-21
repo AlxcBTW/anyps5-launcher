@@ -37,14 +37,24 @@ impl eframe::App for App {
     }
 }
 
+/// Use Vulkan and DX12 only. wgpu's OpenGL probe crashes some AMD OpenGL drivers
+/// (access violation in atio6axx.dll during ChoosePixelFormat), and the game needs neither.
+fn restrict_backends(options: &mut eframe::NativeOptions) {
+    use eframe::egui_wgpu::{WgpuSetup, wgpu::Backends};
+    if let WgpuSetup::CreateNew(create_new) = &mut options.wgpu_options.wgpu_setup {
+        create_new.instance_descriptor.backends = Backends::VULKAN | Backends::DX12;
+    }
+}
+
 fn main() -> eframe::Result {
     tracing_subscriber::fmt().init();
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("AnyPS5")
             .with_inner_size([1280.0, 720.0])
             .with_min_inner_size([960.0, 540.0]),
         ..Default::default()
     };
+    restrict_backends(&mut options);
     eframe::run_native("AnyPS5", options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
 }
