@@ -1,0 +1,1548 @@
+# AnyPS5 Launcher: UI design specification
+
+Source of truth for the UI of the Windows port. It specifies the macOS launcher of
+[utkuhalis/AnyPS5-ARM](https://github.com/utkuhalis/AnyPS5-ARM) (GPL-2.0, commit `cb20fd80c9f7a044c62d51da3cdd0475100b5554`,
+`tools/macos/launcher/Sources/AnyPS5`) so that it can be rebuilt pixel-close without reading the Swift source.
+
+**Target of this port: native Rust, eframe/egui on wgpu** (workspace pins `eframe`/`egui`/`egui-wgpu` 0.37, `gilrs`, `rodio`, `notify`).
+Everything below is expressed for that target: sRGB colour values, spring solvers, cubic-bezier easings, WGSL shader math,
+GPU blur recipes and bundleable free fonts. The original SwiftUI values are always quoted next to the port values so that
+nothing is lost in translation.
+
+Conventions used in this document:
+
+- **dp** = "design pixel". The original lays everything out for a **1600 x 900** window and multiplies every length by one
+  global `scale` (section 1.1). All lengths below are dp at `scale = 1` unless stated otherwise.
+- Colours are written `white 0.12` = sRGB white with alpha 0.12, or hex with alpha. Alpha is straight (not premultiplied).
+- "Original" = the Swift source. File names without a path refer to `tools/macos/launcher/Sources/AnyPS5/`.
+- Things that could not be verified without running the macOS app (it was not run) are marked **(estimate)**.
+
+Screenshot references point at the ARM repository at the pinned commit (permalinks, nothing is copied into this repository;
+the screenshots show third-party game artwork that is not ours to redistribute). Base URL:
+`https://github.com/utkuhalis/AnyPS5-ARM/blob/cb20fd80c9f7a044c62d51da3cdd0475100b5554/docs/screenshots/`
+
+| Short name | File |
+|---|---|
+| S-home | [launcher-home.jpg](https://github.com/utkuhalis/AnyPS5-ARM/blob/cb20fd80c9f7a044c62d51da3cdd0475100b5554/docs/screenshots/launcher-home.jpg) |
+| S-home-trophies | [launcher-home-trophies.jpg](https://github.com/utkuhalis/AnyPS5-ARM/blob/cb20fd80c9f7a044c62d51da3cdd0475100b5554/docs/screenshots/launcher-home-trophies.jpg) |
+| S-unlocking | [launcher-unlocking.jpg](https://github.com/utkuhalis/AnyPS5-ARM/blob/cb20fd80c9f7a044c62d51da3cdd0475100b5554/docs/screenshots/launcher-unlocking.jpg) |
+| S-starting | [launcher-starting.jpg](https://github.com/utkuhalis/AnyPS5-ARM/blob/cb20fd80c9f7a044c62d51da3cdd0475100b5554/docs/screenshots/launcher-starting.jpg) |
+| S-game-settings | [launcher-game-settings.jpg](https://github.com/utkuhalis/AnyPS5-ARM/blob/cb20fd80c9f7a044c62d51da3cdd0475100b5554/docs/screenshots/launcher-game-settings.jpg) |
+| S-controls | [launcher-controls.jpg](https://github.com/utkuhalis/AnyPS5-ARM/blob/cb20fd80c9f7a044c62d51da3cdd0475100b5554/docs/screenshots/launcher-controls.jpg) |
+| S-advanced | [launcher-advanced.jpg](https://github.com/utkuhalis/AnyPS5-ARM/blob/cb20fd80c9f7a044c62d51da3cdd0475100b5554/docs/screenshots/launcher-advanced.jpg) |
+| S-library | [launcher-library.jpg](https://github.com/utkuhalis/AnyPS5-ARM/blob/cb20fd80c9f7a044c62d51da3cdd0475100b5554/docs/screenshots/launcher-library.jpg) |
+| S-settings | [launcher-settings.jpg](https://github.com/utkuhalis/AnyPS5-ARM/blob/cb20fd80c9f7a044c62d51da3cdd0475100b5554/docs/screenshots/launcher-settings.jpg) |
+| S-themes | [launcher-themes.jpg](https://github.com/utkuhalis/AnyPS5-ARM/blob/cb20fd80c9f7a044c62d51da3cdd0475100b5554/docs/screenshots/launcher-themes.jpg) (onboarding step 2) |
+| S-trophies | [launcher-trophies.jpg](https://github.com/utkuhalis/AnyPS5-ARM/blob/cb20fd80c9f7a044c62d51da3cdd0475100b5554/docs/screenshots/launcher-trophies.jpg) |
+| S-banner | [launcher-trophy-banner.jpg](https://github.com/utkuhalis/AnyPS5-ARM/blob/cb20fd80c9f7a044c62d51da3cdd0475100b5554/docs/screenshots/launcher-trophy-banner.jpg) |
+
+The other files in `docs/screenshots/` (`breakout`, `converter-*`, `dreaming-sarah-*`, `stray-*`) show games and the separate
+converter app, not the launcher. There is also a video, `docs/videos/launcher.mp4` (1:39), useful for motion timing.
+No screenshot exists for onboarding steps 0 and 2, the empty library, the log view, a toast, the confirm-uninstall panel,
+settings categories other than Appearance, or the Windows-irrelevant move-to-Applications banner. Those are specified from code only.
+
+Contents: 1 Tokens, 2 Motion, 3 Backgrounds (shaders), 4 Materials and blur on the GPU, 5 Screens and components, 6 Input,
+7 Sounds and media, 8 Localization, 9 Deviations, 10 Assets and licences, 11 Implementation notes for egui.
+
+---
+
+## 1. Design tokens
+
+The app is **dark only** (`preferredColorScheme(.dark)`, window background black). There are no light variants. The three
+themes change the animated background, the default accent colour and nothing else: all UI chrome is white/black with alpha.
+
+### 1.1 Scale and window
+
+| Item | Value |
+|---|---|
+| Reference size | 1600 x 900 dp |
+| `scale` | `clamp(min(w / 1600, h / 900), 0.68, 1.45)` where w, h = window content size |
+| Minimum window | 1100 x 650 |
+| Initial window | maximised (fills the screen's visible frame; not exclusive fullscreen); fullscreen allowed |
+| Window background | `#000000` |
+| Title bar (original) | hidden, transparent, window draggable by its background (Windows: see section 9) |
+
+In egui: set `pixels_per_point = os_pixels_per_point * scale` every frame (or when the window resizes) so that 1 egui point = 1 dp.
+Compute `scale` from the window size in OS-scaled points *before* applying it. Every number in this document is then used as is.
+The trophy banner is **not** scaled (section 5.14).
+
+### 1.2 Colours
+
+#### Themes (background palettes)
+
+Float triples are the Metal uniforms (`Theme.palette`: deep, middle, bright). They are written to a UNorm target without gamma
+conversion, so they behave as display-referred (sRGB-encoded) values; hex = value x 255, rounded.
+
+| Theme | deep | middle | bright | default accent |
+|---|---|---|---|---|
+| Cosmic (index 0) | (0.012, 0.024, 0.090) `#030617` | (0.040, 0.150, 0.420) `#0A266B` | (0.420, 0.640, 1.000) `#6BA3FF` | Blue |
+| Aurora (index 1) | (0.006, 0.030, 0.045) `#02080B` | (0.020, 0.300, 0.300) `#054D4D` | (0.560, 1.000, 0.780) `#8FFFC7` | Mint |
+| Sunset (index 2) | (0.060, 0.010, 0.040) `#0F030A` | (0.520, 0.110, 0.220) `#851C38` | (1.000, 0.640, 0.330) `#FFA354` | Coral |
+
+Theme titles: Cosmic / Aurora / Sunset (TR: Kozmik / Aurora / Gün Batımı). `Theme.gradient` (middle to deep, top to bottom) exists
+in the source but is not used anywhere; it is the documented fallback if the GPU shader is unavailable (use it for that).
+
+#### Accent colours (user setting, default per theme)
+
+| Name (EN / TR) | float | hex |
+|---|---|---|
+| Blue / Mavi | (0.31, 0.58, 1.00) | `#4F94FF` |
+| Mint / Nane | (0.36, 0.92, 0.74) | `#5CEBBD` |
+| Coral / Mercan | (1.00, 0.50, 0.40) | `#FF8066` |
+| Violet / Mor | (0.66, 0.52, 1.00) | `#A885FF` |
+| Gold / Altın | (1.00, 0.80, 0.36) | `#FFCC5C` |
+| White / Beyaz | white 0.94 | `#F0F0F0` |
+
+The accent is used for: progress bars (fill and its glow), the running-state dot, "installing/starting/running" state labels,
+the avatar gradient, the switch-on track, the splash glow, trophy-progress bars, the scan-result icon, the theme-card dot (that
+theme's default accent).
+
+#### UI colours (all sRGB, straight alpha)
+
+| Role | Value |
+|---|---|
+| Primary text / icons | white 1.0 (title text), white 0.9 (secondary labels), white 0.85 (values), white 0.72 (hints) |
+| Secondary text | white 0.7 (subtitles), white 0.65 (empty text), white 0.6 (detail lines), white 0.55 (overlines, row detail on dark), white 0.5 (counts), white 0.45 (path), white 0.4 (inactive date) |
+| Text on a focused (white) surface | `#000000`; its detail text black 0.55 |
+| Surface, resting | white 0.10 (buttons, icon buttons, language cards), white 0.07 (settings rows, trophy-icon tile), white 0.05 (trophy row), white 0.08 (game tile placeholder) |
+| Surface, prominent button | white 0.20 |
+| Surface, hover (button) | white 0.16 |
+| Surface, focused | `#FFFFFF` (solid); trophy row instead white 0.13 + ring |
+| Hairline | white 0.12 (buttons), white 0.14 (language cards), white 0.09 (glass), white 0.08 (side panel edge, card gradient end) |
+| Track (progress/indeterminate) | white 0.16 |
+| Keycap fill (hint) | white 0.16 |
+| Scrim behind side panel | black 0.35 |
+| Full-screen panel | black 0.74 over blurred backdrop (settings, library, trophies); black 0.65 for the log |
+| Side panel | `Color(white 0.06)` at 0.92 over blurred backdrop, 1 px left edge white 0.08 |
+| Glass panel (cards, toast, log boxes) | blurred backdrop + black `opacity` (default 0.38; 0.5 diagnosis box; 0.55 log box; 0.6 toast and banner) + 1 px inner stroke white 0.09 |
+| Splash | blurred backdrop + black 0.55 |
+| Destructive | text/icon `(1.00, 0.60, 0.55)` = `#FF998C` for titles, `(1.00, 0.55, 0.50)` = `#FF8C80` for icons and the button label |
+| Error text | `(1.00, 0.70, 0.65)` = `#FFB3A6` (failure message), `(1.00, 0.60, 0.55)` = `#FF998C` (state label failed/unreadable) |
+| Warning text | `(1.00, 0.78, 0.50)` = `#FFC780` (diagnosis), `(1.00, 0.82, 0.40)` = `#FFD166` (update available) |
+| Toast/banner card fill | `Color(white 0.07)` at 0.94 |
+| Game artwork scrims | see 5.2 |
+| Switch off track | white 0.18 (black 0.18 when its row is focused), knob `#FFFFFF`, knob shadow black 0.25 |
+
+#### Trophy grades
+
+| Grade | float | hex | points |
+|---|---|---|---|
+| Platinum | (0.74, 0.84, 0.97) | `#BDD6F7` | 300 |
+| Gold | (0.97, 0.78, 0.34) | `#F7C757` | 90 |
+| Silver | (0.80, 0.82, 0.86) | `#CCD1DB` | 30 |
+| Bronze | (0.83, 0.55, 0.36) | `#D48C5C` | 15 |
+
+Percent = `unlocked points * 100 / total points` (integer division, 0 when total is 0).
+
+### 1.3 Radii
+
+SwiftUI uses `.continuous` (superellipse "squircle") corners everywhere. egui only has circular corners; use them (difference
+is invisible at these radii). An optional refinement is Figma "corner smoothing 60 %", which matches Apple's continuous curve.
+
+| Element | Radius |
+|---|---|
+| Game tile | `size * 0.12` (176 -> 21.1, 118 -> 14.2, 196 -> 23.5, 200 splash -> 24, 84 -> 10.1) |
+| Trophy icon | `size * 0.18` (112 -> 20.2, 68 -> 12.2, 60 -> 10.8) |
+| Console button | 14 |
+| Icon button (top bar) | circle (r = 22) |
+| Info card, glass default | 16 |
+| Settings row, category row, trophy secret tile | 12 |
+| Trophy row | 16 |
+| Language card | 20 |
+| Theme card preview | 18 |
+| Hint keycap | 5 |
+| Key cap (controls) | 7 |
+| Toast | 28 (pill-ish) |
+| Banner card | 20 |
+| Move banner (not ported) | 20 |
+| Log boxes, diagnosis box | 14 |
+| Capsules (progress, switch, onboarding dots) | fully round |
+
+Focus ring (`focusRing(focused, radius, width = 3)`): stroke white 0.95, width 3, drawn **outside** the element: ring path radius
+`radius + width`, outset by `width * 1.6` (4.8 for width 3, 3.2 for width 2), plus a glow of white 0.45 with SwiftUI shadow radius 10.
+Trophy rows use width 2. When unfocused the ring is invisible (alpha animates, see section 2).
+
+### 1.4 Shadows
+
+SwiftUI `shadow(radius: r)` and CSS/egui blur are related by `egui blur = 2 * r` (SwiftUI radius is the Gaussian sigma-ish value,
+CSS and `epaint::Shadow` blur is about twice that) **(estimate; verify against the screenshots)**. Values:
+
+| Element | Colour | SwiftUI radius | y offset |
+|---|---|---|---|
+| Game tile (unfocused) | black 0.45 | 10 | 8 |
+| Game tile (focused) | black 0.45 | 22 | 8 |
+| Focus glow | white 0.45 | 10 | 0 |
+| Console button focused | white 0.28 | 18 | 0 |
+| Top-bar icon button focused | white 0.40 | 10 | 0 |
+| Settings row focused | white 0.22 | 12 | 0 |
+| Language card focused | white 0.30 | 20 | 0 |
+| Hero title text | black 0.35 | 12 | 0 |
+| Progress fill glow | accent 0.6 | 6 | 0 |
+| Running dot glow | accent 1.0 | 6 | 0 |
+| Splash icon glow | accent 0.2 .. 0.55 (breathing) | 18 .. 40 | 0 |
+| Toast | black 0.40 | 20 | 8 |
+| Banner card | black 0.50 | 18 | 8 (not scaled) |
+| Switch knob | black 0.25 | 2 | 1 |
+
+All radii and offsets are multiplied by `scale` unless stated (banner: not scaled).
+
+### 1.5 Spacing and sizes (dp)
+
+Screen paddings:
+
+| Screen | Padding |
+|---|---|
+| Home top bar | horizontal 64, top 34 |
+| Home tile row | top 34 below the top bar; leading 64 |
+| Home hero info | horizontal 72 |
+| Home hint bar | horizontal 64, vertical 28 |
+| Onboarding | horizontal 110, vertical 80 |
+| Settings | horizontal 90, top 70, bottom 50 |
+| Library | horizontal 80, vertical 60 |
+| Trophies | horizontal 80, vertical 56 |
+| Log | 70 all around |
+| Side panel | 36 all around, width 560 |
+| Toast stack | top 26 |
+
+Components:
+
+| Element | Size |
+|---|---|
+| Tile row small / large / gap / label column | 118 / 176 / 16 / 300 |
+| Unselected tile y offset | `(176 - 118) * 0.18` = 10.44 |
+| Library tile | 196, column gap 26, row gap 30, 6 columns, grid padding 14 |
+| Splash tile | 200 |
+| Onboarding folder tiles | 84, gap 12, first 8 games |
+| Console button | min height 54, horizontal padding 30 (18 when icon only), icon 17, gap 10, `Play` min width 210, onboarding buttons 220 / 180 |
+| Top-bar icon button | 44 circle, glyph 18 |
+| Avatar | 36 circle |
+| Info card | 236 x 96, padding 18, row gap 14 |
+| Hero progress block | width 340, leading pad 10 |
+| Settings category column | width 330 + 36 trailing; row height 52, row gap 6 |
+| Settings row | min height 58, horizontal padding 18, row gap 8, list padding 6 |
+| Row icon / chevron box / chevron glyph | 24 box, glyph 17 / 26 box, glyph 13 / ">" glyph 14 |
+| Choice value | min width 120, max 190 |
+| Stepper value | min width 70 |
+| Text field value | width 200 |
+| Switch | 50 x 28, knob inset 3 |
+| Key cap | min 30 x 28, horizontal padding 9, gap 6 |
+| Trophy row | icon 68, gap 20, horizontal pad 18, vertical pad 14, row gap 10 |
+| Trophy header icon | 112 |
+| Trophy progress (header / row) | 260 x 4 / 180 x 4 |
+| Language card | 280 x 150, padding 26, gap 20 |
+| Theme card | 330 wide, preview 330 x 186, gap 26 |
+| Onboarding dots | 5 high; 46 wide current, 18 others; gap 10 |
+| Progress line | height 4 (tile: `max(3, size * 0.03)`) |
+| Banner | window 560 x 150 (unscaled), card 480 wide, padding 14, icon 60 (glow circle 64), top offset 14 |
+
+### 1.6 Typography
+
+The original uses `Font.system` (SF Pro, with SF Pro Rounded for hint keycaps and SF Mono for the log) at fixed sizes times `scale`.
+
+**Port font: Inter** (SIL OFL 1.1, free to bundle). Justification: it is the closest free match to SF Pro: same neo-grotesque
+skeleton, nearly identical x-height and numeral shapes, full weight range 100-900 (the original uses 300 to 700), large Latin
+Extended coverage including all Turkish letters (ı İ ş Ş ğ Ğ ç ö ü), and Inter 4.x ships a separate **Inter Display** cut for
+large sizes, which mirrors SF Pro Text / SF Pro Display. The screenshots' typeface reads as SF Pro; Inter is the standard
+free stand-in. Alternatives considered: Geist (too geometric), Roboto (different proportions), Noto Sans (wider).
+
+Bundling in egui:
+
+- egui renders **static** font instances. Bundle `Inter-Light`, `-Regular`, `-Medium`, `-SemiBold`, `-Bold` (TTF, from the official
+  Inter release) and register each as its own `FontFamily::Name` ("inter-light" ... "inter-bold"). Use the **InterDisplay-\*** files
+  for text at or above 20 dp (mirrors SF's text/display split at 20 pt) and the regular Inter files below.
+- Recent egui exposes `TextFormat::coords: VariationCoords` (variable-font axes). If the pinned version supports it, one
+  `InterVariable.ttf` with `wght` and `opsz` coordinates can replace the ten static files. Decide at implementation time; the spec
+  (weights and sizes below) is the same either way.
+- Letter-spacing: SF Pro applies size-dependent tracking automatically. Inter Display and the Display files already carry the
+  tighter spacing, so **no extra tracking** is applied except where the original sets it explicitly: uppercase overlines use
+  `TextFormat::extra_letter_spacing` = 0.6 (info-card titles) or 0.8 (onboarding "LANGUAGE", trophies "TROPHIES"), in dp.
+- Line height: SwiftUI uses the font's natural line height (about 1.19 em for SF Pro). Use `line_height = 1.2 * size` (Inter's
+  natural height is 1.21 em). Multi-line text (splash hint, row titles, trophy detail) uses the same.
+- **Tabular figures** (`monospacedDigit`: clock, percentages, counts, timer, stepper values): egui has no OpenType features. Lay
+  digits out one by one in cells as wide as the widest digit of the font (Inter digit advance at 0.62 em is within 1 % across
+  digits; measure `0`..`9` once and use the max), and the colon or percent sign with its natural advance.
+- Monospaced (log, `12 dp`): **JetBrains Mono Regular** (OFL 1.1) as the SF Mono stand-in.
+- Rounded (hint keycaps, 12 bold): Inter Bold is acceptable; no extra font is worth bundling for 4 small labels.
+- Glyph coverage: Turkish and the arrows `← → ↑ ↓ ↩` are in Inter. The shape glyphs `✕ ○ △ □` (controller faces) should be **painted
+  as vector shapes** (circle, triangle, square, cross strokes of 1.5 dp) instead of relying on font glyphs. The 18 game languages
+  include Japanese, Korean, Chinese and Arabic names: load Windows' own fonts as egui fallbacks at runtime if present (Yu Gothic UI /
+  Malgun Gothic / Microsoft YaHei UI / Segoe UI) instead of bundling large CJK fonts; trophy texts in game languages need the same.
+- Icons: SF Symbols cannot be redistributed. Use **Phosphor Icons** (MIT; `egui-phosphor` crate or the font file), mapping in 5.16.
+
+Type scale (size dp / weight; weight numbers: light 300, regular 400, medium 500, semibold 600, bold 700):
+
+| Use | Size / weight | Notes |
+|---|---|---|
+| Hero game title | 58 / light | max 2 lines, shrinks to 60 % to fit (`minimumScaleFactor 0.6`), shadow black 0.35 r12 |
+| Onboarding title | 54 / light | |
+| Settings and Library titles | 40 / light | log title: 30 / light |
+| Empty-library title | 34 / light | |
+| Splash title | 34 / light | centred, 2 lines |
+| Trophy list title | 36 / light | 1 line |
+| Side-panel title | 30 / light | 2 lines |
+| Top bar "Games" | 24 / semibold | |
+| Library count | 22 / medium | white 0.5 |
+| Tile-row game name | 22 / semibold | 2 lines, beside the large tile |
+| Theme card name | 22 / regular, semibold when focused | |
+| Percent (trophy header) | 22 / semibold tabular | |
+| Language card name | 28 / medium | |
+| Clock | 20 / medium tabular | white 0.92 |
+| Button label | 19 / semibold | glyph 17 semibold |
+| Category row | 19 / regular, semibold when selected | |
+| Onboarding subtitle | 19 / regular | white 0.7, max width 720 |
+| Row title, trophy name, onboarding status | 17 / medium, 18 / semibold, 18 / medium | |
+| Info-card value | 17 / semibold | |
+| Profile name, toast | 16 / medium | |
+| Choice / stepper value | 16 / semibold | |
+| Diagnosis in log | 16 / medium | |
+| Row info value | 15 / medium | |
+| Progress label | 15 / medium, percent 15 / semibold | |
+| Hint label | 13 / medium | keys 12 / bold rounded |
+| Detail lines | 13..14 / regular | row detail 13, trophy detail 14, splash text 14, failure/diagnosis 14 |
+| State label | 14 / medium | 12 in the library grid |
+| Info-card overline | 12 / semibold, uppercase, tracking 0.6 | white 0.55 |
+| Onboarding overline | 14 / semibold, uppercase, tracking 0.8 | |
+| Trophies overline | 13 / semibold, uppercase, tracking 0.8 | |
+| Key cap | 13.5 / semibold | |
+| Log | 12 / mono | white 0.85 |
+| Banner | label 13 semibold, name 19 semibold, detail 13 regular | unscaled |
+
+---
+
+## 2. Animation
+
+### 2.1 Spring solver
+
+SwiftUI `.spring(response: r, dampingFraction: z)` is a critically-parametrised damped spring with unit mass:
+
+```
+omega = 2 * pi / r          (natural frequency)
+stiffness k = omega^2
+damping   c = 2 * z * omega
+x'' = -k * (x - target) - c * x'          (x is the animated scalar, starts at the old value with the old velocity)
+```
+
+Implement one small `Spring { value, velocity }` with `step(dt, target)` (sub-step at <= 1/240 s with semi-implicit Euler, or
+use the closed form for under-damped motion
+`x(t) = 1 - e^(-z*omega*t) * (cos(wd*t) + (z*omega/wd) * sin(wd*t))`, `wd = omega * sqrt(1 - z^2)`), keep the velocity when the
+target changes (SwiftUI springs are interruptible and carry velocity), request repaint until `|x - target| < 0.001` and
+`|v| < 0.01`. Every animated visual property (scale, ring alpha, fill mix, shadow alpha, x/y position, panel offset) is
+`lerp(from, to, spring_value)`; colours lerp in sRGB and clamp to [0, 1].
+
+| Name | Use | Response | Damping | omega | stiffness k | damping c | overshoot | 98 % settle |
+|---|---|---|---|---|---|---|---|---|
+| `Motion.focus` | focus/hover feedback, switch, key scroll | 0.32 | 0.82 | 19.63 | 385.5 | 32.2 | 1.1 % | 0.25 s |
+| `Motion.layout` | tile row move, hero swap, onboarding steps, list reflow | 0.45 | 0.86 | 13.96 | 195.0 | 24.0 | 0.5 % | 0.33 s |
+| `Motion.overlay` | opening/closing panels, splash, toast | 0.42 | 0.90 | 14.96 | 223.8 | 26.9 | 0.15 % | 0.30 s |
+| Banner slide | trophy card in | 0.55 | 0.78 | 11.42 | 130.5 | 17.8 | 2.0 % | 0.45 s |
+| Banner pop | trophy icon scale | 0.45 | 0.55 | 13.96 | 195.0 | 15.4 | 12.6 % | 0.52 s, starts after 0.18 s delay |
+
+Overshoot only visibly matters for the banner pop; clamp alpha and colour lerps to [0, 1] but let scale and offset overshoot.
+
+### 2.2 Easing curves
+
+SwiftUI's named curves are the standard cubic Beziers; implement one `cubic_bezier(x1, y1, x2, y2, t)` solver (Newton on x).
+
+| SwiftUI | Bezier |
+|---|---|
+| `easeIn` | (0.42, 0, 1, 1) |
+| `easeOut` | (0, 0, 0.58, 1) |
+| `easeInOut` | (0.42, 0, 0.58, 1) |
+
+### 2.3 Reduced motion (setting "Animations: Reduced")
+
+`Motion.reduced` swaps: focus -> easeOut 0.12 s; layout -> easeOut 0.15 s; overlay -> easeOut 0.15 s; fade 0.55 s easeInOut ->
+0.15 s easeInOut; banner slide -> easeOut 0.25 s. Also: the theme background is paused (one still frame is drawn), artwork drift
+and splash breathing are off, the user picture does not drift. **Not** affected: the indeterminate progress sweep, the "Press a
+key..." pulse, the banner pop.
+
+### 2.4 Every animation, with its port form
+
+| # | What | Original spec | Port |
+|---|---|---|---|
+| 1 | Tile focus: scale/ring/shadow of the selected tile | `Motion.focus` on `focused` | spring focus; ring alpha 0 -> 0.95, glow 0 -> 0.45, shadow r10 -> 22 |
+| 2 | Tile row move on selection change | `Motion.layout` on `selected` | per tile spring layout on x, y offset, size (see 5.3); previous tiles fade to 0 opacity as they leave left |
+| 3 | Tile size 118 <-> 176 | `Motion.layout` on `size` | spring layout on a `size` scalar (animate size, not scale; text is outside the tile) |
+| 4 | Hero info swap on game change | `.id(game.id)`, insertion opacity + y offset 14, removal opacity, `Motion.layout` | new hero: spring layout 0 -> 1 on opacity and `offset_y = 14 * (1 - v)`; old hero: opacity 1 -> 0 on the same curve; both exist during the transition |
+| 5 | Tile-row name label | opacity transition, `Motion.layout` | opacity spring layout |
+| 6 | Backdrop crossfade (theme change, selected-game artwork change) | `easeInOut 0.55` on `theme` and on `selectedGame.id` | keep the previous artwork texture, cross-fade alpha with easeInOut 0.55 |
+| 7 | Artwork decode fade-in | `easeOut 0.35` | alpha 0 -> 1 easeOut 0.35 when the texture becomes ready |
+| 8 | Game artwork drift (home) | scale 1.01 -> 1.07, anchor top-trailing, `easeInOut 24 s`, repeat forever, autoreverse | ping-pong of `t = easeInOut(phase)`, period 48 s (24 s each way); UV zoom about the top-right corner |
+| 9 | User picture drift | scale 1.0 -> 1.08 and x offset +1.5 % of width -> -1.5 %, `easeInOut 28 s` autoreverse | same ping-pong, 28 s each way, translate in UV |
+| 10 | Button focus | scale 1.05, fill, ring-less glow white 0.28 r18, `Motion.focus` | spring focus |
+| 11 | Top-bar icon focus | scale 1.1, glow white 0.4 r10 | spring focus |
+| 12 | Settings row focus | scale 1.015, glow white 0.22 r12 | spring focus |
+| 13 | Language card focus | scale 1.04, glow white 0.3 r20 | spring focus |
+| 14 | Theme card focus | scale 0.97 -> 1.04, opacity 0.72 -> 1 | spring focus |
+| 15 | Switch | knob moves leading <-> trailing, track colour | spring focus on the knob x and the colour mix |
+| 16 | Progress bar | fill width `easeOut 0.35` | width eased with easeOut 0.35 per change |
+| 17 | Indeterminate sweep | a 35 %-wide gradient (clear, accent, clear, left to right) slides from x = -0.4 w to +1.05 w, `easeInOut 1.3 s`, repeat forever **no** autoreverse, clipped to the capsule | `phase = easeInOut(fract(t / 1.3))`, `x = lerp(-0.4, 1.05, phase) * w` |
+| 17b | "Press a key..." | opacity 1 <-> 0.45, `easeInOut 0.7 s`, repeat autoreverse | triangle wave, easeInOut 0.7 each way |
+| 18 | Onboarding step change | `Motion.layout`: old step opacity + x -40, new step opacity + x +40 | spring layout cross-slide; dots widths animate 18 <-> 46 with the same spring |
+| 19 | Onboarding finished | `easeInOut 0.7` flips `onboarded` | cross-fade onboarding -> home over 0.7 s |
+| 20 | Settings category change | `Motion.focus`; rows fade in with x offset 18 | spring focus; new list opacity + `offset_x = 18 * (1 - v)` |
+| 21 | Settings panel in/out | opacity, `Motion.overlay` | spring overlay on opacity |
+| 22 | Library and Trophy list in/out | opacity + scale 1.03 -> 1, `Motion.overlay` | spring overlay: opacity and scale about the centre |
+| 23 | Side panel in/out | move from the trailing edge + opacity, `Motion.overlay` | spring overlay: `offset_x = (1 - v) * panel_width`, opacity v |
+| 24 | Log in/out | opacity | spring overlay |
+| 25 | Launch splash in/out | opacity + scale 1.04 -> 1, `Motion.overlay` | spring overlay |
+| 26 | Splash breathing | icon scale 0.985 <-> 1.015, glow alpha 0.2 <-> 0.55 and radius 18 <-> 40, `easeInOut 1.6 s` repeat autoreverse (off in reduced motion) | triangle wave, easeInOut 1.6 each way |
+| 27 | Toast in/out | move from top + opacity, `Motion.overlay`; stays 3.2 s | spring overlay, `offset_y = -(1 - v) * 80`; a new toast replaces the old one and restarts the 3.2 s timer |
+| 28 | Banner slide in | card offset y from -150 to 14 and opacity 0 -> 1, spring 0.55 / 0.78 (easeOut 0.25 in reduced motion) | see 5.14 |
+| 29 | Banner icon pop | icon scale 0.6 -> 1 and glow opacity 0 -> 1, spring 0.45 / 0.55, delay 0.18 s | see 5.14 |
+| 30 | Banner out | after 5 s: easeIn 0.3 s back up and out; next banner starts 0.35 s later | see 5.14 |
+| 31 | Scroll-to-focus in lists | `scrollTo(anchor: .center)` inside `Motion.focus` | spring focus on the scroll offset toward "focused row centred" |
+| 32 | Tile hover | none (only buttons hover: fill white 0.16) | |
+
+Animations 1, 10-15 can share one helper: `focus_t: Spring` per focusable widget id stored in egui memory.
+
+---
+
+## 3. Animated theme backgrounds
+
+Original: `BackgroundRenderer.swift`, one Metal fragment shader with three theme functions, compiled at start. It renders at
+**half the physical pixel size** (`drawableSize = bounds * backingScale * 0.5`) at 60 fps, is soft by design, and leaves the GPU to
+the games.
+
+### 3.1 Driver
+
+```
+clock   = random(40.0 ..= 400.0)           // start somewhere in the middle of the animation, not at its quiet first frame
+each frame:  clock += min(0.1, now - last) * speed      // speed = 1; dt clamp avoids jumps after pauses
+uniform.time = clock mod 3600
+paused = a game is running  OR  the window is not active  OR  reduced motion   // paused: no clock advance, keep last frame
+```
+
+Theme change swaps only the palette and the function index; the cross-fade is done on the compositing side (animation 6).
+When paused the original stops redrawing; draw one frame when pausing so the picture stays.
+
+### 3.2 egui/wgpu integration
+
+- Use an `egui_wgpu::Callback` (`CallbackTrait::prepare` + `paint`) registered through `Painter::add(Shape::Callback(...))`
+  covering the whole window rect, drawn **before** any UI.
+- Render the shader into an offscreen texture of `ceil(window_px * 0.5)` (`Rgba8Unorm`, linear sampling) in `prepare` using the
+  provided `egui_encoder`, then in `paint` draw that texture as a full-rect quad (a second tiny pipeline), upscaled with bilinear
+  filtering. This also gives the texture the blur passes in section 4 need.
+- Output is **display-referred**: the Metal target is `bgra8Unorm` and the shader writes sRGB-encoded values directly. Keep the
+  offscreen target `Rgba8Unorm` (not `...Srgb`) and let egui's own sRGB handling treat the blit as an ordinary texture, or if the
+  swap-chain format is sRGB, apply `srgb_to_linear` on the way out. Verify by comparing with the screenshots (S-themes).
+- The three onboarding theme cards show the theme frame: either render three small textures (original: 660 x 372 stills at
+  `time = 200`, the focused card animates, the others are paused) or reuse the pipeline with a different uniform.
+
+### 3.3 Uniforms (std140-friendly, 64 bytes)
+
+```
+struct Uniforms { deep: vec4<f32>, middle: vec4<f32>, bright: vec4<f32>, size: vec2<f32>, time: f32, theme: u32 }
+```
+
+`deep/middle/bright` = palette rgb with a = 1; `size` = offscreen pixel size; `theme` 0 = Cosmic, 1 = Aurora, 2 = Sunset.
+
+### 3.4 WGSL port (complete)
+
+Direct port of the Metal source. Differences from the Metal text that must be kept: all `smoothstep` calls go through `sstep`
+because the original calls it with `edge0 > edge1` (well-defined in Metal, undefined in WGSL); a scalar added to a vector is written
+as an explicit `vec2f(...)`. **This WGSL was written by hand and not compiled** (no GPU/Rust toolchain was used on the machine that
+produced this document): compile it with naga first, and compare against the screenshots.
+
+```wgsl
+struct Uniforms { deep: vec4<f32>, middle: vec4<f32>, bright: vec4<f32>, size: vec2<f32>, time: f32, theme: u32 };
+@group(0) @binding(0) var<uniform> u: Uniforms;
+
+struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
+
+@vertex
+fn vs(@builtin(vertex_index) id: u32) -> VsOut {
+    // one oversized triangle: corners (0,0) (2,0) (0,2)
+    let corner = vec2<f32>(f32((id << 1u) & 2u), f32(id & 2u));
+    var o: VsOut;
+    o.pos = vec4<f32>(corner * 2.0 - 1.0, 0.0, 1.0);
+    o.uv = vec2<f32>(corner.x, 1.0 - corner.y);   // uv origin top-left, y down (uv.y = 1 at the bottom of the screen)
+    return o;
+}
+
+fn sstep(e0: f32, e1: f32, x: f32) -> f32 {        // Metal-style smoothstep, valid for e0 > e1
+    let t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+fn hash(p_in: vec2<f32>) -> f32 {
+    var p = fract(p_in * vec2<f32>(123.34, 456.21));
+    p = p + vec2<f32>(dot(p, p + vec2<f32>(45.32)));
+    return fract(p.x * p.y);
+}
+fn hash2(p: vec2<f32>) -> vec2<f32> { return vec2<f32>(hash(p), hash(p + vec2<f32>(17.17))); }
+
+fn noise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let w = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2<f32>(1.0, 0.0)), w.x),
+               mix(hash(i + vec2<f32>(0.0, 1.0)), hash(i + vec2<f32>(1.0, 1.0)), w.x), w.y);
+}
+
+fn fbm(p_in: vec2<f32>) -> f32 {
+    var value = 0.0;
+    var amplitude = 0.5;
+    var p = p_in;
+    for (var octave = 0; octave < 5; octave++) {
+        value += amplitude * noise(p);
+        p = p * 2.03 + vec2<f32>(11.7);
+        amplitude *= 0.5;
+    }
+    return value;
+}
+
+// Drifting soft discs of light; `rate` moves them upwards (negative: downwards).
+fn bokeh(p: vec2<f32>, time: f32, cells: f32, rate: f32, seed: f32) -> f32 {
+    var grid = p * cells;
+    grid.y -= time * rate;
+    let cell = floor(grid);
+    var light = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let here = cell + vec2<f32>(f32(x), f32(y));
+            let random = hash2(here + vec2<f32>(seed));
+            let center = here + vec2<f32>(0.5) + 0.38 * sin(random * 6.2831 + time * (vec2<f32>(0.15) + 0.2 * random.yx));
+            let radius = mix(0.06, 0.24, random.x * random.x);
+            let dist = length(grid - center);
+            let twinkle = 0.55 + 0.45 * sin(time * (0.4 + random.y) + random.x * 40.0);
+            let present = step(0.55, hash(here + vec2<f32>(seed * 3.1)));
+            light += present * twinkle * sstep(radius, radius * 0.25, dist) * (0.35 + 0.65 * random.y);
+        }
+    }
+    return light;
+}
+
+fn cosmic(uv: vec2<f32>, aspect: f32, time: f32) -> vec3<f32> {
+    var color = mix(u.middle.rgb * 1.15, u.deep.rgb, sstep(0.0, 1.0, uv.y * 0.85 + 0.08));
+    color += u.bright.rgb * 0.28 * exp(-2.8 * length(vec2<f32>((uv.x - 0.8) * aspect, uv.y - 0.08)));
+    // ribbons of light flowing across the lower half
+    for (var band = 0; band < 6; band++) {
+        let b = f32(band);
+        let center = 0.56 + 0.028 * b
+            + 0.075 * sin(uv.x * (1.4 + 0.22 * b) + time * (0.10 + 0.021 * b) + b * 1.9)
+            + 0.03 * sin(uv.x * 4.1 - time * 0.12 + b * 3.1);
+        let d = abs(uv.y - center);
+        let core = 0.0016 / (d + 0.0028);
+        let haze = exp(-d * 14.0);
+        let fade = sstep(-0.15, 0.4, uv.x) * sstep(1.2, 0.6, uv.x);
+        let pulse = 0.75 + 0.25 * sin(time * 0.3 + b * 1.7 + uv.x * 2.0);
+        let tint = mix(u.bright.rgb, vec3<f32>(0.85, 0.92, 1.0), 0.25 + 0.1 * b);
+        color += tint * (core * 0.16 + haze * 0.1) * fade * pulse;
+    }
+    let p = vec2<f32>(uv.x * aspect, uv.y);
+    color += u.bright.rgb * 0.22 * bokeh(p, time, 5.0, 0.012, 1.0);
+    color += vec3<f32>(0.9, 0.95, 1.0) * 0.14 * bokeh(p, time * 1.3, 11.0, 0.02, 7.0);
+    return color;
+}
+
+fn aurora(uv: vec2<f32>, aspect: f32, time: f32) -> vec3<f32> {
+    var color = mix(u.deep.rgb * 1.8, u.deep.rgb * 0.7, uv.y);
+    let p = vec2<f32>(uv.x * aspect, uv.y);
+    for (var layer = 0; layer < 3; layer++) {
+        let l = f32(layer);
+        let sway = fbm(vec2<f32>(p.x * 0.7 + l * 3.7 + time * 0.02, time * 0.03 + l));
+        let center = 0.30 + 0.09 * l + 0.36 * (sway - 0.5) + 0.05 * sin(p.x * 1.7 + time * 0.08 + l * 2.0);
+        let thickness = 6.0 + 2.0 * l + 2.5 * sin(p.x * 1.3 + time * 0.05 + l);
+        let below = uv.y - center;
+        let curtain = exp(-below * below * thickness * thickness) * sstep(-0.35, 0.0, below + 0.12);
+        let rays = sstep(0.15, 0.95, noise(vec2<f32>(p.x * 16.0 + l * 7.0, time * 0.18 + p.x * 0.5)));
+        let glow = curtain * (0.45 + 0.55 * rays);
+        let tint = mix(u.bright.rgb,
+                       mix(vec3<f32>(0.35, 0.55, 1.0), vec3<f32>(0.75, 0.4, 1.0), l * 0.5),
+                       sstep(-0.05, 0.12, -below));
+        color += tint * glow * (0.62 - 0.14 * l);
+    }
+    let starCell = floor(p * 150.0);
+    let star = step(0.9965, hash(starCell)) * (0.55 + 0.45 * sin(time * 1.6 + hash(starCell + vec2<f32>(3.0)) * 30.0));
+    let local = fract(p * 150.0) - vec2<f32>(0.5);
+    color += star * sstep(0.35, 0.0, length(local)) * sstep(0.8, 0.1, uv.y) * 0.9;
+    color += u.middle.rgb * 0.45 * sstep(0.6, 1.0, uv.y) * (0.6 + 0.4 * fbm(vec2<f32>(p.x * 1.5, time * 0.03)));
+    return color;
+}
+
+fn sunset(uv: vec2<f32>, aspect: f32, time: f32) -> vec3<f32> {
+    let top = u.deep.rgb * 1.4;
+    let middle = u.middle.rgb;
+    let low = mix(u.bright.rgb, vec3<f32>(1.0, 0.42, 0.38), 0.45) * 0.85;
+    var color = mix(top, middle, sstep(0.0, 0.6, uv.y));
+    color = mix(color, low, sstep(0.5, 1.1, uv.y));
+    let p = vec2<f32>(uv.x * aspect, uv.y);
+    for (var blob = 0; blob < 6; blob++) {
+        let b = f32(blob);
+        let center = vec2<f32>((0.15 + 0.16 * b) * aspect + 0.14 * sin(time * (0.05 + 0.013 * b) + b * 2.0),
+                               0.5 + 0.24 * sin(time * (0.04 + 0.01 * b) + b * 1.3));
+        let radius = 0.2 + 0.07 * sin(b * 4.1);
+        let d = p - center;
+        let light = exp(-dot(d, d) / (radius * radius));
+        color += mix(u.bright.rgb, vec3<f32>(1.0, 0.35, 0.6), fract(b * 0.37)) * light * 0.2;
+    }
+    color += mix(u.bright.rgb, vec3<f32>(1.0, 0.8, 0.6), 0.4) * 0.22 * exp(-abs(uv.y - 0.76) * 5.0)
+             * (0.85 + 0.15 * sin(uv.x * 2.4 + time * 0.15));
+    color += vec3<f32>(1.0, 0.85, 0.7) * 0.1 * bokeh(p, time, 7.0, -0.01, 3.0);
+    return color;
+}
+
+@fragment
+fn fs(in: VsOut) -> @location(0) vec4<f32> {
+    let aspect = u.size.x / max(u.size.y, 1.0);
+    let uv = in.uv;
+    let time = u.time;
+    var color: vec3<f32>;
+    if (u.theme == 1u) { color = aurora(uv, aspect, time); }
+    else if (u.theme == 2u) { color = sunset(uv, aspect, time); }
+    else { color = cosmic(uv, aspect, time); }
+    let centered = (uv - vec2<f32>(0.5)) * vec2<f32>(aspect, 1.0);
+    color = color * (1.0 - 0.45 * sstep(0.35, 1.25, length(centered)));   // vignette
+    color = color / (vec3<f32>(1.0) + color * 0.35);                      // soft tone map
+    color += vec3<f32>((hash(in.pos.xy + vec2<f32>(fract(time) * 91.0)) - 0.5) / 255.0 * 2.0);  // dither
+    return vec4<f32>(color, 1.0);
+}
+```
+
+Behaviour summary, for sanity checks against screenshots:
+
+- **Cosmic**: vertical gradient middle*1.15 (top) to deep (bottom), a bright glow in the upper right (centre x 0.8, y 0.08), six
+  sinusoidal ribbons of light across the lower half (y about 0.56 to 0.7) that fade in toward the left, and two layers of slow bokeh
+  discs (5 and 11 cells across) drifting upward. (S-themes, left card.)
+- **Aurora**: dark teal sky, three vertical curtains (fbm sway, ray structure from stretched noise) coloured mint -> blue -> violet,
+  tiny twinkling stars in the upper part, a soft middle-colour haze at the bottom. (S-themes, middle card.)
+- **Sunset**: three-stop vertical gradient (deep*1.4, middle, warm low band), six large soft glows drifting around, a warm horizon
+  band at y 0.76, sparse bokeh drifting **down**. (S-themes, right card.)
+
+### 3.5 User background picture or video
+
+Setting "Background: My picture / My video": the picture (or a looping, muted video) replaces the shader entirely.
+The picture is decoded at `max(w, h) * 2` px and slowly drifts (animation 9). Video: looped, muted, `aspectFill`, paused when the
+window is inactive/a game runs/reduced motion. Video decoding is out of scope for the first port (offer the picture only, hide the
+"My video" choice until a decoder exists); keep the preference value.
+
+---
+
+## 4. Materials and blur on the GPU
+
+SwiftUI `.ultraThinMaterial` is a backdrop blur with a light tint and some saturation; it is used under every panel. egui has no
+backdrop filter. Recipe:
+
+1. After the theme background and the game artwork have been drawn (everything below the UI), keep the **offscreen backdrop
+   texture** (section 3.2, half resolution) as the blur source. Compose the artwork into the same texture (artwork pass first, then
+   gradients, see 5.2) so panels blur what the user sees.
+2. Produce a **blurred copy** once per frame (or only on frames where the backdrop changed): downsample to quarter of the half-res
+   texture (so 1/8 of physical resolution) and run a **two-pass separable Gaussian** (horizontal then vertical, 9 or 13 taps,
+   linear-sampling trick for half the taps). Target sigma about **20 dp at the final scale** **(estimate; ultraThin dark is roughly a
+   20 to 30 pt blur)**; at 1/8 resolution that is sigma 2.5 px times `scale`.
+3. For each glass rect (info cards, toast, panels, splash), draw the blurred texture sampled with **screen-space UVs** of that rect
+   (a textured `Mesh` with a rounded-rect clip, or a custom `CallbackTrait` that draws a rounded rect with an SDF mask), then the
+   tint layers listed in section 1.2 on top: for "glass" `.ultraThinMaterial.opacity(0.55)` then black `opacity` then the 1 px stroke.
+   The material tint itself is close to white 0.04 .. 0.08 over the blur **(estimate)**; tune by eye against S-home (info cards).
+4. Full-screen panels (settings, library, trophies, log) and the splash: blurred copy + black 0.74 / 0.65 / 0.55. The home UI
+   under them is *not* part of the blur source in the port (the original blurs it too, but under 74 % black it is not visible
+   as more than a smudge); simply fade the home UI to 0 opacity while a full-screen overlay is open, or leave it and accept the
+   difference.
+5. The side panel: `Color(white 0.06)` at 0.92 alpha, so almost opaque; use the blurred copy plus that fill. Its left edge is a
+   1 px line white 0.08; the scrim on the rest of the screen is black 0.35.
+6. Performance: the blur copy is tiny (1/8 resolution); the whole chain is a few hundred microseconds. Skip steps 1-2 on frames
+   where nothing under the panels changed and no panel is open.
+
+---
+
+## 5. Screens and components
+
+Draw order of the root (`RootView`), back to front: **Backdrop** (shader or user picture/video, game artwork) -> **Home** or
+**Onboarding** -> **overlay** (one of settings, library, game-settings side panel family, log, trophies) -> **launch splash** ->
+**toast** (top, centred). All overlay state changes run with `Motion.overlay`. App state machine: `onboarded == false` shows only
+Onboarding; otherwise Home. Overlays: `settings`, `gameSettings`, `library`, `log`, `confirmUninstall`, `controls`, `trophies`,
+`advanced` (the last four plus `gameSettings` render as the side panel, except `trophies`).
+
+### 5.1 Game states and what each looks like
+
+`GameState` for each game, in priority order (first match wins): `starting` (press of Play until its first window), `running`,
+`installing(step, fraction)`, `queued`, `failed(message)`, `installed(outdated)`, `unreadable` (executable is neither ELF nor SELF
+container), `locked`.
+
+| State | Tile overlay | State label (symbol, tint, text key) | Primary button (symbol, text) |
+|---|---|---|---|
+| locked | black 0.42 + lock badge bottom-right | lock, white 0.75, `locked` | lock-open, `unlock` |
+| unreadable | black 0.42 + octagon-x badge | octagon-x, `#FF998C`, `unreadableDump` | lock-open, `unlock` (press shows toast `unreadableDump`) |
+| queued | black 0.42 + clock glyph (size 0.18) white 0.85 centred | clock, white 0.75, `queued` | x, `cancel` |
+| installing | black 0.30 + progress line at the bottom | down-arrow-circle, accent, current step title | x, `cancel` |
+| failed | black 0.42 + warning badge | warning, `#FF998C`, `failed` | refresh, `retry` |
+| installed | none | check-circle, white 0.75, `ready` (outdated: refresh-arrows, `#FFD166`, `updateAvailable`) | play, `play` |
+| starting | black 0.42 + small spinner | hourglass, accent, `starting` | hourglass, `starting` (inactive) |
+| running | accent dot (0.09 size) top-right with glow | play-circle, accent, `running` | play-circle, `running` (press re-activates the game window) |
+
+Badge (locked/unreadable/failed): glyph size `tile * 0.13` semibold white, padding `tile * 0.08`, behind it a circle black 0.55
+inset by `tile * 0.035`, anchored bottom-trailing. Installing line: height `max(3, tile * 0.03)`, padding `tile * 0.07`.
+
+### 5.2 Backdrop and game artwork
+
+- Backdrop = theme shader (section 3) or the user's picture/video.
+- If onboarded **and** "Show the selected game's artwork" is on **and** the settings overlay is not open **and** the selected game
+  has `sce_sys/pic0.png`: draw the artwork over the backdrop, cross-faded per selection (animation 6):
+  - image: aspect-fill the window, decoded to max dimension `max(w, h) * 1.6` px; scale 1.01 -> 1.07 about the **top-right**
+    corner, 24 s easeInOut ping-pong (animation 8; static when reduced motion);
+  - horizontal scrim (leading to trailing): black 0.78 at 0, black 0.35 at 0.5, clear at 0.85;
+  - vertical scrim (top to bottom): black 0.55 at 0, clear at 0.3, clear at 0.55, black 0.85 at 1.
+  (S-home, S-unlocking: the artwork darkens toward the left and bottom where the text sits.)
+
+### 5.3 Home screen
+
+Vertical stack, spacing 0: **TopBar**, **TileRow** (or **EmptyLibrary**), flexible space, **HeroInfo**, **HintBar**.
+
+**Top bar** (padding h 64, top 34; item gap 22): left "Games" (24 semibold), a small spinner while scanning; right-aligned: library
+button (glyph: 3x3 grid), settings button (glyph: gear), profile (avatar circle 36 with an accent-to-accent-0.55 diagonal gradient
+from top-left to bottom-right and the first letter of the profile name, uppercase, 16 bold white; then the name 16 medium white 0.9),
+clock (HH:mm, local time, updated every minute, 20 medium tabular white 0.92). Icon buttons: 44 circle, white 0.10 fill; focused:
+white fill, black glyph, scale 1.1, glow. (S-home.)
+
+**Tile row** (height `176 + 10`, leading 64). All tiles are in one layer; for tile `i` with `offset = i - selected`:
+
+```
+x = offset < 0 : 64 + offset * (118 + 16)            // tiles left of the selection sit off to the left (opacity 0)
+    offset == 0: 64
+    offset  > 0: 64 + 176 + 16 + 300 + (offset - 1) * (118 + 16)     // after the 300-wide label column
+y = selected ? 0 : (176 - 118) * 0.18               // small tiles hang 10.44 lower
+size = selected ? 176 : 118
+opacity = offset < 0 ? 0 : 1
+```
+
+Selected tile has the focus ring only while focus is on the tiles and no overlay is open. Next to the selected tile: label column
+at `x = 64 + 176 + 16 * 1.4 = 262.4`, `y = 176 * 0.32 = 56.3`, width `300 - 16 = 284`: game name (22 semibold, white, 2 lines) and the state
+label (14 medium). The label fades in with the selection (animation 5). Tile appearance: placeholder fill white 0.08, the 512 px icon
+(`icon0.png`, decoded to <= 400 px) aspect-filled, state overlay (5.1), clipped to the rounded square, shadow per 1.4, focus ring.
+A game without icon shows a gamepad glyph (size 0.32 of the tile, white 0.5). Row motion = animations 2 and 3.
+Mouse: one click selects and focuses the tiles (sound `move` if the selection changed); double click selects and runs the primary action.
+
+Row sketch (S-home):
+
+```
+[ selected 176 ][ name / state  (300) ][ 118 ][ 118 ] [ 118 ] ...        at x = 64, 256, 556, 690, 824
+```
+
+**Hero info** (horizontal padding 72, stack spacing 22, transitions animation 4):
+
+1. Title: game name, 58 light white, max 2 lines, shrinks to 60 %.
+2. Action row (gap 16): primary button (`Play`/`Unlock`/`Retry`/`Cancel`/...: prominent = white 0.20 fill, min width 210, symbol
+   and text as in 5.1); trophy button if the game has a trophy list (`"unlocked/total"` with the trophy glyph; no min width); the
+   "..." button (glyph: three dots, icon only), which opens game settings. To the right, depending on state:
+   - installing: a 340-wide block (leading pad 10): row with step title (15 medium, white 0.85) and `"NN%"` (15 semibold, tabular)
+     where NN = `Int(step.overall(fraction) * 100)`; under it the progress line (accent), or the **indeterminate** sweep while step ==
+     relink and fraction == 0. (S-unlocking.)
+   - failed: the failure message (14 regular, `#FFB3A6`, max 2 lines, max width 520);
+   - otherwise if the last run ended on an error: the diagnosis (warning triangle + one sentence, 14 regular, `#FFC780`, 2 lines,
+     max width 520), see 5.13.
+   Action row reflows with `Motion.layout` when the state changes.
+3. Four **info cards** (gap 14), each 236 x 96, padding 18, glass 16: overline with a glyph (12 semibold uppercase, tracking 0.6,
+   white 0.55) over the value (17 semibold white). Cards: **Status** (circle-dashed glyph, the state label), **Size** (disk glyph,
+   `"..."` while being measured, else a decimal-unit file size such as `8,39 GB`; measured lazily for the selected game), **Title ID**
+   (hash glyph, e.g. `PPSA12544`), **Version** (tag glyph, e.g. `01.000.010`).
+
+**Hint bar** (right aligned, padding h 64 v 28, item gap 22): `← → ↑ ↓` "Move", `↩ / ✕` "Select", `esc / ○` "Back", `O / △` "Options"
+(keys in a keycap: 12 bold, padding 7 x 3, white 0.16 fill, radius 5; label 13 medium; all white 0.72; gap 8). Library, trophies and
+onboarding show it without "Options". The glyphs are the fixed text above (PlayStation face names), not adapted to the pad in use.
+
+**Empty library** (no games): centred column, gap 18: icon 54 thin (magnifier while scanning, otherwise a stack-slash icon, white
+0.8), title (`scanning` or `emptyLibraryTitle`, 34 light), text `emptyLibraryText` (17, white 0.65), the games folder path if set
+(13, white 0.45, middle-truncated, 1 line), a focused button `changeFolder` (folder glyph) with 10 extra top gap. Select with no
+game opens the folder dialog.
+
+Library behaviour: games are folders (down to depth 3, skipping hidden entries, packages and the names `.AnyPS5 sce_sys sce_module
+sce_modules prx out rel`) holding `eboot.bin` and `sce_sys/param.json`; sorted by name case-insensitively. The folder is watched
+(root only); a change triggers a rescan if the last scan was more than 2 s ago and no unlock is running; the window regaining focus
+rescans if more than 3 s passed and reloads trophies of the selected game.
+
+### 5.4 Unlocking progress
+
+Unlock queues the game (sound `select`); one unlock runs at a time; failures and successes call `startNext`. Steps and their share
+of the single overall bar:
+
+| Step | Text key | start | length |
+|---|---|---|---|
+| unwrap | `stepUnwrap` | 0 | 0.12 |
+| relink | `stepRelink` | 0.12 | 0.50 |
+| copy | `stepCopy` | 0.62 | 0.26 |
+| bundle | `stepBundle` | 0.88 | 0.08 |
+| finish | `stepFinish` | 0.96 | 0.04 |
+
+`overall = start + length * fraction`. Progress events are coalesced: the bar only updates when the step changes, the fraction
+moved by >= 0.005, or fraction >= 1. The tile shows the small bar, the hero shows step title + percentage + bar. Success: sound
+`unlocked`, toast `"<game> · Ready to play"` (lock-open glyph). Failure: state `failed(message)`, toast `"Could not unlock: <game>"`.
+Cancel (button or Esc/B while selected): sound `back`. The installer keeps an in-memory log (max 600 lines, trimmed by 100) shown in
+the log view. (Screenshot S-unlocking shows step "Converting for Mac", 39 %.)
+
+### 5.5 Launch splash ("start screen with timer")
+
+Shown from the press of Play until the game's first window appears (poll every 400 ms for a visible top-level window of the game
+process, larger than 200 x 150, up to 240 s; if the process dies first the splash closes and the diagnosis runs; if no window ever
+appeared the toast `startFailed` is shown). Esc / controller back cancels: the game process is killed, sound `back`. While the
+splash is up **all other input is swallowed** except back.
+
+Layout: full-window overlay (blurred backdrop + black 0.55); centred column, gap 26: tile 200 (radius 24, same placeholder rules),
+breathing glow (animation 26); game name (34 light, centred, 2 lines); a 380-wide block (gap 14): row `starting` (16 medium, white
+0.88) and the elapsed `m:ss` (16 semibold tabular, counting from 0:00, tick 1 s), the indeterminate sweep (accent), and
+`startingText` (14, white 0.6, centred, wraps). At the bottom, 40 above the edge, a hint `esc / ○` "Cancel". After the window shows,
+the splash leaves (overlay spring), the launcher optionally hides ("Hide the launcher while a game runs"). (S-starting.)
+
+### 5.6 Toast
+
+Pill at the top centre (top 26): glyph 17 semibold + text 16 medium (max 2 lines); padding 22 x 14; glass radius 28 with black 0.6;
+shadow (1.4). 3.2 s on screen, spring in/out (animation 27). Events that raise toasts: unlock ready/failed, unreadable dump, no
+toolkit (`noToolkit`), start failed, uninstall done, shader cache cleared, report saved/failed, settings exported/imported/file
+invalid, "game: diagnosis".
+
+### 5.7 Settings (global)
+
+Two columns on a black 0.74 blurred panel (S-settings). Left (330 wide + 36): title `settings` (40 light) with 26 below, then
+six category rows (height 52, gap 6, radius 12, glyph 18 medium in 26 box + 14 gap + title 19). Selected category: white 0.12 fill,
+text semibold; **focused** (keyboard focus in the category list): white fill, black text. Unselected text white 0.7. Right: the
+category's rows (5.8).
+
+| Category (key) | Glyph | Rows (id, kind, key, notes) |
+|---|---|---|
+| Appearance (`appearance`) | brush | `theme` choice (Cosmic/Aurora/Sunset), `accent` choice (six), `backdrop` choice (`backgroundTheme` / `backgroundImage` / `backgroundVideo`; picking image/video opens a file dialog when no file is set or the kind changed), `file` action `chooseFile` (only when backdrop is not theme; detail = file name), `artwork` toggle `gameArtwork`, `motion` choice (`motionFull` / `motionReduced`) |
+| Library (`storage`) | 2x2 grid | `folder` action `folder` (detail = path or an em dash; opens the folder dialog), `rescan` action `rescan` (detail `gamesFound` with count; sound `select`), info `installedSize` |
+| Language (`language`) | globe | `language` choice (Türkçe, English; shown in their own language) |
+| Behaviour (`behaviour`) | sliders | `name` text field `profileName` (live edit), `sounds` toggle, `hide` toggle `hideWhilePlaying` (+ platform row, see 9) |
+| Advanced (`advanced`) | wrench+screwdriver | `screenshots` action `screenshotsFolder` (detail = path, `~` abbreviated), `showScreenshots` action, `fonts` action `fontsFolder` (detail = path or `fontsNone`), `fontsReset` action (only when a fonts folder is set), info `fontsHint` |
+| About (`about`) | info circle | info `aboutText`, info `version` (app version), info `toolkitVersion`, (platform row), `quit` action `quit` (destructive) |
+
+Settings are persisted per user (`Preferences`): `onboarded`, `language` (system default: Turkish if the OS UI language starts with
+`tr`, else English), `theme` (Cosmic), `accent` (nil = theme default), `backdrop` (theme), `backdropFile`, `gameArtwork` (true),
+`reducedMotion` (false), `sounds` (true), `hideWhilePlaying` (false), `profileName` (first word of the user's full name, fallback
+"Player"), `gamesFolder`, `screenshotsFolder` (nil = `Pictures/AnyPS5`), `fontsFolder`, per-game settings, `lastPlayed`.
+Every change saves immediately and re-applies language, motion and sound flags.
+
+### 5.8 Panel rows (shared by settings, game settings, controls, advanced)
+
+A row has a symbol, a title (17 medium, up to 2 lines, shrinks to 0.85), an optional detail (13, 55 % of the row foreground, up to
+2 lines, middle truncation) and a value control on the right; kinds:
+
+| Kind | Control | Mouse | Keyboard |
+|---|---|---|---|
+| choice | `<  value  >` (chevrons 13 bold in 26 boxes, opacity 0.85, 0.25 when at the end; value 16 semibold, 120..190 wide, shrinks to 0.7) | click chevron = step; click row = next, wraps | left/right step (clamped), select = next (wraps) |
+| toggle | switch 50 x 28 (on = accent track, off = white 0.18, knob white) | click row or switch toggles | right = on, left = off, select = toggle |
+| stepper | `-  value  +` (tabular 16 semibold, 70 wide) | click -/+ | left/right by step (clamped), select = +step, wraps to min |
+| action | trailing chevron-right (14 semibold, 0.6) | click runs it (sound `select`) | select runs it |
+| info | static text (15 medium, 0.7) or just the title in white 0.62 when it has no value (section headers, hints) | none | not focusable |
+| text | right-aligned text field 200 wide, edits live | click to edit | keys go to the field (6.1) |
+| keys | key caps or the capture prompt | click starts capture | select starts capture |
+
+Row chrome: min height 58, padding h 18, radius 12; fill white 0.07 (focusable) or none (info); **focused**: white fill, black
+foreground, glow, scale 1.015. Destructive actions: title `#FF998C`, glyph `#FF8C80` (white-on-focus rule unchanged: black when
+focused). Focused row scrolls to the centre of the list (animation 31). List scroll bars are hidden.
+
+**Key cap** (controls): min 30 x 28, radius 7, padding h 9, text 13.5 semibold; fill white 0.12 for keyboard keys and white 0.06 for
+mouse/wheel sources (black 0.12 / 0.06 when focused), 1 px stroke at 0.18. No binding: the text `noKey` (15 medium, 0.5). Waiting for
+a key: `pressKey` (15 semibold, pulsing, animation 17b).
+
+### 5.9 Game settings side panel (the "..." menu)
+
+Opened by "..." or `O` / Y / Menu / Options. Right-aligned panel 560 + 72 wide over a black 0.35 scrim (click on the scrim closes), see
+1.2 for fills. Title = game name (30 light), subtitle `gameSettings` (15, white 0.6), rows below (18 gap). (S-game-settings.) Rows
+in order, with the condition for each:
+
+| # | Id | Kind | Key / content |
+|---|---|---|---|
+| 1 | `resolution` | choice | `resolution`; options `[resolutionDefault] + the title's patch choices`; only shown when the title has a resolution patch (e.g. Stray) |
+| 2 | `display` | choice | `display`: `windowed` / `fullscreen` |
+| 3 | `size` | stepper | `windowSize` `"NN%"`, 40..100 step 5, default 75; only when windowed |
+| 4 | `vsync` | toggle | `vsync`, default on |
+| 5 | `controls` | action | `controls` -> controls panel |
+| 6 | `trophies` | action | `trophies`, detail `"8/34 · 8%"`; only if the game has trophies |
+| 7 | `advanced` | action | `advanced`, detail `advancedDetail` |
+| 8 | `overlay` | choice | `overlay` (performance overlay): Off / Top Left / Top Right / Bottom Left / Bottom Right (`overlayOff` ...) |
+| 9 | `language` | choice | `gameLanguage`: `followLauncher` + 18 console languages (below) |
+| 10 | `reinstall` | action | `reinstall` (closes the panel, unlocks again); only when installed |
+| 11 | `finder` | action | `showInFinder` (Windows: show in Explorer) |
+| 12 | `log` | action | `openLog` -> log view (5.12) |
+| 13 | `report` | action | `makeReport`, detail `makeReportDetail` (5.13) |
+| 14 | `cache` | action | `clearShaderCache` (toast `cacheCleared`) |
+| 15 | `uninstall` | action, destructive | `uninstall` -> confirm panel; only when installed |
+
+Console languages (number, name): 19 Türkçe, 1 English (US), 18 English (UK), 4 Deutsch, 2 Français, 3 Español, 20 Español
+(Latinoamérica), 5 Italiano, 17 Português (Brasil), 7 Português, 8 Русский, 16 Polski, 6 Nederlands, 0 日本語, 9 한국어, 11 简体中文,
+10 繁體中文, 21 العربية. Launcher language maps to 19 (Turkish) or 1 (English) when the game follows the launcher.
+
+Per-game settings (defaults): resolution nil, fullscreen false, windowSize 75, vsync true, overlay off, language nil, controls nil
+(layout changes), tuning nil, shaderCache nil (= on). Passed to the game as environment variables at start:
+`ANYPS5_FULLSCREEN` (0/1), `ANYPS5_WINDOW_SIZE` (clamped 30..100), `ANYPS5_PRESENT_MODE` (`fifo` / `immediate`),
+`ANYPS5_LANGUAGE`, `ANYPS5_OVERLAY=1` + `ANYPS5_OVERLAY_POS` (`tl`/`tr`/`bl`/`br`), `APS5_RESOLUTION`, `ANYPS5_INPUT_CONFIG`,
+`ANYPS5_SCREENSHOTS`, `ANYPS5_SYSTEM_FONTS`, `ANYPS5_NO_SHADER_CACHE=1`. (Whether the Windows toolkit honours the same names is a
+logic-layer question, outside this UI document.)
+
+**Confirm uninstall panel**: title `uninstall`, subtitle `uninstallConfirm`; two rows: `uninstall` (destructive, trash glyph) and
+`cancel`. Opens in rows focus on the first row.
+
+**Controls panel** (S-controls): subtitle `controls`; first row is an info hint (`controlsHint`, not focusable), then one `keys` row
+per pad action in this order with titles: `✕ Cross`, `○ Circle`, `□ Square`, `△ Triangle`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`,
+`Options`, `Touchpad (Left)`, `Touchpad (Right)`, `D-pad · Up/Down/Left/Right`, `Left Stick · Up/Down/Left/Right`,
+`Right Stick · Up/Down/Left/Right`, `Slow Movement`; last row `resetControls` (refresh glyph). Opens focused on row 1 (first key).
+Default layout (keys shown as in key caps): Cross K, Space, Return; Circle L; Square J, Left Click; Triangle I; L1 Q; R1 E; L2 U,
+Mouse 4; R2 O, Right Click; L3 Left Shift; R3 Left Ctrl; Options Esc; Touch Left Backspace; Touch Right Tab; D-pad arrow keys (Up
+also Wheel Up, Down also Wheel Down); Left stick W A S D; Right stick T F G H (up/left/down/right = T/F/G/H); Slow Movement unbound.
+Capture rules: select starts waiting (sound `select`); Esc cancels (sound `back`); any other key (modifiers count when pressed)
+replaces the row's keyboard keys, keeps its mouse sources, and **removes that key from any other action**; unmapped keys are
+ignored. Resulting changes equal to the default layout are dropped. Key names are SDL scancode names (section 6.5). "Unbound" is
+written as `KEY:F24` for the input file. Back/Options return to the game settings (on the `controls` row).
+
+**Advanced panel** (S-advanced): subtitle `advancedTitle`; opens focused on row 1. Section headers are info rows. Steppers (id, key,
+range, step, display, default): leftDeadzone `leftDeadzone` 0..90 step 2 `NN%` 0; rightDeadzone 0..90/2 `%` 0; mouse section
+`sectionMouse`: sensitivity 1..100/1 `N.N×` (value/10) 10, vertical 1..100/1 `×` 10, curve 2..50/1 `N.N` 10, minimum tilt
+(`mouseMinimum`) 0..90/2 `%` 20, max speed 1..100/1 `×` 10, smoothing 0..500/5 `N ms` or `Off` at 0, 10, decay (`mouseDecay`)
+5..1000/5 `N ms` 30; keyboard section: stickModifierScale 5..100/5 `%` 50, keyboardRamp 0..2000/50 `ms`/Off 0, triggerRamp 0..2000/50
+`ms`/Off 0; graphics section: `shaderCache` toggle (default on); sharing section: `exportSettings`, `importSettings` (file dialogs,
+JSON, name `"<game> - AnyPS5.json"`), `resetAdvanced`. Each stepper row has a detail line (`...Detail` keys). Only changed values
+are written to the game's input file; the whole group resets to `nil` when equal to defaults. Glyphs: left/right joystick, mouse,
+up-down arrows, curve, scope, gauge, waveform, timer, tortoise, keyboard, trigger, stack, upload, download, rotate.
+
+### 5.10 Library grid
+
+Full-screen overlay over the home (black 0.74 blurred): header `library` (40 light) + count (22 medium, 0.5, 8 leading) + hint bar
+without options; below, a scrolling grid of **6 columns x 196** tiles (gap 26 x 30). Each cell: tile with focus ring on the
+keyboard-selected one, name (15; semibold white when focused, else regular 0.75; 1 line, truncated), state label (12). Click =
+select that game and close. Keys: arrows move (up/down jump a row of 6), select picks, back/options close. The focused tile scrolls
+to the centre (animation 31). (S-library. The tile shown "Playing" uses the coral accent.)
+
+### 5.11 Trophy list and trophy button
+
+Home: the trophy button between Play and "..." appears only for games with a trophy list: label `"8/34"`. The list overlay (S-trophies):
+black 0.74 blurred; header row (gap 26): set icon 112, then a column (gap 12): overline `trophies` (13 semibold uppercase tracking
+0.8, 0.55), title (set title or game name, 36 light, 1 line), a row (gap 16): percent `"8%"` (22 semibold tabular), progress bar
+260 wide (accent), and per grade with at least one trophy a count `"unlocked/total"` (trophy glyph in the grade colour + 15 semibold
+tabular, white 0.85); hint bar (no options) right. Below, a scrolling list (gap 10, padding 8) of trophy rows in package order:
+
+```
+[ icon 68 ]  Name (18 semibold)                                     [trophy] Bronze (14 semibold, grade colour)
+             Description (14, 0.6, 2 lines)                          Oct 17, 2026 at 9:14 PM  (13, 0.7)  |  Not earned (13, 0.4)
+             [progress 180x4] 23/51  (not earned, has progress)
+```
+
+Earned: icon in colour, name white; not earned: icon in greyscale at 0.45 opacity, name white 0.8, grade colour at 0.55. Secret
+(hidden and not earned): a lock tile (white 0.07, lock glyph 22 semibold, 0.5) instead of the icon, name `trophyHidden`,
+description `trophyHiddenDetail`, no progress. The focused row: fill white 0.13 (else 0.05) and focus ring width 2. Dates use the
+launcher language's locale, medium date + short time (`Oct 17, 2026 at 9:14 PM`, Turkish similar with the Turkish month name **(estimate)**). Keys: up/down move
+(sound `move`), back/options close; left/right/select do nothing. Clicking a row focuses it.
+
+Trophy list and texts come from `sce_sys/trophy2/trophyNN.ucp` of the dump (language = the game's language setting, else the
+launcher's) and the unlock records the game writes; both read in `anyps5-core` (logic, not UI).
+
+### 5.12 Log view
+
+Full-screen overlay (black 0.65 blurred, padding 70, gap 18). Header: `"Log"` + `" · <game>"` (30 light), right: button
+`makeReport` (stethoscope glyph, unfocused) and button `close` (x glyph, **focused**). If the game has a diagnosis: a glass box
+(radius 14, black 0.5) with the warning triangle + sentence (16 medium, `#FFC780`). Then a scrolling, selectable text box (glass 14,
+black 0.55, padding 18) with the log in 12 mono, white 0.85, **scrolled to the bottom** on open. Content = in-memory install log
+lines, then the failure message if any, then the last 60 000 bytes of the game's log file; `"—"` if empty. Keys: back and select
+close it; everything else is swallowed.
+
+### 5.13 Error and diagnosis presentation, report
+
+After a game exits (process watcher), wait 1.5 s for crash data, read the log of the last start (text after the last
+`[anyps5-launcher] start` marker, which the launcher appends before each start) and the newest crash report since the start, and
+classify. Presentation: a toast `"<game>: <sentence>"` (warning glyph), the amber diagnosis line in the hero (5.3) and in the log.
+If the game never opened a window and no diagnosis was found: toast `startFailed`.
+
+| Diagnosis | Sentence key (arg) | Detected from (original, macOS) |
+|---|---|---|
+| missing module | `diagnosisMissingModule` (file name) | "Library not loaded: @rpath/X" |
+| unsupported function | `diagnosisUnsupported` (function) | engine exception "`<fn> not implemented`" |
+| GPU lost | `diagnosisGpuLost` | `VK_ERROR_DEVICE_LOST` / "device lost" |
+| out of memory | `diagnosisOutOfMemory` | `VK_ERROR_OUT_OF_DEVICE_MEMORY`, `std::bad_alloc`, "out of memory" |
+| engine error | `diagnosisEngineError` (message, cut at 200 chars + ellipsis) | any other uncaught engine exception |
+| crashed | `diagnosisCrashed` (exception) | the OS crash report, e.g. `EXC_BAD_ACCESS (SIGSEGV)` |
+
+**Report**: "Make a Report" writes a text file (`<titleID>-yyyyMMdd-HHmmss.txt` in the Reports folder) with: title line + ISO date,
+Game (name, title ID, version), machine (model, CPU, RAM GB), OS version, launcher version, toolkit version, Reason (sentence or
+"none found"), Settings (pretty JSON), the crash exception line if any, and the log of the last start (<= 400 KB); then reveals it in
+the file manager and toasts `reportSaved` (doc glyph) or `reportFailed`.
+
+### 5.14 Trophy banner
+
+A separate always-on-top, click-through, non-focus-taking surface that must also appear over a game window. Size **560 x 150**,
+centred horizontally at the top of the primary display (below the menu bar / safe area). Unscaled (dp = points). Contents (S-banner):
+
+```
+card: width 480, padding 14, radius 20, fill white 0.07 @ 0.94, 1 px stroke gradient top-to-bottom (grade colour @ 0.55 -> white 0.08), shadow black 0.5 r18 y8
+ row, gap 16:
+   [glow circle 64: grade colour 0.35, blur sigma 14, opacity animates] [trophy icon 60, radius 10.8, scale 0.6 -> 1]
+   column gap 4:  "Trophy earned" (trophy glyph + 13 semibold, grade colour)
+                  name (19 semibold white, 1 line; "Hidden Trophy" if empty)
+                  description (13, white 0.6, 1 line)
+   spacer, big trophy glyph 26 semibold with a vertical gradient grade colour -> grade colour 0.6, trailing pad 6
+```
+
+Timeline: spawn -> slide-in spring (offset y -150 -> 14, opacity 0 -> 1, spring 0.55/0.78; easeOut 0.25 in reduced motion) and
+simultaneously start the icon pop 0.18 s later (spring 0.45/0.55); sound `unlocked` (when sounds are on); hold 5 s; easeIn 0.3 s out;
+0.35 s later the next queued banner starts (banners are strictly queued, one at a time). The running game is watched every second
+for new trophy records; each new one raises a banner and refreshes the trophy set.
+
+### 5.15 Onboarding (first start)
+
+Three steps; left-aligned column on a left-to-right black 0.55 -> 0.1 gradient over the (live) theme backdrop; padding 110 x 80.
+Top: three dots (current 46 x 5, others 18 x 5; white 0.95 for steps up to the current one, else 0.22; gap 10; 54 below).
+Then the step (animation 18), flexible space, bottom row: `back` button (chevron-left glyph, unfocused, only from step 1) left,
+hint bar (no options) right. Title block: title 54 light, subtitle 19 white 0.7 (max 720 wide), gap 14; step gap 46.
+
+| Step | Title / subtitle | Content |
+|---|---|---|
+| 0 | `welcome` / `welcomeSubtitle` | overline `chooseLanguage`; two cards 280 x 150 (radius 20, padding 26, bottom-left aligned): `TR` or `EN` (15 bold, 0.6) over the language's own name (28 medium). Focused: white fill, black text, scale 1.04, glow; else white 0.10 + 1 px white 0.14 |
+| 1 | `chooseTheme` / `chooseThemeSubtitle` | three theme cards (S-themes): live or still preview 330 x 186 (radius 18, focus ring) above a row: theme name (22) and a 12 dp dot in the theme's default accent; focused card scale 1.04 / opacity 1, others 0.97 / 0.72 |
+| 2 | `chooseFolder` / `chooseFolderSubtitle` | button `pickFolder` (or `changeFolder` once chosen; folder glyph, min 220), and once a folder is set the prominent button `start` (arrow glyph, min 180); a glass card (radius 16, padding 20, max 640) with a status glyph (magnifier while scanning, question-folder if empty, check in accent) + `scanning` / `noGamesFound` / `gamesFound` (18 medium) over the path (13, 0.5, middle truncated); the first 8 games as 84 tiles |
+
+The **language and theme choices apply live** while moving the focus (left/right change `preferences.language` / `preferences.theme`
+immediately, so the page re-renders in that language and the backdrop switches theme); select confirms and advances (sound
+`select`); Back (Esc/B/button) returns (sound `back`). Step 2 focus: 0 = the folder button, 1 = Start (only once a folder is set; focus
+jumps to Start after picking); select on Start finishes: sound `unlocked`, cross-fade (animation 19), focus on the tiles, rescan if
+empty. Mouse: tapping a language card selects and confirms; tapping a theme card selects it (sound `move`).
+
+### 5.16 Icon mapping (SF Symbols -> Phosphor, MIT)
+
+| Original SF Symbol | Phosphor |
+|---|---|
+| `square.grid.3x3.fill` | `squares-four` (or `dots-nine`) |
+| `gearshape.fill` | `gear-six` |
+| `gamecontroller.fill` | `game-controller` |
+| `lock.fill` / `lock.open.fill` | `lock` / `lock-open` (fill weight) |
+| `xmark.octagon.fill` | `x-octagon` fill |
+| `exclamationmark.triangle.fill` | `warning` fill |
+| `clock` | `clock` |
+| `arrow.down.circle.fill` | `arrow-circle-down` fill |
+| `checkmark.circle.fill` | `check-circle` fill |
+| `arrow.triangle.2.circlepath` / `arrow.clockwise` | `arrows-clockwise` / `arrow-clockwise` |
+| `hourglass` | `hourglass` |
+| `play.fill` / `play.circle.fill` / `play.circle` | `play` fill / `play-circle` fill / `play-circle` |
+| `xmark` | `x` |
+| `trophy.fill` / `trophy` | `trophy` fill / regular |
+| `ellipsis` | `dots-three` |
+| `circle.dashed`, `internaldrive`, `number`, `tag` | `circle-dashed`, `hard-drive`, `hash`, `tag` |
+| `folder`, `magnifyingglass`, `square.stack.3d.up.slash` | `folder`, `magnifying-glass`, `stack` (+ slash overlay) |
+| `chevron.left/right`, `minus`, `plus` | `caret-left/right`, `minus`, `plus` |
+| `stethoscope`, `doc.text`, `doc.badge.checkmark` | `stethoscope`, `file-text`, `file-check` |
+| category glyphs: `paintbrush`, `square.grid.2x2`, `globe`, `slider.horizontal.3`, `wrench.and.screwdriver`, `info.circle` | `paint-brush`, `squares-four`, `globe`, `sliders-horizontal`, `wrench`, `info` |
+| row glyphs: `paintpalette`, `circle.lefthalf.filled`, `photo.on.rectangle`, `photo`, `wind`, `person.crop.circle`, `speaker.wave.2`, `eye.slash`, `power` | `palette`, `circle-half`, `images`, `image`, `wind`, `user-circle`, `speaker-high`, `eye-slash`, `power` |
+| game-settings glyphs: `rectangle.on.rectangle`, `macwindow`, `arrow.up.left.and.arrow.down.right`, `waveform.path`, `keyboard`, `slider.horizontal.below.rectangle`, `speedometer`, `character.bubble`, `sparkles`, `trash` | `rectangle`/`frame-corners`, `app-window`, `arrows-out-simple`, `wave-sine`, `keyboard`, `sliders`, `gauge`, `translate`, `sparkle`, `trash` |
+| advanced glyphs: `l.joystick`, `r.joystick`, `computermouse`, `arrow.up.and.down`, `chart.line.uptrend.xyaxis`, `scope`, `timer`, `tortoise`, `l2.rectangle.roundedtop`, `square.stack.3d.up`, `square.and.arrow.up/down`, `arrow.counterclockwise` | `game-controller` (stick), `mouse`, `arrows-down-up`, `chart-line-up`, `crosshair`, `timer`, `person-simple-walk` (or any slow glyph), `trigger`/`rectangle`, `stack`, `export`/`download-simple`, `arrow-counter-clockwise` |
+| controls: `circle.grid.cross`, `l.rectangle.roundedbottom`, `l.joystick.press.down`, `line.3.horizontal`, `hand.point.up.left`, `dpad` | `game-controller`, `rectangle`, `circle`, `list`, `hand-pointing`, `arrows-out-cardinal` |
+| `folder`, `camera`, `photo.on.rectangle.angled`, `textformat`, `xmark.circle` | `folder`, `camera`, `images`, `text-aa`, `x-circle` |
+
+Exact Phosphor names must be checked against the bundled icon set version; the table gives the intent.
+
+---
+
+## 6. Input
+
+Original: `Input.swift`, `AppModel.handle`, `panelCommand`, `onboardingCommand`. One handler consumes seven abstract **commands**:
+`left right up down select back options`.
+
+### 6.1 Keyboard
+
+| Key (original macOS) | Command | Windows / egui key |
+|---|---|---|
+| Left / Right / Up / Down arrows | left / right / up / down | `ArrowLeft` .. `ArrowDown` |
+| Return, keypad Enter, Space | select | `Enter`, `NumpadEnter`, `Space` |
+| Esc, Delete (backspace key) | back | `Escape`, `Backspace` |
+| letter O (any layout, ignoring shift) | options | `O` |
+
+Rules: any key with the **Command** modifier is ignored (Windows: ignore when Ctrl, Alt or the Windows key is held, except the
+shortcut below). While a native dialog is open the launcher does not handle keys. While a text field has focus (profile name) keys go
+to the text field (the original never handles them; the port additionally lets Enter and Esc blur the field, see section 9). While a
+binding waits for a key (controls panel) every key is captured by the panel. Key repeat is the OS's: a held arrow produces repeated
+commands at the OS repeat rate. **Shortcut**: `Cmd+,` opens Settings when onboarded -> `Ctrl+,`. F11 toggles fullscreen (Windows addition).
+
+### 6.2 Mouse and wheel
+
+Everything also works with the mouse (clicks listed per component). Mouse wheel / horizontal scroll on the **home screen with no
+overlay**: moves the tile selection by one per step: wheel down / scroll right = next game, wheel up / scroll left = previous.
+Accumulate deltas and step at +-40 dp of accumulated scroll (reset the accumulator after each step, and when the gesture pauses);
+one notch of a classic wheel must produce exactly one step; trackpad pixel deltas are used as is. (The original's sign handling
+uses AppKit's inverted deltas; the intent above is what the user experiences.)
+
+### 6.3 Controller (gilrs)
+
+| Control | Command |
+|---|---|
+| D-pad, left stick (axis > 0.55 on an axis, else that axis counts as 0) | direction commands; the dominant axis wins, stick up = up |
+| A / Cross (South) | select |
+| B / Circle (East) | back |
+| Y / Triangle (North) | options |
+| Menu / Start | options |
+
+**Repeat timing:** when a direction is pressed it fires immediately; if held, after **0.38 s** it repeats every **0.085 s** until released or
+the direction changes (a change cancels the timers and fires the new direction at once). Identical consecutive directions are not
+re-fired. Controller input is not blocked by text fields or panels. The hint bar text is always `✕ / ○ / △` (PlayStation
+naming) regardless of the controller.
+
+### 6.4 Focus model
+
+Home has three focus zones, `HomeFocus`: `top(0 | 1)` (library button, settings button), `tiles`, `actions(i)` (i = 0 primary,
+then trophies if present, last = "...").
+
+| Focus | left | right | up | down | select | back | options |
+|---|---|---|---|---|---|---|---|
+| tiles | previous game | next game | -> top(1) | -> actions(0) | primary action | - | game settings |
+| top(i) | top(max 0, i-1) | top(min 1, i+1) | - | -> tiles | open library (0) / settings (1) | -> tiles | game settings |
+| actions(i) | actions(i-1) | actions(min last, i+1) | -> tiles | - | 0 primary; 1 trophies when present; else game settings | -> tiles | game settings |
+
+Every focus change plays `move`. `moveSelection` clamps (no wrap), plays `move`, and measures the new game's size / loads its trophies.
+With no games: select opens the folder dialog. The primary action by state: installed = play, locked/failed = unlock (failed clears the
+error first), installing/queued = cancel, running = activate the game window, unreadable = toast, starting = nothing.
+
+Overlays (the handler order): onboarding first (5.15); if the splash is up only `back` (cancel start) is used and everything else is
+swallowed; then by overlay:
+
+- **settings**, **game settings**, **confirm**: `panelCommand` below. **controls / advanced**: `back` and `options` return to the game
+  settings (sound `back`, focus the row that opened it), otherwise `panelCommand`.
+- **log**: back or select closes; all else swallowed. **trophies**: up/down move, back/options close. **library**: arrows move (up/down
+  by 6), select picks, back/options close.
+
+`panelCommand`: multi-category panels (settings only) have two levels. *Category level* (`panelInRows == false`): up/down move the
+category (clamped, row reset to 0, `move`), right/select enter the rows (first focusable row), back/options close the panel. *Row
+level*: up/down move to the previous/next **focusable** row (skips info rows; `move`; no wrap); left: adjusts the row down
+(choice/toggle/stepper) and, if the row is not adjustable (action, keys, text), leaves the row level; right: adjusts up; select
+activates; back leaves the row level (single-category panels: closes); options closes. Single-category panels (game settings,
+controls, advanced, confirm) always are at row level; there, back closes (or returns for controls/advanced). Panels open at: game
+settings row 0, confirm row 0, controls row 1, advanced row 1; settings starts at the category level with category 0.
+Sounds: category/row moves and value changes `move`; actions `select`; leaving `back`; opening `select`; closing `back`.
+
+---
+
+## 7. Sounds and media
+
+### 7.1 Sounds (`Sounds.swift`): synthesized, nothing bundled
+
+Four cues, each a short buffer rendered once at start, 44 100 Hz, stereo with identical channels, master volume **0.32**, four
+voices used round-robin (a retrigger of the same voice cuts it: `stop`, schedule, `play`). A cue is a list of *partials*
+`(frequency Hz, start s, duration s)` plus a decay constant `d`. Sample at time `t` (seconds from buffer start), for each partial
+with `start <= t < start + duration`, `l = t - start`:
+
+```
+attack = min(1, l / 0.004)
+sample += sin(2*pi*f*l)  * attack * exp(-l * d)       * 0.5      // fundamental
+sample += sin(4*pi*f*l)  * attack * exp(-l * d * 1.6) * 0.12     // second harmonic, decays 1.6x faster
+```
+
+Buffer length = `max(start + duration) + 0.02` s; no explicit release (partials end abruptly after their exponential decay has
+mostly vanished). Output = the sum (not normalised) times 0.32.
+
+| Cue | Partials (Hz @ start, duration) | Decay `d` | Character |
+|---|---|---|---|
+| `move` | 1320 @ 0.000, 0.045 | 70 | short tick |
+| `select` | 880 @ 0.00, 0.07; 1320 @ 0.05, 0.10 | 32 | rising pair |
+| `back` | 990 @ 0.00, 0.06; 660 @ 0.045, 0.09 | 34 | falling pair |
+| `unlocked` | 660 @ 0.00, 0.12; 990 @ 0.09, 0.14; 1320 @ 0.18, 0.30 | 12 | rising triad |
+
+Port with `rodio`: build four `SamplesBuffer`s (f32, 2 ch, 44 100) at start, play through a small pool of sinks (or one mixer) with
+`set_volume(0.32)`; do nothing when "Interface Sounds" is off; start the audio output lazily on the first cue.
+
+Which events play which cue:
+
+- **move**: any selection or focus change (tiles, top bar, actions, panel category, panel row, library, trophy list, onboarding
+  left/right, theme card tap, tile click that changes the selection), any value change (choice, toggle, stepper, chevron click,
+  switch tap), a binding captured.
+- **select**: unlock queued, Play pressed, a panel/overlay opened, an action row run, rescan, onboarding advance, capture started.
+- **back**: closing an overlay, leaving rows, returning from controls/advanced, cancel unlock, cancel start, onboarding back,
+  capture cancelled.
+- **unlocked**: unlock finished, onboarding finished, a trophy banner (when sounds are on).
+
+### 7.2 Media (`Media.swift`, `GameLibrary.inspect`)
+
+Files read from each game dump's `sce_sys/` folder:
+
+| File | Size | Use | Decode |
+|---|---|---|---|
+| `icon0.png` | 512 x 512 | tile, splash, onboarding tiles, library | thumbnail, max side 400 px, cached by path + size |
+| `pic0.png` | 3840 x 2160 | home backdrop artwork | thumbnail, max side `max(window w, h) * 1.6` px |
+| `snd0.at9` | ATRAC9 | found by the scanner (`Game.music`) but **not used** by the UI | - |
+| `param.json` | JSON | `titleId` (fallback: folder name), `localizedParameters.<lang>.titleName` using `defaultLanguage` (fallbacks: `en-US`, else the title ID), `contentVersion` (fallback `1.0`) | |
+| `trophy2/trophyNN.ucp` | package | trophy list (5.11) | in core |
+
+Decoding happens off the UI thread, results are cached per (path, max-pixel) and the UI re-renders when one arrives; an image fades in
+over 0.35 s easeOut (animation 7). Missing `icon0.png`: a gamepad glyph on the white 0.08 tile. Missing `pic0.png`: no artwork layer.
+Trophy icons are PNGs inside the packages (`icon0_<lang>.png`, falling back to `icon0.png` for the set icon), cached by id; unearned
+trophies are drawn desaturated at 0.45 opacity (do it in a shader or by pre-converting to greyscale at load).
+Upload thumbnails as egui textures with `TextureOptions::LINEAR`; pic0 is large: downscale on a worker thread (`image` crate) before
+upload; keep at most the current and previous artwork textures.
+
+### 6.5 Key binding names (controls panel)
+
+Bindings are stored as `KEY:<SDL scancode name>`, `MOUSE:<Left|Right|Middle|X1|X2>`, `WHEEL:<Up|Down>`. The original maps macOS virtual key
+codes to the **physical position on a US layout** (SDL scancodes); port by mapping the physical key (winit `KeyCode`, not the
+produced character) to the same names. The original table covers exactly these keys:
+
+| Physical key | Name |
+|---|---|
+| A..Z | `A`..`Z` |
+| digits 0..9 (top row) | `0`..`9` |
+| `-` `=` `[` `]` `\` `'` `,` `.` `/` `` ` `` | the same characters (the original has no `;`) |
+| Enter / Space / Tab / Backspace / Esc | `Return` / `Space` / `Tab` / `Backspace` / `Escape` |
+| Shift, Ctrl, Alt (left and right) | `Left Shift`, `Right Shift`, `Left Ctrl`, `Right Ctrl`, `Left Alt`, `Right Alt` |
+| Windows key (macOS: Command) | `Left GUI`, `Right GUI` (the Windows key opens the Start menu: ignore it when it cannot be captured) |
+| Caps Lock | `CapsLock` |
+| Keypad `.` `*` `+` `/` `-`, Keypad Enter, Keypad 0..9 | `Keypad .`, `Keypad *`, `Keypad +`, `Keypad /`, `Keypad -`, `Keypad Enter`, `Keypad 0`..`Keypad 9` (all ten digits are in the original table) |
+| F1..F12 | `F1`..`F12` |
+| Home, End, Page Up, Page Down, Delete | `Home`, `End`, `PageUp`, `PageDown`, `Delete` |
+| Arrows | `Left`, `Right`, `Up`, `Down` |
+
+Keys not in this table are ignored while capturing (the capture keeps waiting). Display names in key caps: `Space` -> localized
+(`keySpace`), `Return` -> `keyEnter`, `Escape` -> `Esc`, `Backspace` -> `⌫`, arrows -> `← → ↑ ↓`, `Left/Right Shift` -> `Shift`, `Left/Right
+Ctrl` -> `Ctrl`, `Left/Right Alt` -> `Option` on macOS (**Windows: `Alt`**), `Left/Right GUI` -> `Cmd` (**Windows: `Win`**), mouse sources ->
+`mouseLeft` / `mouseRight` / `mouseMiddle` / `mouseBack` (X1) / `mouseForward` (X2), wheel -> `wheelUp` / `wheelDown`; any other
+key prints its name. The input file the game reads is `Action = SOURCE` lines, one per source, in action order (an action without
+any source is written as `KEY:F24`, "unbound"), followed by the changed tuning lines (`LeftStickDeadzone`, `RightStickDeadzone`,
+`MouseSensitivity`, `MouseVerticalScale`, `MouseCurve`, `MouseDeadzoneOffset`, `MouseMaxSpeed`, `MouseSmoothingMs`, `MouseDecayMs`,
+`StickModifierScale`, `KeyboardRampMs`, `TriggerRampMs`; tenths and hundredths written as decimals); its format is documented upstream
+in `docs/user/INPUT_MAPPING.md` of AnyPS5-ARM.
+
+---
+
+## 8. Localization
+
+Two languages: **English** (`en`) and **Türkçe** (`tr`). Lookup: current language table, then English, then the key itself.
+`%d` = integer, `%@` = string (replace with the port's formatter; keep the sentences identical). Accent names (not in the table):
+Blue/Mavi, Mint/Nane, Coral/Mercan, Violet/Mor, Gold/Altın, White/Beyaz. The strings below are generated verbatim from
+`Localization.swift` (212 keys in each language); the Windows replacements for the macOS-specific ones are in section 9.3 and win over
+this table. Some keys exist in the table without being used by the current UI (for example `continueAction`, `skip`, `update`,
+`unlocking`, `allGames`, `sortName`, `playTime`, `gameEnded`, `confirm`); keep them for completeness.
+
+| Key | English | Türkçe |
+|---|---|---|
+| `welcome` | Welcome to AnyPS5 | AnyPS5'e hoş geldin |
+| `welcomeSubtitle` | Play PS5 games on your Mac. Let's set a few things up first. | PS5 oyunlarını Mac'inde oyna. Önce birkaç şeyi ayarlayalım. |
+| `chooseLanguage` | Language | Dil |
+| `chooseTheme` | Pick a theme | Bir tema seç |
+| `chooseThemeSubtitle` | You can change it later in Settings, or use your own picture or video. | Sonra Ayarlar'dan değiştirebilir, kendi resmini ya da videonu koyabilirsin. |
+| `chooseFolder` | Where are your games? | Oyunların nerede? |
+| `chooseFolderSubtitle` | Choose the folder that holds your PS5 dumps. Subfolders are scanned too, and new games show up on their own. | PS5 dump'larının olduğu klasörü seç. Alt klasörleri de tararım, yeni oyunları kendim bulurum. |
+| `pickFolder` | Choose Folder | Klasör Seç |
+| `changeFolder` | Change Folder | Klasörü Değiştir |
+| `gamesFound` | %d games found | %d oyun bulundu |
+| `noGamesFound` | No games in this folder | Bu klasörde oyun bulamadım |
+| `continueAction` | Continue | Devam |
+| `back` | Back | Geri |
+| `start` | Start | Başla |
+| `skip` | Skip | Atla |
+| `games` | Games | Oyunlar |
+| `library` | Game Library | Oyun Kütüphanesi |
+| `settings` | Settings | Ayarlar |
+| `play` | Play | Oyna |
+| `unlock` | Unlock | Kilidi Aç |
+| `unlocking` | Unlocking | Kilit açılıyor |
+| `cancel` | Cancel | İptal |
+| `queued` | Queued | Sırada |
+| `update` | Update | Güncelle |
+| `retry` | Try Again | Tekrar Dene |
+| `options` | Options | Seçenekler |
+| `locked` | Locked | Kilitli |
+| `ready` | Ready to play | Oynamaya hazır |
+| `updateAvailable` | Can be installed again with the new version | Yeni sürümle yeniden kurulabilir |
+| `failed` | Could not unlock | Kilit açılamadı |
+| `starting` | Starting… | Başlatılıyor… |
+| `startingText` | The game is opening, please wait. The first start can take a few minutes while the game gets ready for the Mac. | Oyun açılıyor, lütfen bekle. İlk açılış, oyun Mac için hazırlanırken birkaç dakika sürebilir. |
+| `running` | Playing | Oynanıyor |
+| `stepUnwrap` | Opening the game files | Oyun dosyaları açılıyor |
+| `stepRelink` | Converting for Mac | Mac için çevriliyor |
+| `stepCopy` | Preparing the game | Oyun hazırlanıyor |
+| `stepBundle` | Packaging | Paketleniyor |
+| `stepFinish` | Finishing touches | Son dokunuşlar |
+| `titleID` | Title ID | Oyun Kimliği |
+| `version` | Version | Sürüm |
+| `size` | Size | Boyut |
+| `status` | Status | Durum |
+| `folder` | Folder | Klasör |
+| `gameSettings` | Game Settings | Oyun Ayarları |
+| `resolution` | Resolution | Çözünürlük |
+| `resolutionDefault` | Game default | Oyunun varsayılanı |
+| `display` | Display | Görüntü |
+| `windowed` | Window | Pencere |
+| `fullscreen` | Full Screen | Tam Ekran |
+| `windowSize` | Window Size | Pencere Boyutu |
+| `vsync` | Vertical Sync | Dikey Senkronizasyon |
+| `on` | On | Açık |
+| `off` | Off | Kapalı |
+| `overlay` | Performance Overlay | Performans Göstergesi |
+| `overlayOff` | Off | Kapalı |
+| `overlayTopLeft` | Top Left | Sol Üst |
+| `overlayTopRight` | Top Right | Sağ Üst |
+| `overlayBottomLeft` | Bottom Left | Sol Alt |
+| `overlayBottomRight` | Bottom Right | Sağ Alt |
+| `gameLanguage` | Game Language | Oyun Dili |
+| `followLauncher` | Same as the launcher | Launcher ile aynı |
+| `reinstall` | Unlock Again | Kilidi Yeniden Aç |
+| `showInFinder` | Show in Finder | Finder'da Göster |
+| `openLog` | Open Log | Günlüğü Aç |
+| `uninstall` | Remove Installation | Kurulumu Kaldır |
+| `clearShaderCache` | Clear Shader Cache | Shader Önbelleğini Temizle |
+| `uninstallConfirm` | Remove the installation? Your game files stay; the game shows as locked again. | Kurulum kaldırılsın mı? Oyun dosyaların silinmez, oyun tekrar kilitli görünür. |
+| `uninstallDone` | Installation removed | Kurulum kaldırıldı |
+| `cacheCleared` | Shader cache cleared | Shader önbelleği temizlendi |
+| `appearance` | Appearance | Görünüm |
+| `theme` | Theme | Tema |
+| `accent` | Accent Color | Vurgu Rengi |
+| `background` | Background | Arka Plan |
+| `backgroundTheme` | Theme animation | Tema animasyonu |
+| `backgroundImage` | My picture | Kendi resmim |
+| `backgroundVideo` | My video | Kendi videom |
+| `chooseFile` | Choose File | Dosya Seç |
+| `gameArtwork` | Show the selected game's artwork | Seçili oyunun görselini göster |
+| `motion` | Animations | Animasyonlar |
+| `motionFull` | Full | Tam |
+| `motionReduced` | Reduced | Azaltılmış |
+| `sounds` | Interface Sounds | Arayüz Sesleri |
+| `language` | Language | Dil |
+| `storage` | Library | Kütüphane |
+| `rescan` | Scan Again | Yeniden Tara |
+| `installedSize` | Installed games are kept as APFS clones and take no extra space. | Kurulu oyunlar APFS klonu olarak saklanır, ek yer kaplamaz. |
+| `about` | About | Hakkında |
+| `aboutText` | AnyPS5 runs PS5 games on the Mac through Rosetta and MoltenVK. | AnyPS5, PS5 oyunlarını Rosetta ve MoltenVK üzerinden Mac'te çalıştırır. |
+| `toolkitVersion` | Toolkit | Araç seti |
+| `profileName` | Profile Name | Profil Adı |
+| `behaviour` | Behaviour | Davranış |
+| `hideWhilePlaying` | Hide the launcher while a game runs | Oyun açılınca launcher'ı gizle |
+| `rosettaMissing` | Games run through Rosetta, which this Mac does not have yet. | Oyunlar Rosetta ile çalışır, bu Mac'te kurulu değil. |
+| `rosettaInstall` | Install Rosetta | Rosetta'yı Kur |
+| `rosettaInstalled` | Rosetta is installed | Rosetta kurulu |
+| `moveToApplications` | Move AnyPS5 to Applications | AnyPS5'i Uygulamalar'a taşı |
+| `moveToApplicationsText` | macOS opens downloaded apps from a locked, read-only copy. Let me move it to Applications and reopen it, so this never gets in the way again. | macOS indirilen uygulamaları kilitli, salt okunur bir kopyadan açıyor. Uygulamalar klasörüne taşıyıp yeniden açayım, bir daha bununla uğraşmazsın. |
+| `moveNow` | Move and Reopen | Taşı ve Yeniden Aç |
+| `later` | Later | Sonra |
+| `noToolkit` | This copy has no conversion tools. Use AnyPS5.app from the release. | Bu kopyada dönüştürme araçları yok. Release'deki AnyPS5.app'i kullan. |
+| `emptyLibraryTitle` | No games yet | Henüz oyun yok |
+| `emptyLibraryText` | Put PS5 dumps in your games folder and they show up here on their own. | Oyun klasörüne PS5 dump'larını koy, burada otomatik görünsünler. |
+| `scanning` | Looking for games | Oyunlar aranıyor |
+| `allGames` | All Games | Tüm Oyunlar |
+| `sortName` | By name | Ada göre |
+| `playTime` | Last played | Son oynanan |
+| `themeCosmic` | Cosmic | Kozmik |
+| `themeAurora` | Aurora | Aurora |
+| `themeSunset` | Sunset | Gün Batımı |
+| `hintMove` | Move | Gezin |
+| `hintSelect` | Select | Seç |
+| `hintBack` | Back | Geri |
+| `hintOptions` | Options | Seçenekler |
+| `unlockFailed` | Could not unlock | Kilit açılamadı |
+| `startFailed` | The game could not start | Oyun başlatılamadı |
+| `gameEnded` | The game closed | Oyun kapandı |
+| `logTitle` | Log | Günlük |
+| `close` | Close | Kapat |
+| `quit` | Quit | Çık |
+| `confirm` | Confirm | Onayla |
+| `controls` | Controls | Tuş Atamaları |
+| `trophies` | Trophies | Kupalar |
+| `advanced` | Advanced | Gelişmiş |
+| `advancedDetail` | Sticks, mouse, keyboard, cache, sharing | Çubuklar, fare, klavye, önbellek, paylaşım |
+| `advancedTitle` | Advanced Settings | Gelişmiş Ayarlar |
+| `makeReport` | Make a Report | Tanı Raporu Oluştur |
+| `makeReportDetail` | To attach on Discord or GitHub | Discord'a ya da GitHub'a eklemek için |
+| `screenshotsFolder` | Screenshots Folder | Ekran Görüntüleri Klasörü |
+| `showScreenshots` | Show Screenshots | Ekran Görüntülerini Göster |
+| `fontsFolder` | System Fonts Folder | Sistem Fontları Klasörü |
+| `fontsNone` | None | Seçilmedi |
+| `fontsReset` | Remove the Fonts Folder | Font Klasörünü Kaldır |
+| `fontsHint` | F12 in a game saves a screenshot. Games that ask for the console's system fonts use the files in the fonts folder. | Oyunda F12 bir ekran görüntüsü kaydeder. Konsolun sistem fontlarını isteyen oyunlar, font klasöründeki dosyaları kullanır. |
+| `sectionSticks` | Controller sticks | Kumanda çubukları |
+| `leftDeadzone` | Left Stick Deadzone | Sol Çubuk Ölü Bölge |
+| `rightDeadzone` | Right Stick Deadzone | Sağ Çubuk Ölü Bölge |
+| `deadzoneDetail` | How much of the travel reads as centered; stops a drifting stick | Ortada sayılan kısım; kayan bir çubuğu durdurur |
+| `sectionMouse` | Mouse as the camera (middle button or F7) | Fareyle kamera (orta tuş ya da F7) |
+| `mouseSensitivity` | Mouse Sensitivity | Fare Hassasiyeti |
+| `mouseSensitivityDetail` | Higher turns fully with less movement | Yüksek değer daha az hareketle tam döner |
+| `mouseVertical` | Vertical Speed | Dikey Hız |
+| `mouseVerticalDetail` | Speeds up looking up and down against turning | Yukarı-aşağı bakışı yatay dönüşe göre hızlandırır |
+| `mouseCurve` | Response Curve | Tepki Eğrisi |
+| `mouseCurveDetail` | Above 1 gives finer control at low speed | 1'in üstü yavaş harekette daha ince kontrol |
+| `mouseMinimum` | Minimum Tilt | En Küçük Eğim |
+| `mouseMinimumDetail` | Raise it if slow movement does not move the camera | Kamera yavaş harekette kıpırdamıyorsa artır |
+| `mouseMaxSpeed` | Maximum Speed | En Yüksek Hız |
+| `mouseMaxSpeedDetail` | Keeps a fast flick at full tilt a little longer | Hızlı bir savuruşu biraz daha uzun tutar |
+| `mouseSmoothing` | Smoothing | Yumuşatma |
+| `mouseSmoothingDetail` | Smooths jittery movement; off follows every report | Titreyen hareketi yumuşatır; kapalı her hareketi izler |
+| `mouseDecay` | Center After | Bırakınca Ortalama |
+| `mouseDecayDetail` | How soon the camera stops after the mouse does | Fare durunca kameranın durma süresi |
+| `sectionKeyboard` | Keyboard | Klavye |
+| `stickModifierScale` | Slow Movement Amount | Yavaş Hareket Oranı |
+| `stickModifierScaleDetail` | How far the sticks tilt while Slow Movement is held (set in Controls) | Yavaş Hareket tuşu basılıyken çubuğun eğimi (Tuş Atamaları'nda) |
+| `keyboardRamp` | Stick Ramp | Çubuk Geçişi |
+| `keyboardRampDetail` | How long a key takes to tilt the stick fully | Tuşla çubuğun tam eğime varma süresi |
+| `triggerRamp` | Trigger Ramp | Tetik Geçişi |
+| `triggerRampDetail` | How long a key takes to press L2/R2 fully, for racing games | Tuşla L2/R2'nin sonuna kadar basılma süresi, yarış oyunları için |
+| `sectionGraphics` | Graphics | Görüntü |
+| `shaderCache` | Shader Cache | Shader Önbelleği |
+| `shaderCacheDetail` | When off, shaders compile again at every start | Kapalıyken her açılışta shader'lar yeniden derlenir |
+| `sectionShare` | Sharing | Paylaşım |
+| `exportSettings` | Export Settings | Ayarları Dışa Aktar |
+| `exportSettingsDetail` | Keys and every setting in one file | Tuşlar ve tüm ayarlar tek bir dosyada |
+| `importSettings` | Import Settings | Ayarları İçe Aktar |
+| `importSettingsDetail` | Applies a settings file someone shared | Birinin paylaştığı ayar dosyasını uygular |
+| `resetAdvanced` | Reset Advanced Settings | Gelişmiş Ayarları Sıfırla |
+| `reportSaved` | Report saved | Rapor kaydedildi |
+| `reportFailed` | The report could not be saved | Rapor kaydedilemedi |
+| `settingsExported` | Settings exported | Ayarlar dışa aktarıldı |
+| `settingsImported` | Settings imported | Ayarlar içe aktarıldı |
+| `settingsImportedOther` | Settings from %@ imported | %@ ayarları içe aktarıldı |
+| `settingsFileFailed` | This is not an AnyPS5 settings file | Bu dosya bir AnyPS5 ayar dosyası değil |
+| `stickModifier` | Slow Movement | Yavaş Hareket |
+| `diagnosisMissingModule` | Missing module: %@. Unlocking the game again may fix it. | Eksik modül: %@. Kilidi yeniden açmak çözebilir. |
+| `diagnosisUnsupported` | The game asked for a system function that is not supported yet: %@ | Oyun henüz desteklenmeyen bir sistem fonksiyonu istedi: %@ |
+| `diagnosisGpuLost` | The GPU stopped responding. | GPU ile bağlantı koptu. |
+| `diagnosisOutOfMemory` | The game ran out of memory. | Bellek yetmedi. |
+| `diagnosisEngineError` | Engine error: %@ | Motor hatası: %@ |
+| `diagnosisCrashed` | The game crashed (%@). | Oyun çöktü (%@). |
+| `trophyEarned` | Trophy earned | Kupa kazandın |
+| `trophyHidden` | Hidden Trophy | Gizli Kupa |
+| `trophyHiddenDetail` | Shows what it is once you earn it. | Kazandığında ne olduğu görünür. |
+| `trophyLocked` | Not earned | Kazanılmadı |
+| `gradePlatinum` | Platinum | Platin |
+| `gradeGold` | Gold | Altın |
+| `gradeSilver` | Silver | Gümüş |
+| `gradeBronze` | Bronze | Bronz |
+| `controlsHint` | Pick a row, then press the key you want for it. Esc cancels. A connected controller keeps its own buttons. | Bir satır seç, sonra atamak istediğin tuşa bas. Esc vazgeçer. Kumanda bağlıysa kendi tuşlarıyla çalışır. |
+| `pressKey` | Press a key… | Bir tuşa bas… |
+| `resetControls` | Reset to Default Keys | Varsayılan Tuşlara Dön |
+| `noKey` | None | Yok |
+| `dpad` | D-pad | Yön Tuşu |
+| `leftStick` | Left Stick | Sol Çubuk |
+| `rightStick` | Right Stick | Sağ Çubuk |
+| `touchpadLeft` | Touchpad (Left) | Dokunmatik Yüzey (Sol) |
+| `touchpadRight` | Touchpad (Right) | Dokunmatik Yüzey (Sağ) |
+| `directionUp` | Up | Yukarı |
+| `directionDown` | Down | Aşağı |
+| `directionLeft` | Left | Sol |
+| `directionRight` | Right | Sağ |
+| `keySpace` | Space | Boşluk |
+| `keyEnter` | Return | Enter |
+| `mouseLeft` | Left Click | Sol Tık |
+| `mouseRight` | Right Click | Sağ Tık |
+| `mouseMiddle` | Middle Click | Orta Tık |
+| `mouseBack` | Mouse 4 | Fare 4 |
+| `mouseForward` | Mouse 5 | Fare 5 |
+| `wheelUp` | Wheel ↑ | Tekerlek ↑ |
+| `wheelDown` | Wheel ↓ | Tekerlek ↓ |
+| `unreadableDump` | This dump is encrypted or damaged and cannot be opened. | Bu dump şifreli ya da bozuk, açılamaz. |
+
+Date and number formats: dates in trophy rows use the launcher language's locale (`en-US` / `tr-TR`), medium date and short time; file
+sizes use decimal units (1 GB = 10^9 bytes) with the language's decimal separator (S-home shows `8,39 GB`).
+
+---
+
+## 9. Deviations (what must differ on Windows)
+
+### 9.1 Font, icons, rendering
+
+| Original | Windows port |
+|---|---|
+| SF Pro / SF Pro Rounded / SF Mono (Apple licence forbids redistribution) | Inter (Text + Display static cuts, or variable), JetBrains Mono; see 1.6 |
+| SF Symbols | Phosphor Icons (MIT) per 5.16 |
+| `.continuous` squircle corners | circular corners (optional 60 % smoothing mesh later) |
+| `.ultraThinMaterial` | GPU two-pass blur + tint per section 4 |
+| Metal shader, half resolution | WGSL through wgpu, same half resolution |
+| SwiftUI springs and curves | the spring solver of 2.1 and the Beziers of 2.2 |
+| AVFoundation / AVAudioEngine | `rodio` per 7.1 |
+| `AVPlayerLooper` video background | postponed (picture only) |
+
+### 9.2 Window, files, system integration
+
+| Original (macOS) | Windows equivalent |
+|---|---|
+| Hidden, transparent title bar; window moves by dragging the background | **Native title bar kept** (snap layouts, resize borders and accessibility keep working), recoloured to black through DWM so it merges with the black background: `DwmSetWindowAttribute` with `DWMWA_CAPTION_COLOR` (35) = black, `DWMWA_TEXT_COLOR` (36) = white, `DWMWA_BORDER_COLOR` (34) = black on Windows 11, and `DWMWA_USE_IMMERSIVE_DARK_MODE` (20) on Windows 10. Window title `AnyPS5`. No custom caption drawing. |
+| Starts maximised to the screen's visible frame; green button = fullscreen | start maximised; `F11` toggles borderless fullscreen; min size 1100 x 650 |
+| Menu bar: `Cmd+,` Settings, no New | no menu bar; `Ctrl+,` opens Settings (when onboarded); `Alt+F4` closes; the "Quit" row in About stays |
+| `NSOpenPanel` / `NSSavePanel` | native Windows dialogs through the `rfd` crate: pick folder (games, screenshots, fonts), pick file (picture; video later; settings JSON import), save file (settings export, default name `"<game> - AnyPS5.json"`), dialog titles from `pickFolder`, `chooseFile`, `exportSettings`, `importSettings`. While a dialog is open the launcher ignores input. |
+| Finder (reveal in Finder) | Explorer: `explorer.exe /select,"<path>"`; label `showInFinder` -> "Show in Explorer" |
+| `UserDefaults` | JSON file `%APPDATA%\AnyPS5 Launcher\preferences.json` (same fields, section 5.7) |
+| `~/Library/Logs/AnyPS5/<titleID>.log`, `.../Reports/` | `%LOCALAPPDATA%\AnyPS5\Logs\<titleID>.log`, `...\Logs\Reports\` |
+| `~/Library/Application Support/AnyPS5/Controls/<game>.ini` | `%APPDATA%\AnyPS5\Controls\<game>.ini` |
+| `~/Pictures/AnyPS5` (F12 screenshots) | `%USERPROFILE%\Pictures\AnyPS5` |
+| Shader cache `~/Library/Caches/<bundle id>` | the toolkit's cache folder on Windows (to be defined by the core crate); the row stays |
+| Crash reports `DiagnosticReports/eboot*.ips` | Windows Error Reporting / minidumps for the game process; "crashed" shows the exception code and name (for example `0xC0000005 (ACCESS_VIOLATION)`) |
+| dyld `Library not loaded` | Windows loader failure: exit code `0xC0000135` (`STATUS_DLL_NOT_FOUND`) or a "DLL not found" line in the log; still maps to `diagnosisMissingModule` |
+| `VK_ERROR_DEVICE_LOST` etc. | unchanged (Vulkan on Windows) |
+| NSWorkspace launch, process watch, `CGWindowList` first-window check | spawn the game process and wait on its handle; poll `EnumWindows` for a visible top-level window of that process larger than 200 x 150 (every 400 ms, 240 s timeout); bring it forward with `SetForegroundWindow` (the original "yields activation") |
+| Esc on splash: `forceTerminate` | `TerminateProcess` (on the game's job object) |
+| "Hide the launcher while a game runs" (`orderOut`) | minimise the launcher window and restore on exit. The original's caveat (a hidden app's banner never shows) does not apply, the banner is its own window |
+| Notch / menu-bar safe area for the banner | top of the primary monitor's work area, no inset |
+| Trackpad scroll phases | wheel/touchpad scroll deltas (6.2) |
+| Controller discovery (`GCController`) | `gilrs` events; no wireless discovery step |
+| Key cap labels Option / Cmd | `Alt` / `Win` (6.5) |
+| Text field keeps all keys | the port lets Enter and Esc **blur** the profile-name field (the original cannot leave it by keyboard); arrows and text editing stay with the field |
+
+### 9.3 Mac-only features and strings
+
+Removed outright (no Windows meaning): the **Rosetta row** (`rosettaMissing`, `rosettaInstall`, `rosettaInstalled`, the Behaviour category
+row and `installRosetta`), the **app translocation** machinery (`AppLocation`, `MoveBanner`, `moveToApplications`,
+`moveToApplicationsText`, `moveNow`, `later`, the About "Move to Applications" row), the Rosetta/MoltenVK wording in the About text and
+the APFS-clone sentence. Strings that mention the Mac are replaced (keys unchanged; these win over the table in section 8):
+
+| Key | English (Windows) | Türkçe (Windows) |
+|---|---|---|
+| `welcomeSubtitle` | Play PS5 games on your PC. Let's set a few things up first. | PS5 oyunlarını PC'nde oyna. Önce birkaç şeyi ayarlayalım. |
+| `stepRelink` | Converting for Windows | Windows için çevriliyor |
+| `startingText` | The game is opening, please wait. The first start can take a few minutes while the game gets ready for Windows. | Oyun açılıyor, lütfen bekle. İlk açılış, oyun Windows için hazırlanırken birkaç dakika sürebilir. |
+| `aboutText` | AnyPS5 runs PS5 games natively on Windows. | AnyPS5, PS5 oyunlarını Windows'ta yerel olarak çalıştırır. |
+| `installedSize` | Unlocked games are kept in the `.AnyPS5` folder inside your games folder. (provisional: depends on the Windows install strategy) | Kilidi açılan oyunlar oyun klasörünün içindeki `.AnyPS5` klasöründe saklanır. (geçici: Windows kurulum yöntemine bağlı) |
+| `showInFinder` | Show in Explorer | Dosya Gezgini'nde Göster |
+| `noToolkit` | This copy has no conversion tools. Use the installer from the release. | Bu kopyada dönüştürme araçları yok. Release'deki kurulum dosyasını kullan. |
+
+If the Windows "unlock" does something other than converting, keep the five step *slots* and weights (5.4) and only rename the texts.
+The log-start marker `[anyps5-launcher] start` is kept as is.
+
+### 9.4 Trophy banner over games
+
+The macOS panel sits at screen-saver level above full-screen games. On Windows the banner is a separate topmost layered window
+(`WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW`; an egui secondary viewport with no decorations, transparent, always on top,
+mouse pass-through, not in the taskbar, not activating). **Limitation:** a game in *exclusive* fullscreen cannot be drawn over by an
+ordinary window; it works for windowed and borderless fullscreen. When the window cannot be shown the banner is skipped and the trophy
+list still updates.
+
+---
+
+## 10. Asset list
+
+| Asset in the ARM repo | Reuse? | Notes |
+|---|---|---|
+| Swift source (layout numbers, strings, shader math, sound parameters, input rules) | **Yes**, GPL-2.0 | Derived work. Credit utkuhalis/AnyPS5-ARM in the README (done) and keep GPL-2.0-only. This document records the values; the code is re-implemented in Rust |
+| Localization strings (EN, TR) | **Yes**, verbatim, GPL-2.0 | Section 8 plus the Windows replacements in 9.3 |
+| App icon | **Recreate** | The macOS icon is generated by `tools/macos/launcher/icon.swift` (no PNG is committed). Recipe: 1024 canvas, 824 rounded square (inset 100, radius 185) with a vertical gradient from (0.10, 0.30, 0.80) at the top to (0.02, 0.05, 0.20); radial glow (0.5, 0.75, 1.0) alpha 0.55 to 0, radius 520, centred 160 from the square's right edge and 120 from its top; five flowing curved bands (stroke (0.7, 0.85, 1.0) alpha 0.12 + 0.05 n, width 5 - 0.6 n, glow blur 18); a centred white ring (diameter 460, width 26, centre 20 above the middle) with a rounded white play triangle (corner radius 34), black 0.4 drop shadow. `crates/anyps5-launcher/assets/icon.ico` already exists in this repository; regenerate it from the recipe as a multi-size ICO (16, 24, 32, 48, 64, 128, 256) if it does not match |
+| Screenshots in `docs/screenshots/` and `docs/videos/launcher.mp4` | **Link only, do not copy** | They show Hollow Knight: Silksong, Plants vs. Zombies, Minecraft, Doom, Stray and other third-party artwork and trophy icons. Make our own screenshots with our own test data |
+| Sounds | **Recreate** (nothing to copy) | Synthesised; exact parameters in 7.1 |
+| Fonts | **Do not reuse** | SF Pro is Apple-licensed. Use Inter (OFL 1.1) and JetBrains Mono (OFL 1.1); ship their licence files and mention them in the README |
+| Icons | **Recreate** | SF Symbols are Apple-licensed; use Phosphor (MIT), ship its licence |
+| Theme backgrounds | **Re-implement** | WGSL in 3.4 (derived from the Metal shader, GPL-2.0) |
+| Game artwork, trophy icons | **Never bundled** | Read at runtime from the user's own dumps |
+| Controller face glyphs `✕ ○ □ △` | **Recreate** | Painted vector shapes |
+
+---
+
+## 11. Implementation notes for egui
+
+- **Immediate mode with retained animation state.** Keep a map `widget id -> Spring` (in `ctx.memory` or the app struct); call
+  `ctx.request_repaint()` while any spring or timeline is active, `request_repaint_after(...)` for timed items (clock minute, splash
+  second tick, toast and banner timers) and nothing when idle with the background paused. While the shader animates, cap at 60 fps.
+- **One command pipeline.** Translate egui key events, wheel and `gilrs` events into the seven commands (section 6) in a single
+  function that is their only consumer; do not rely on egui's keyboard focus traversal (draw focus from the model: `HomeFocus`,
+  `panelRow`, ...). Text fields are the only widgets that see raw keys.
+- **Custom widgets with the painter** (rounded rects, strokes, `epaint::Shadow`, galleys with `TextFormat`); use an inside stroke for the
+  1 px hairlines (SwiftUI `strokeBorder` draws inside the shape) and an outside one for focus rings.
+- **Scale**: `pixels_per_point = os_ppp * scale` (1.1).
+- **Offscreen preview renderer.** The original has `AnyPS5 --render-preview <out folder> <games folder>`, which draws every screen to a
+  PNG at 1600 x 900 without opening a window, with deterministic data (profile name "Utku", sounds off, Turkish unless
+  `ANYPS5_PREVIEW_LANGUAGE=en`, `ANYPS5_PREVIEW_SELECT=<title id>`, `ANYPS5_PREVIEW_BANNER_BACKDROP=<png>`). Build the same for visual
+  regression, with these states: `home-theme0..2` (artwork off), `home-artwork`, `home-actions` (focus on actions 0), `home-unlocking`
+  (copy step, 40 %), `starting`, `game-settings` (row 1), `controls` (row 1), `controls-capture` (row 3 waiting, "Square"), `advanced`
+  (row 4), `home-trophies` (focus on actions 1), `trophies` (index 1), `settings` (row 0) and `settings1..5` (each category), `library`
+  (index 1), `trophy-banner` (settled card over a backdrop picture), `onboarding0..2`. Theme stills are rendered at `time = 260` (full
+  frame) and `time = 200` (660 x 372 cards); the selected game in previews is index 1.
+- **Checks against the original**: compare each preview with the matching screenshot from the table at the top: tile row x positions
+  (64, 256, 556, 690, 824), the hero title near y 598 and info cards at y 727..823 (S-home-trophies, 1600 x 900), hint bar baseline near
+  y 862, settings list x = 456 (S-settings), side panel x = 1040 (S-game-settings).
+
+---
+
+## 12. Open points (not decidable from the Swift source)
+
+1. Exact material tint and blur sigma of `.ultraThinMaterial` (estimates in section 4).
+2. The `egui blur = 2 * SwiftUI radius` shadow rule (1.4) comes from the usual CALayer / CSS relation, not from a measurement.
+3. The WGSL port is untested (no Rust toolchain and no GPU run on the authoring machine); compile it with naga and diff against S-themes
+   before relying on it.
+4. What "unlock" does on Windows, which fixes the step names and the `installedSize` text (9.3).
+5. Whether the Windows toolkit honours the same `ANYPS5_*` environment variables (5.9).
+6. The Turkish date rendering of trophy rows and the exact byte-size rounding of `ByteCountFormatter` were not observed.
