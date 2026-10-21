@@ -12,7 +12,23 @@ A game library and launcher front end for AnyPS5. It keeps the design and behavi
 
 ## Building
 
-The Rust scaffold is not in the repository yet. Build instructions will be added with it (`cargo build --release`).
+You need a stable Rust toolchain, 1.88 or newer ([rustup](https://rustup.rs)).
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --release
+```
+
+The executable is `target/release/anyps5-launcher.exe`.
+
+Two toolchains are used:
+
+- **MSVC** (`x86_64-pc-windows-msvc`, needs the Visual Studio Build Tools): what CI builds and what releases ship.
+- **GNU** (`x86_64-pc-windows-gnu`): works for local development without Visual Studio. The default rustc linker setup needs a MinGW gcc; if the linker fails, build with `RUSTFLAGS="-C link-self-contained=yes -C linker=rust-lld -C linker-flavor=ld.lld"` and make `libshlwapi.a` (from any MinGW-w64) available through an extra `-L native=<dir>`. Do not build in a path that contains an apostrophe: `windres` cannot embed the icon there.
+
+`crates/anyps5-core` holds all logic without UI; `crates/anyps5-launcher` is the egui/wgpu application.
 
 ## Credits and licence
 
