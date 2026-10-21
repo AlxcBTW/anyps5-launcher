@@ -113,13 +113,13 @@ theme's default accent).
 | Keycap fill (hint) | white 0.16 |
 | Scrim behind side panel | black 0.35 |
 | Full-screen panel | black 0.74 over blurred backdrop (settings, library, trophies); black 0.65 for the log |
-| Side panel | `Color(white 0.06)` at 0.92 over blurred backdrop, 1 px left edge white 0.08 |
+| Side panel | `Color(white: 0.06)` at 0.92 over blurred backdrop, 1 px left edge white 0.08. SwiftUI's `Color(white:)` is a **gray level** (rgb 15,15,15), not white with alpha; the same holds for the next row |
 | Glass panel (cards, toast, log boxes) | blurred backdrop + black `opacity` (default 0.38; 0.5 diagnosis box; 0.55 log box; 0.6 toast and banner) + 1 px inner stroke white 0.09 |
 | Splash | blurred backdrop + black 0.55 |
 | Destructive | text/icon `(1.00, 0.60, 0.55)` = `#FF998C` for titles, `(1.00, 0.55, 0.50)` = `#FF8C80` for icons and the button label |
 | Error text | `(1.00, 0.70, 0.65)` = `#FFB3A6` (failure message), `(1.00, 0.60, 0.55)` = `#FF998C` (state label failed/unreadable) |
 | Warning text | `(1.00, 0.78, 0.50)` = `#FFC780` (diagnosis), `(1.00, 0.82, 0.40)` = `#FFD166` (update available) |
-| Toast/banner card fill | `Color(white 0.07)` at 0.94 |
+| Toast/banner card fill | `Color(white: 0.07)` (gray, rgb 18,18,18) at 0.94 |
 | Game artwork scrims | see 5.2 |
 | Switch off track | white 0.18 (black 0.18 when its row is focused), knob `#FFFFFF`, knob shadow black 0.25 |
 
@@ -251,8 +251,9 @@ Bundling in egui:
   Inter release) and register each as its own `FontFamily::Name` ("inter-light" ... "inter-bold"). Use the **InterDisplay-\*** files
   for text at or above 20 dp (mirrors SF's text/display split at 20 pt) and the regular Inter files below.
 - Recent egui exposes `TextFormat::coords: VariationCoords` (variable-font axes). If the pinned version supports it, one
-  `InterVariable.ttf` with `wght` and `opsz` coordinates can replace the ten static files. Decide at implementation time; the spec
-  (weights and sizes below) is the same either way.
+  `InterVariable.ttf` with `wght` and `opsz` coordinates can replace the ten static files. **Decided: variable font.** egui 0.37 supports it through `FontTweak::coords`, so `InterVariable.ttf` (one 880 KB file) is
+  registered ten times as named families (`inter-{light,regular,medium,semibold,bold}` at `opsz` 14 and `inter-display-*` at
+  `opsz` 32). Sizes from 20 dp use the display families.
 - Letter-spacing: SF Pro applies size-dependent tracking automatically. Inter Display and the Display files already carry the
   tighter spacing, so **no extra tracking** is applied except where the original sets it explicitly: uppercase overlines use
   `TextFormat::extra_letter_spacing` = 0.6 (info-card titles) or 0.8 (onboarding "LANGUAGE", trophies "TROPHIES"), in dp.
@@ -639,7 +640,7 @@ backdrop filter. Recipe:
    under them is *not* part of the blur source in the port (the original blurs it too, but under 74 % black it is not visible
    as more than a smudge); simply fade the home UI to 0 opacity while a full-screen overlay is open, or leave it and accept the
    difference.
-5. The side panel: `Color(white 0.06)` at 0.92 alpha, so almost opaque; use the blurred copy plus that fill. Its left edge is a
+5. The side panel: gray 0.06 (`Color(white: 0.06)`) at 0.92 alpha, so almost opaque; use the blurred copy plus that fill. Its left edge is a
    1 px line white 0.08; the scrim on the rest of the screen is black 0.35.
 6. Performance: the blur copy is tiny (1/8 resolution); the whole chain is a few hundred microseconds. Skip steps 1-2 on frames
    where nothing under the panels changed and no panel is open.
@@ -1003,7 +1004,7 @@ empty. Mouse: tapping a language card selects and confirms; tapping a theme card
 | `gearshape.fill` | `gear-six` |
 | `gamecontroller.fill` | `game-controller` |
 | `lock.fill` / `lock.open.fill` | `lock` / `lock-open` (fill weight) |
-| `xmark.octagon.fill` | `x-octagon` fill |
+| `xmark.octagon.fill` | `x-circle` fill (Phosphor has no octagon) |
 | `exclamationmark.triangle.fill` | `warning` fill |
 | `clock` | `clock` |
 | `arrow.down.circle.fill` | `arrow-circle-down` fill |
@@ -1017,7 +1018,7 @@ empty. Mouse: tapping a language card selects and confirms; tapping a theme card
 | `circle.dashed`, `internaldrive`, `number`, `tag` | `circle-dashed`, `hard-drive`, `hash`, `tag` |
 | `folder`, `magnifyingglass`, `square.stack.3d.up.slash` | `folder`, `magnifying-glass`, `stack` (+ slash overlay) |
 | `chevron.left/right`, `minus`, `plus` | `caret-left/right`, `minus`, `plus` |
-| `stethoscope`, `doc.text`, `doc.badge.checkmark` | `stethoscope`, `file-text`, `file-check` |
+| `stethoscope`, `doc.text`, `doc.badge.checkmark` | `stethoscope`, `file-text`, `file-text` (no `file-check` in Phosphor) |
 | category glyphs: `paintbrush`, `square.grid.2x2`, `globe`, `slider.horizontal.3`, `wrench.and.screwdriver`, `info.circle` | `paint-brush`, `squares-four`, `globe`, `sliders-horizontal`, `wrench`, `info` |
 | row glyphs: `paintpalette`, `circle.lefthalf.filled`, `photo.on.rectangle`, `photo`, `wind`, `person.crop.circle`, `speaker.wave.2`, `eye.slash`, `power` | `palette`, `circle-half`, `images`, `image`, `wind`, `user-circle`, `speaker-high`, `eye-slash`, `power` |
 | game-settings glyphs: `rectangle.on.rectangle`, `macwindow`, `arrow.up.left.and.arrow.down.right`, `waveform.path`, `keyboard`, `slider.horizontal.below.rectangle`, `speedometer`, `character.bubble`, `sparkles`, `trash` | `rectangle`/`frame-corners`, `app-window`, `arrows-out-simple`, `wave-sine`, `keyboard`, `sliders`, `gauge`, `translate`, `sparkle`, `trash` |
@@ -1541,8 +1542,41 @@ list still updates.
 
 1. Exact material tint and blur sigma of `.ultraThinMaterial` (estimates in section 4).
 2. The `egui blur = 2 * SwiftUI radius` shadow rule (1.4) comes from the usual CALayer / CSS relation, not from a measurement.
-3. The WGSL port is untested (no Rust toolchain and no GPU run on the authoring machine); compile it with naga and diff against S-themes
-   before relying on it.
+3. ~~The WGSL port is untested.~~ Resolved in the ui-foundation PR: all shaders compile and validate with naga (unit tests in
+   `ui/gpu.rs`) and the Cosmic card matches `launcher-themes.jpg` to within one level per channel.
 4. What "unlock" does on Windows, which fixes the step names and the `installedSize` text (9.3).
 5. Whether the Windows toolkit honours the same `ANYPS5_*` environment variables (5.9).
 6. The Turkish date rendering of trophy rows and the exact byte-size rounding of `ByteCountFormatter` were not observed.
+
+---
+
+## 13. Implemented foundation (crate `anyps5-launcher`, module `ui`)
+
+The shared UI layer of this specification. Screens use these modules and nothing else from the foundation.
+
+| Module | Contents (section) |
+|---|---|
+| `theme` | tokens 1.1-1.5 (`color::*`, `radius::*`, `size::*`, `pad::*`, `shadows::*`), type scale 1.6 (`ty::*`, `font(size, Weight)`), bundled fonts, `sync_scale` |
+| `anim` | spring solver 2.1, `Bezier` 2.2, `Motion` presets with reduced-motion curves 2.3, `AnimExt` (`ctx.animate_to`, `focus_t`), endless loops 2.4 (#17, 17b, 26) |
+| `background` | `Backdrop` (clock 3.1, theme cross-fade), `Background` paint callback, WGSL 3.4 |
+| `blur`, `glass` | section 4: Gaussian chain on 1/8 resolution, `GlassStyle` presets, `paint_glass` |
+| `components` | `ConsoleButton`, `IconButton`, `Switch`, `ProgressLine`, `IndeterminateLine`, hint bar, key caps, `PadGlyph`, focus glow and ring |
+| `chrome` | `paint_tile` (5.1), `info_card` / `facts_line` (5.3), `PanelRow` with all kinds (5.8), `side_panel` (5.9), `fullscreen_panel`, `toast` (5.6), `language_card`, `onboarding_dots` |
+| `text`, `icons` | line height, tracking, middle truncation, tabular figures; Phosphor constants (5.16) |
+| `sound` | section 7.1, rendered once, four voices, lazy device |
+| `i18n` | section 8: 212 keys, `Language::text/format`, `byte_text`, Windows replacements of 9.3 applied |
+| `input`, `focus`, `gamepad` | section 6: `Command`, `Input::poll`, `HomeFocus::navigate`, `PanelNav::command` |
+| `gallery` | hidden `--gallery[=components|panels|themes|bg0|bg1|bg2] [--screenshot=out.png] [--size=WxH] [--time=T]` |
+
+Decisions made while implementing:
+
+- **Focus is driven by the model**, never by egui's keyboard focus. Widgets take `focused: bool`; egui only supplies pointer state.
+- **Press feedback** (Windows addition, 9.2): buttons and cards scale to 0.97 while the mouse button is down. Hover stays instant.
+- **Focus glow before the element, ring after it**: egui shadows are filled, so the glow is painted behind the element
+  (`paint_focus_glow`) and only the stroke on top (`paint_focus_stroke`).
+- **Scaled text** (focused button 1.05, language card 1.04) uses font sizes quantised to 0.25 dp so animation reuses a small set of glyph rasters.
+- **Glass** composes in the shader: `mix(sharp, material, 0.55)` then black, then the 1 px inner stroke; the material is the
+  blurred backdrop with saturation 1.25 and a 6 % white tint (both estimates, tune against the original).
+- **Keyboard repeat** of select/back/options is suppressed (a held Enter must not re-fire); held arrows repeat at the OS rate.
+- **Row padding**: panel rows keep 10 dp above and below their text even when the title wraps (the original has none).
+- The gamepad thread only translates events; the 0.38 s / 0.085 s repeat runs on the UI clock (`input::Repeater`).
