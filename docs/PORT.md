@@ -449,6 +449,17 @@ pub enum LaunchError { NotUnlocked, Spawn(io::Error), Job(String), Log(io::Error
 pub enum SettingsError { NotSettingsFile /* "not an AnyPS5 settings file" */, Json(serde_json::Error), Io(io::Error) }
 ```
 
+### 5.7 Implementation notes (core-library)
+
+Decisions made while implementing `paths`, `library`, `settings`, `controls`, `trophies`, `patches`:
+
+- `events` (new module) holds `Notifier`, `CancelToken` and `CoreEvent`; each module adds its variants. `CoreEvent::LibraryScanned.records` is `HashMap<GameId, String>` (toolkit version) until `unlock` defines `UnlockRecord`.
+- `Game` additionally carries `names` (title per language tag), `content_id`, `size` (`None` until `SizeMeasured`) and `unlocked_with` (toolkit version of the unlocked copy; filled by `scan`, which knows the games folder; `inspect` leaves it `None`). `library::diff(old, new)` returns added, removed and changed games.
+- `paths` owns `GameId`, `AppPaths` (also the `AppPaths` of 6.6), the FNV-1a copy name (`unlocked_copy_name`, `unlocked_copy_dir`) and `bundle_identifier`. A drive root normalises to `c:/` (the trailing slash stays, `c:` would mean "current folder of drive C").
+- `Trophy.unlocked` is Unix microseconds (`i64`); `unlocked_secs()` gives seconds. `TrophyWatcher` sends `Trophies` once at start (no replay of old unlocks), then `TrophyUnlocked` and a fresh `Trophies` when the set grows.
+- `Preferences` also has `cpuConversion` (`auto|none|intel`, D1). Unknown enum values in a file fall back to the default instead of rejecting the file. The locale for the first run comes from `GetUserDefaultLocaleName`; the profile name from `USERNAME` (first word).
+- `PatchSet::plan` returns the relinker entries and one state per patch; resolution fields count as the patch `resolution` and are all-or-nothing.
+
 ## 6. Module specifications
 
 ### 6.1 `unwrap` (SelfUnwrap.swift, tools/unwrap_self.py)
