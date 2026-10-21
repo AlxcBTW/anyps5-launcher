@@ -1,0 +1,26 @@
+[package]
+name = "anyps5-launcher"
+description = "Native Windows launcher for AnyPS5"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "anyps5-launcher"
+path = "src/main.rs"
+
+[dependencies]
+anyps5-core = { path = "../anyps5-core" }
+eframe.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+gilrs.workspace = true
+rodio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
