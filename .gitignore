@@ -1,0 +1,19 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+
+# Packaging output
+/dist/
+*.zip
+*.msi
+*.exe
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Local
+*.log
+.env
