@@ -1,0 +1,167 @@
+# AnyPS5 Launcher
+
+A Windows launcher that finds a player's own PS5 game dumps, unlocks them for AnyPS5 and starts them. This file is the glossary; the specification of the logic is in [docs/PORT.md](docs/PORT.md).
+
+## Language
+
+### Games and files
+
+**Game**:
+A PS5 title the player owns, found as a dump folder inside the games folder. The launcher identifies it by its folder.
+_Avoid_: App, title (for the folder), ROM
+
+**Dump**:
+The decrypted folder of a game: an executable (`eboot.bin`), its modules, `sce_sys` metadata and the game's data. The launcher only reads it and never changes it.
+_Avoid_: Image, rip, backup
+
+**Games folder**:
+The one folder the player points the launcher at. Games are looked for inside it, a few levels deep.
+_Avoid_: Library folder, root
+
+**Title ID**:
+The console's identifier of a game, such as `PPSA02100`, read from the dump's metadata.
+_Avoid_: Game ID, product code
+
+**Executable kind**:
+What a dump's `eboot.bin` is: a plain ELF, a SELF container, or neither (encrypted or unknown).
+_Avoid_: Format, type
+
+**SELF container**:
+The console's wrapper around an ELF. A decrypted one can be turned into the plain ELF the relinker reads; an encrypted one cannot be used.
+_Avoid_: Signed file, fSELF (names one variant only)
+
+**Module**:
+A `.prx` or `.sprx` file of a dump that the game loads at run time.
+_Avoid_: Plugin, library (a library is the toolkit's)
+
+### Unlocking
+
+**Unlock**:
+Turn a dump into something AnyPS5 can run: unwrap its executable and modules, relink them, and assemble the unlocked copy. One word for the whole job, in the interface and in the code.
+_Avoid_: Convert, install, port, jailbreak
+
+**Unwrap**:
+The first step of an unlock: turn every SELF container into a plain ELF.
+_Avoid_: Unpack, decrypt (nothing is decrypted)
+
+**Relink**:
+The second step: the relinker rewrites the ELF files into native Windows programs and guest modules.
+_Avoid_: Compile, recompile, emulate
+
+**Unlocked copy**:
+The folder the launcher makes for one game: the relinked executable, the toolkit's libraries, and the dump's files linked in. The game runs from it and writes its saves and trophies there.
+_Avoid_: Bundle, install, build, cache
+
+**Store**:
+The hidden `.AnyPS5` folder inside the games folder, on the same volume as the dumps, where unlocked copies and work folders live.
+_Avoid_: Cache, output folder
+
+**Unlock record**:
+The small file inside an unlocked copy that says which dump and which toolkit made it, and when.
+_Avoid_: Manifest, receipt
+
+**Outdated**:
+An unlocked copy made by a different toolkit version than the current one. The player is offered to unlock it again.
+_Avoid_: Stale, old
+
+**Unlock queue**:
+The games waiting to be unlocked. Only one is unlocked at a time.
+_Avoid_: Job list
+
+### Toolkit
+
+**Toolkit**:
+The set of AnyPS5 tools the launcher uses: the relinker, the system libraries and the per-title patches, with one version string.
+_Avoid_: AnyPS5 build, SDK, backend
+
+**Relinker**:
+AnyPS5's command line program that turns a PS5 executable into a native one.
+_Avoid_: Converter, compiler
+
+**System libraries**:
+The `.prx` files AnyPS5 provides in place of the console's system software. Every unlocked copy carries a copy of them.
+_Avoid_: Libs, DLLs, drivers
+
+**Toolkit version**:
+The release tag plus a short fingerprint of the toolkit's files. It changes whenever a file does.
+_Avoid_: Build number
+
+### Playing
+
+**Play**:
+Start an unlocked game. The period from the press of Play until the game's first window shows is the **start**.
+_Avoid_: Run, launch (as the player's word), boot
+
+**Splash**:
+The launcher's own screen shown during the start, until the game's first window appears.
+_Avoid_: Loading screen
+
+**Game settings**:
+The player's choices for one game that become environment variables and an input file when the game starts: window, sync, overlay, language, controls, tuning, shader cache.
+_Avoid_: Config, options
+
+**Controls**:
+The keyboard and mouse layout of one game: the launcher's default layout with the keys the player moved.
+_Avoid_: Keybinds, mapping (the file format is the engine's)
+
+**Pad action**:
+A console controller input a key or mouse button can press, named as the engine names it (`Cross`, `LeftStickUp`, ...).
+_Avoid_: Button (sticks and wheels are not buttons)
+
+**Tuning**:
+The numeric input settings of a game: stick deadzones, mouse-as-right-stick response, keyboard ramps.
+_Avoid_: Sensitivity (one of its values)
+
+**Shared settings**:
+A game's settings exported to a file so another player can import them.
+_Avoid_: Preset, profile
+
+**Profile**:
+The player's display name on the home screen. It has nothing to do with input files.
+_Avoid_: Account, user
+
+**Input profile**:
+An input file the engine reads for one title ID, beside the shared input file. Not used by the launcher yet.
+_Avoid_: Controls (the launcher's own layout)
+
+### Trophies
+
+**Trophy**:
+An achievement of a game, with a grade, a name, a description and, once earned, the time it was earned.
+_Avoid_: Achievement
+
+**Grade**:
+A trophy's class: platinum, gold, silver or bronze. Each has a weight in the percentage.
+_Avoid_: Tier, rank
+
+**Trophy set**:
+All trophies of a game as the console shows them, with the percentage earned.
+_Avoid_: Trophy list (the screen)
+
+**Trophy record**:
+What the engine writes into an unlocked copy when the game earns a trophy.
+_Avoid_: Save
+
+### Patches
+
+**Patch**:
+A byte change applied to one title's executable, for a value the host cannot meet. It only applies when the bytes it replaces are the expected ones.
+_Avoid_: Mod, hack, crack
+
+**Resolution patch**:
+A patch that makes a title's output size a choice. Only some titles have one.
+_Avoid_: Resolution setting (the player's choice of one of its values)
+
+### Failures
+
+**Diagnosis**:
+The reason in plain words why a game stopped, found in its log and in how its process ended. It is one of: missing module, unsupported function, GPU lost, out of memory, engine error, crash, or unsupported CPU.
+_Avoid_: Error, crash (one kind)
+
+**Log**:
+The text a game wrote while it ran, kept per title ID. A new start adds a marker line, so only the last start is read.
+_Avoid_: Output
+
+**Report**:
+A text file with the PC, the versions, the game's settings, the diagnosis and the log of the last start, for the player to attach to a bug report.
+_Avoid_: Dump (that is the game)
