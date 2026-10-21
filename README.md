@@ -36,6 +36,8 @@ Licensed under GPL-2.0 (see [LICENSE](LICENSE)).
 
 The original design and logic come from the macOS launcher by [utkuhalis](https://github.com/utkuhalis) ([AnyPS5-ARM](https://github.com/utkuhalis/AnyPS5-ARM), GPL-2.0). This project changes it as a Windows port: new implementation, Windows file dialogs and window chrome, and a free font in place of Apple's SF Pro, which cannot be redistributed.
 
+Bundled fonts and icons (licence texts in `crates/anyps5-launcher/assets/fonts/`): [Inter](https://rsms.me/inter/) (SIL OFL 1.1), [JetBrains Mono](https://www.jetbrains.com/lp/mono/) (SIL OFL 1.1) and [Phosphor Icons](https://phosphoricons.com) (MIT).
+
 ## Legal note
 
 - You need your own decrypted game dumps. No game files, keys or firmware are included in this repository, and none will be.
