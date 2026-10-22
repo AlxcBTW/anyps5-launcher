@@ -537,9 +537,6 @@ pub fn run(options: Options) -> eframe::Result {
     if let Some((x, y)) = options.at {
         viewport = viewport.with_position([x, y]);
     }
-    if options.fullscreen {
-        viewport = viewport.with_fullscreen(true);
-    }
     let mut native = eframe::NativeOptions {
         viewport: viewport
             .with_title("AnyPS5 preview")
@@ -665,6 +662,10 @@ impl eframe::App for PreviewApp {
             crate::app::window_chrome::apply(frame);
         }
         let ctx = ui.ctx().clone();
+        // Like the launcher: fullscreen once the window is shown.
+        if self.options.fullscreen && self.frames == 1 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+        }
         self.run_script(&ctx);
         self.inner.step(&ctx);
         self.inner.paint(ui);
