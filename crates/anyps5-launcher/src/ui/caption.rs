@@ -7,7 +7,8 @@
 //!   hidden while a controller is in use unless the pointer comes near them;
 //! * while the window is neither maximised nor fullscreen, a thin band along every edge resizes it.
 //!
-//! Fullscreen shows none of it. Sizes are the Windows 11 ones in points at zoom 1: the caption keeps
+//! Fullscreen keeps only the buttons, shown while the pointer is near the top-right corner; there
+//! the middle one leaves fullscreen. Sizes are the Windows 11 ones in points at zoom 1: the caption keeps
 //! that size while the UI grows with a large window, and shrinks with the UI in a small one, so it
 //! never reaches into the home screen's top bar (36 dp down).
 
@@ -28,8 +29,9 @@ enum Button {
 }
 
 /// Draws the caption and runs what it is used for. Call once per frame, above the screens and
-/// panels and below the intro curtain.
-pub fn show(ctx: &Context) {
+/// panels and below the intro curtain. Returns the fullscreen state the player switched to, for
+/// the host to apply and remember.
+pub fn show(ctx: &Context) -> Option<bool> {
     let (fullscreen, maximized) = ctx.input(|i| {
         let viewport = i.viewport();
         (
@@ -37,9 +39,6 @@ pub fn show(ctx: &Context) {
             viewport.maximized.unwrap_or(false),
         )
     });
-    if fullscreen {
-        return;
-    }
     let screen = ctx.viewport_rect();
     let unit = 1.0 / ctx.zoom_factor().max(1.0);
     let button = vec2(size::CAPTION_BUTTON.0, size::CAPTION_BUTTON.1) * unit;
@@ -47,6 +46,26 @@ pub fn show(ctx: &Context) {
         pos2(screen.right() - 3.0 * button.x, screen.top()),
         pos2(screen.right(), screen.top() + button.y),
     );
+
+    if fullscreen {
+        // Only the buttons, and only for a pointer in the corner.
+        let corner = buttons.expand2(vec2(button.x, button.y));
+        let near = ctx
+            .input(|i| i.pointer.hover_pos())
+            .is_some_and(|p| corner.contains(p));
+        let visible = ctx.animate_bool_with_time(Id::unique("caption-visible"), near, 0.2);
+        let clicked = (visible > 0.0)
+            .then(|| caption_buttons(ctx, buttons, button.x, true, visible, unit))
+            .flatten();
+        return match clicked {
+            Some(Button::Maximize) => Some(false),
+            Some(other) => {
+                run(ctx, other, true);
+                None
+            }
+            None => None,
+        };
+    }
 
     let strip = Rect::from_min_max(screen.left_top(), pos2(buttons.left(), buttons.bottom()));
     let response = region(ctx, "caption-strip", strip, Sense::click_and_drag());
@@ -66,12 +85,24 @@ pub fn show(ctx: &Context) {
         input::device(ctx) == Device::Keyboard || near,
         0.2,
     );
-    if visible > 0.0 {
-        caption_buttons(ctx, buttons, button.x, maximized, visible, unit);
+    if visible > 0.0
+        && let Some(which) = caption_buttons(ctx, buttons, button.x, maximized, visible, unit)
+    {
+        run(ctx, which, maximized);
     }
 
     if !maximized {
         resize_edges(ctx, screen, size::RESIZE_EDGE * unit);
+    }
+    None
+}
+
+/// What a caption button does in a window (`maximized`: the middle one restores).
+fn run(ctx: &Context, which: Button, maximized: bool) {
+    match which {
+        Button::Minimize => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
+        Button::Maximize => ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized)),
+        Button::Close => ctx.send_viewport_cmd(ViewportCommand::Close),
     }
 }
 
@@ -94,7 +125,7 @@ fn caption_buttons(
     maximized: bool,
     visible: f32,
     unit: f32,
-) {
+) -> Option<Button> {
     let area = Area::new(Id::unique("caption-buttons"))
         .order(Order::Foreground)
         .fixed_pos(rect.min)
@@ -123,12 +154,7 @@ fn caption_buttons(
             clicked
         });
     ctx.move_to_top(area.response.layer_id);
-    match area.inner {
-        Some(Button::Minimize) => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
-        Some(Button::Maximize) => ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized)),
-        Some(Button::Close) => ctx.send_viewport_cmd(ViewportCommand::Close),
-        None => {}
-    }
+    area.inner
 }
 
 /// One button: its hover fill, then the glyph (white once hovered).

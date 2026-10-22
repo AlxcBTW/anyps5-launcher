@@ -299,7 +299,7 @@ impl LauncherApp {
             }
             InputEvent::ToggleFullscreen => {
                 let fullscreen = ctx.input(|i| i.viewport().fullscreen).unwrap_or(false);
-                ctx.send_viewport_cmd(ViewportCommand::Fullscreen(!fullscreen));
+                self.set_fullscreen(ctx, !fullscreen);
             }
             InputEvent::CapturedKey {
                 key,
@@ -435,11 +435,22 @@ impl LauncherApp {
             ctx: &ctx,
         };
         self.panels.frame(&mut cx);
-        crate::ui::caption::show(&ctx);
+        if let Some(fullscreen) = crate::ui::caption::show(&ctx) {
+            self.set_fullscreen(&ctx, fullscreen);
+        }
         crate::ui::intro::paint_curtain(&ctx);
         self.run_effects(&ctx);
         self.save_preferences();
         self.schedule_repaints(&ctx);
+    }
+
+    /// Switches between filling the screen and a maximised window, and remembers the choice.
+    fn set_fullscreen(&mut self, ctx: &Context, fullscreen: bool) {
+        ctx.send_viewport_cmd(ViewportCommand::Fullscreen(fullscreen));
+        if !fullscreen {
+            ctx.send_viewport_cmd(ViewportCommand::Maximized(true));
+        }
+        self.model.edit_prefs(|p| p.fullscreen = fullscreen);
     }
 
     /// The launch splash (the panels module's `StartScreen`) follows the model's `starting`.
@@ -604,6 +615,10 @@ impl LauncherApp {
 
 /// Runs the launcher.
 pub fn run() -> eframe::Result {
+    // Read before the window exists: it opens filling its screen unless the player chose a window.
+    let fullscreen = AppPaths::from_env()
+        .map(|paths| Preferences::load(&paths).fullscreen)
+        .unwrap_or(true);
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("AnyPS5")
@@ -614,7 +629,8 @@ pub fn run() -> eframe::Result {
                 crate::ui::theme::MIN_WINDOW.0,
                 crate::ui::theme::MIN_WINDOW.1,
             ])
-            .with_maximized(true),
+            .with_maximized(true)
+            .with_fullscreen(fullscreen),
         ..Default::default()
     };
     crate::ui::restrict_backends(&mut options);
