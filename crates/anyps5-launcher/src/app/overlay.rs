@@ -71,6 +71,9 @@ pub trait OverlayHost {
     ) {
     }
 
+    /// The launcher is closing, after the preferences were saved: the self-update swaps in here.
+    fn exit(&mut self) {}
+
     /// Once per frame after the overlays, open or not: background work and the trophy banner.
     fn frame(&mut self, _cx: &mut OverlayCx<'_>) {}
 }

@@ -58,6 +58,15 @@ pub enum Extra {
     LayoutCustom,
     /// `%@` = how many buttons the game's files give a PC key.
     LayoutGameDetail,
+    /// About row value and toast: `%@` = the new launcher version.
+    LauncherReady,
+    /// Toast when a launcher update is downloaded and checked.
+    LauncherToast,
+    RestartNow,
+    /// About row value: `%@` = the new version, but the folder cannot be written to.
+    LauncherReadOnly,
+    /// Toast when "Restart Now" or the swap on exit fails.
+    LauncherUpdateFailed,
 }
 
 impl Extra {
@@ -112,6 +121,15 @@ impl Extra {
             Extra::LayoutGame => "From the Game",
             Extra::LayoutCustom => "Custom",
             Extra::LayoutGameDetail => "Found the game's own PC keys for %@ buttons.",
+            Extra::LauncherReady => "%@ ready",
+            Extra::LauncherToast => {
+                "Launcher %@ is ready. It installs when you close the launcher."
+            }
+            Extra::RestartNow => "Restart Now",
+            Extra::LauncherReadOnly => "%@ available, but this folder is read-only",
+            Extra::LauncherUpdateFailed => {
+                "Could not install the launcher update. Download it from GitHub instead."
+            }
         }
     }
 
@@ -164,6 +182,13 @@ impl Extra {
             Extra::LayoutGame => "Oyundan",
             Extra::LayoutCustom => "Özel",
             Extra::LayoutGameDetail => "Oyunun kendi PC tuşları %@ düğme için bulundu.",
+            Extra::LauncherReady => "%@ hazır",
+            Extra::LauncherToast => "Başlatıcı %@ hazır. Başlatıcıyı kapattığında kurulur.",
+            Extra::RestartNow => "Şimdi yeniden başlat",
+            Extra::LauncherReadOnly => "%@ var, ama bu klasör salt okunur",
+            Extra::LauncherUpdateFailed => {
+                "Başlatıcı güncellemesi kurulamadı. Bunun yerine GitHub'dan indir."
+            }
         }
     }
 
@@ -178,7 +203,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 37] = [
+    pub const ALL: [Extra; 42] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -216,6 +241,11 @@ impl Extra {
         Extra::LayoutGame,
         Extra::LayoutCustom,
         Extra::LayoutGameDetail,
+        Extra::LauncherReady,
+        Extra::LauncherToast,
+        Extra::RestartNow,
+        Extra::LauncherReadOnly,
+        Extra::LauncherUpdateFailed,
     ];
 }
 

@@ -93,6 +93,18 @@ pub enum UpdateState {
     Failed,
 }
 
+/// Where the launcher's own update stands (the About page).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum LauncherUpdate {
+    /// Nothing to show: up to date, not checked, or the check failed.
+    #[default]
+    None,
+    /// A newer version is downloaded and verified: its version.
+    Ready(String),
+    /// A newer version exists but this folder cannot be written to: its version.
+    ReadOnly(String),
+}
+
 /// What the settings show that is not a preference.
 pub struct SettingsEnv<'a> {
     pub games_found: usize,
@@ -100,6 +112,7 @@ pub struct SettingsEnv<'a> {
     /// The installed toolkit's version, `None` when there is none.
     pub toolkit_version: Option<&'a str>,
     pub update: UpdateState,
+    pub launcher: LauncherUpdate,
     /// The folder screenshots go to when the preference is unset.
     pub default_screenshots: &'a std::path::Path,
 }
@@ -118,6 +131,8 @@ pub enum SettingsAction {
     InstallToolkit,
     /// A toolkit folder was chosen: adopt it.
     AdoptToolkitFolder(PathBuf),
+    /// "Restart Now" on the About page: close, and start the staged launcher.
+    RestartNow,
     Quit,
 }
 
@@ -360,14 +375,32 @@ pub fn build_categories(
     advanced.push(Row::info("fontsHint", t(Key::FontsHint), None));
 
     // About
-    let about = vec![
+    let version = match &env.launcher {
+        LauncherUpdate::Ready(v) => Extra::LauncherReady.format(language, &[Arg::Str(v)]),
+        _ => env.app_version.to_owned(),
+    };
+    let mut about = vec![
         Row::info("text", t(Key::AboutText), None),
         // The toolkit version lives on the Toolkit page only.
-        Row::info("version", t(Key::Version), Some(env.app_version.to_owned())),
+        Row::info("version", t(Key::Version), Some(version)),
+    ];
+    match &env.launcher {
+        LauncherUpdate::Ready(_) => about.push(
+            Row::command("restartNow", Extra::RestartNow.text(language))
+                .icon(Icon::ARROW_CLOCKWISE),
+        ),
+        LauncherUpdate::ReadOnly(v) => about.push(Row::info(
+            "launcherUpdate",
+            t(Key::Status),
+            Some(Extra::LauncherReadOnly.format(language, &[Arg::Str(v)])),
+        )),
+        LauncherUpdate::None => {}
+    }
+    about.push(
         Row::command("quit", t(Key::Quit))
             .icon(Icon::POWER)
             .destructive(),
-    ];
+    );
 
     [
         appearance, library, languages, behaviour, toolkit, advanced, about,
@@ -661,6 +694,7 @@ impl SettingsPanel {
                 out.actions.push(SettingsAction::CheckForUpdates);
             }
             Change::Run { row: "install" } => out.actions.push(SettingsAction::InstallToolkit),
+            Change::Run { row: "restartNow" } => out.actions.push(SettingsAction::RestartNow),
             Change::Run {
                 row: "toolkitFolder",
             } => {
@@ -832,6 +866,7 @@ mod tests {
             app_version: "0.1.0",
             toolkit_version: toolkit,
             update,
+            launcher: LauncherUpdate::None,
             default_screenshots: std::path::Path::new("C:\\Users\\me\\Pictures\\AnyPS5"),
         }
     }
@@ -917,6 +952,46 @@ mod tests {
             ids(&outdated, Category::Toolkit).contains(&"install"),
             "an update is offered"
         );
+    }
+
+    fn about_rows(launcher: LauncherUpdate) -> Vec<(&'static str, Option<String>)> {
+        let prefs = Preferences::first_run();
+        let mut e = env(None, UpdateState::Unknown);
+        e.launcher = launcher;
+        let cats = build_categories(&prefs, &e, Language::English);
+        let about = cats.iter().find(|c| c.category == Category::About).unwrap();
+        about
+            .rows
+            .iter()
+            .map(|r| match &r.control {
+                rows::Control::Info(value) => (r.id, value.clone()),
+                _ => (r.id, None),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn about_shows_the_version_and_offers_the_restart_only_with_a_staged_update() {
+        let plain = about_rows(LauncherUpdate::None);
+        assert!(plain.contains(&("version", Some("0.1.0".into()))));
+        assert!(!plain.iter().any(|(id, _)| *id == "restartNow"));
+
+        let ready = about_rows(LauncherUpdate::Ready("0.2.0".into()));
+        assert!(ready.contains(&("version", Some("0.2.0 ready".into()))));
+        let ids: Vec<_> = ready.iter().map(|(id, _)| *id).collect();
+        let (restart, quit) = (
+            ids.iter().position(|i| *i == "restartNow"),
+            ids.iter().position(|i| *i == "quit"),
+        );
+        assert!(
+            restart.is_some() && restart < quit,
+            "Restart Now sits before Quit"
+        );
+
+        let read_only = about_rows(LauncherUpdate::ReadOnly("0.2.0".into()));
+        assert!(read_only.contains(&("version", Some("0.1.0".into()))));
+        assert!(read_only.iter().any(|(id, _)| *id == "launcherUpdate"));
+        assert!(!read_only.iter().any(|(id, _)| *id == "restartNow"));
     }
 
     #[test]

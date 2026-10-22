@@ -35,6 +35,7 @@ use egui::{Context, Ui, ViewportCommand};
 use crate::app::clock;
 use crate::app::model::{Effect, GameState, Model};
 use crate::app::overlay::{Overlay, OverlayCx, OverlayHost};
+use crate::app::selfupdate::{SelfUpdateEvent, SelfUpdateService};
 use crate::app::toolkit::{ToolkitEvent, ToolkitService};
 use crate::screens::advanced::{AdvancedAction, AdvancedData, AdvancedPanel};
 use crate::screens::banner::{BannerHost, BannerTrophy};
@@ -101,6 +102,10 @@ pub struct PanelHost {
     work_rx: Receiver<Work>,
     ctx: Context,
     checked_at_start: bool,
+    /// The launcher's own update: checked once per start, swapped in when it closes.
+    launcher: SelfUpdateService,
+    /// The version the "ready" toast was shown for (once per session).
+    launcher_toasted: Option<String>,
     /// The first-start download of the toolkit was tried (once per session; the settings retry).
     toolkit_auto_tried: bool,
 }
@@ -130,6 +135,8 @@ impl PanelHost {
             work_rx,
             ctx: ctx.clone(),
             checked_at_start: simulated,
+            launcher: SelfUpdateService::new(ctx, simulated),
+            launcher_toasted: None,
             toolkit_auto_tried: simulated,
         }
     }
@@ -170,6 +177,7 @@ impl PanelHost {
             app_version: env!("CARGO_PKG_VERSION"),
             toolkit_version: toolkit_version.as_deref(),
             update: self.toolkit.state.clone(),
+            launcher: self.launcher.state.clone(),
             default_screenshots: &default_screenshots,
         };
         // Theme, accent, language, motion and sounds reach the shell inside the panel
@@ -211,6 +219,12 @@ impl PanelHost {
                 }
             }
             SettingsAction::AdoptToolkitFolder(folder) => self.toolkit.adopt(folder),
+            SettingsAction::RestartNow => {
+                // The swap and the new exe follow in `exit`, once the preferences are saved.
+                if self.launcher.request_restart() {
+                    cx.ctx.send_viewport_cmd(ViewportCommand::Close);
+                }
+            }
             SettingsAction::Quit => cx.ctx.send_viewport_cmd(ViewportCommand::Close),
         }
     }
@@ -706,6 +720,19 @@ impl PanelHost {
         }
     }
 
+    fn poll_launcher(&mut self, model: &mut Model) {
+        for event in self.launcher.poll() {
+            if let SelfUpdateEvent::Ready(staged) = event
+                && self.launcher_toasted.as_deref() != Some(&staged.version)
+            {
+                let text =
+                    Extra::LauncherToast.format(model.language(), &[Arg::Str(&staged.version)]);
+                model.toast(text, Icon::CHECK_CIRCLE);
+                self.launcher_toasted = Some(staged.version);
+            }
+        }
+    }
+
     /// Trophies earned by the running game raise banners (own viewport) and refresh the list.
     fn run_banners(&mut self, cx: &mut OverlayCx<'_>) {
         let earned = std::mem::take(&mut cx.model.trophy_banners);
@@ -765,6 +792,12 @@ impl OverlayHost for PanelHost {
         cx.ctx.request_repaint();
     }
 
+    fn exit(&mut self) {
+        if let Err(error) = self.launcher.finish() {
+            tracing::warn!("launcher update: {error}");
+        }
+    }
+
     fn frame(&mut self, cx: &mut OverlayCx<'_>) {
         // Keys that arrived while no overlay was open belong to nobody.
         if cx.model.overlay.is_none() {
@@ -772,6 +805,10 @@ impl OverlayHost for PanelHost {
         }
         self.poll_work(cx.model);
         self.poll_toolkit(cx.model);
+        if cx.model.prefs.check_for_updates {
+            self.launcher.start(&cx.model.paths);
+        }
+        self.poll_launcher(cx.model);
         // No toolkit on this PC: fetch it now, already during the onboarding, so the first unlock
         // needs no visit to the settings. The result shows as a toast (see `poll_toolkit`).
         if !self.toolkit_auto_tried && cx.model.toolkit.is_none() {
