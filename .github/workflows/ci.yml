@@ -3,11 +3,10 @@ name: ci
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -36,14 +35,3 @@ jobs:
           name: anyps5-launcher-windows-x64
           path: target/x86_64-pc-windows-msvc/release/anyps5-launcher.exe
           if-no-files-found: error
-      - name: Zip for release
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
-        run: Compress-Archive -Path target/x86_64-pc-windows-msvc/release/anyps5-launcher.exe -DestinationPath "anyps5-launcher-${{ github.ref_name }}-windows-x64.zip"
-      - uses: softprops/action-gh-release@v3.0.3
-        if: startsWith(github.ref, 'refs/tags/v')
-        with:
-          draft: true
-          files: anyps5-launcher-${{ github.ref_name }}-windows-x64.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

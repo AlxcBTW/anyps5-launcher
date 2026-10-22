@@ -101,6 +101,8 @@ pub struct PanelHost {
     work_rx: Receiver<Work>,
     ctx: Context,
     checked_at_start: bool,
+    /// The first-start download of the toolkit was tried (once per session; the settings retry).
+    toolkit_auto_tried: bool,
 }
 
 impl PanelHost {
@@ -128,6 +130,7 @@ impl PanelHost {
             work_rx,
             ctx: ctx.clone(),
             checked_at_start: simulated,
+            toolkit_auto_tried: simulated,
         }
     }
 
@@ -769,6 +772,14 @@ impl OverlayHost for PanelHost {
         }
         self.poll_work(cx.model);
         self.poll_toolkit(cx.model);
+        // No toolkit on this PC: fetch it now, already during the onboarding, so the first unlock
+        // needs no visit to the settings. The result shows as a toast (see `poll_toolkit`).
+        if !self.toolkit_auto_tried && cx.model.toolkit.is_none() {
+            self.toolkit_auto_tried = true;
+            let model = &*cx.model;
+            self.toolkit
+                .install(&model.paths, &model.prefs.toolkit_repository);
+        }
         if !self.checked_at_start && cx.model.onboarded() {
             self.checked_at_start = true;
             if cx.model.prefs.check_for_updates {
