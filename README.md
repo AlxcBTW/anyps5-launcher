@@ -4,6 +4,27 @@ A native Windows launcher for [AnyPS5](https://github.com/boykopovar/AnyPS5), la
 
 This is a port of the macOS launcher from [utkuhalis/AnyPS5-ARM](https://github.com/utkuhalis/AnyPS5-ARM). Upstream AnyPS5 is [boykopovar/AnyPS5](https://github.com/boykopovar/AnyPS5).
 
+<p align="center">
+  <img src="docs/media/preview.webp" width="800" alt="The launcher fades in like a PS5, then moves between Minecraft Dungeons II, Sword of the Sea and Hollow Knight: Silksong">
+</p>
+
+<p align="center"><a href="https://github.com/AlxcBTW/anyps5-launcher/releases/download/v0.1.0/AnyPS5-Launcher-Update.mp4"><b>Watch the update video with sound</b></a></p>
+
+| | |
+|---|---|
+| ![The home screen with Minecraft Dungeons II selected](docs/media/home.jpg) | ![The controls of Minecraft Dungeons II, read from the game's own files](docs/media/controls-from-the-game.jpg) |
+| ![Sword of the Sea selected on the home screen](docs/media/sword-of-the-sea.jpg) | ![Hollow Knight: Silksong, not unlocked yet](docs/media/silksong.jpg) |
+
+<sub>Game artwork belongs to its publishers and is shown only to illustrate the launcher.</sub>
+
+## What it does
+
+- Shows your games like the PS5 home screen, with each game's own artwork, a fade-in on start, soft system sounds and quiet home music.
+- Unlocks and starts games with AnyPS5, and downloads the AnyPS5 toolkit by itself on the first start.
+- Reads a game's controls from its own files (Unreal Engine games, including Enhanced Input): every button shows what it does in the game, and one choice gives you the game's own PC keys. Ready-made layouts for mouse and keyboard are there too.
+- Runs fullscreen like a console, with a clean window when you want one (F11).
+- Shows trophies, the running game on Discord, logs and per-game settings.
+
 ## Download
 
 Get the latest version from the [releases page](https://github.com/AlxcBTW/anyps5-launcher/releases/latest). It needs 64-bit Windows 10 or 11. There is nothing else to install first.
