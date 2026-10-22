@@ -748,13 +748,24 @@ impl<'a> PanelRow<'a> {
             } else {
                 lerp(CHEVRON_OPACITY, CHEVRON_OPACITY_FOCUS, t)
             };
-            components::paint_caret(
-                &painter,
-                at.center(),
-                icon == Icon::CARET_RIGHT,
-                glyph,
-                fade(fg, opacity),
-            );
+            if icon == Icon::CARET_LEFT || icon == Icon::CARET_RIGHT {
+                components::paint_caret(
+                    &painter,
+                    at.center(),
+                    icon == Icon::CARET_RIGHT,
+                    glyph,
+                    fade(fg, opacity),
+                );
+            } else {
+                // The stepper's minus and plus stay glyphs.
+                painter.text(
+                    at.center(),
+                    Align2::CENTER_CENTER,
+                    icon.glyph(),
+                    icon.font(glyph, false),
+                    fade(fg, opacity),
+                );
+            }
             if enabled && r.hovered() {
                 ctx.set_cursor_icon(CursorIcon::PointingHand);
             }
