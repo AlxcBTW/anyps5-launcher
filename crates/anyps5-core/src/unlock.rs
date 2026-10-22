@@ -52,6 +52,19 @@ pub struct UnlockRecord {
     #[serde(rename = "titleID")]
     pub title_id: String,
     pub toolkit: String,
+    /// SHA-256 of the relinker and the libraries zip the copy was made with, when known.
+    #[serde(
+        default,
+        rename = "relinkerSha256",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub relinker_sha256: Option<String>,
+    #[serde(
+        default,
+        rename = "libsSha256",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub libs_sha256: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -133,6 +146,9 @@ pub struct UnlockRequest {
     pub to_intel: bool,
     /// Relinker patch file text for this title and build (PORT.md 6.9), if it has patches.
     pub patches_toml: Option<String>,
+    /// Extra relinker flags (flag and value pairs) from the game's settings; only allowlisted
+    /// ones are passed.
+    pub relink_flags: Vec<String>,
     pub link_mode: LinkMode,
 }
 
@@ -146,6 +162,7 @@ impl UnlockRequest {
             toolkit,
             to_intel: false,
             patches_toml: None,
+            relink_flags: Vec::new(),
             link_mode: LinkMode::Auto,
         }
     }
@@ -546,6 +563,9 @@ pub fn run_unlock(
         args.push("--module-dir".into());
         args.push(directory.into());
     }
+    if crate::recommended::relink_allowed(&request.relink_flags) {
+        args.extend(request.relink_flags.iter().map(std::ffi::OsString::from));
+    }
     if let Some(toml) = &request.patches_toml {
         let file = work.join("patches.toml");
         fs::write(&file, toml).map_err(io_context("write patches"))?;
@@ -630,6 +650,8 @@ pub fn run_unlock(
         source: request.folder.to_string_lossy().into_owned(),
         title_id: request.title_id.clone(),
         toolkit: request.toolkit.version().to_string(),
+        relinker_sha256: request.toolkit.digests().map(|d| d.relinker.clone()),
+        libs_sha256: request.toolkit.digests().map(|d| d.libs.clone()),
     };
     let json = serde_json::to_string_pretty(&record).map_err(|e| UnlockError::Io {
         context: "write the record".into(),
@@ -1108,6 +1130,8 @@ mod tests {
             source: "C:\\Games\\X".into(),
             title_id: "PPSA00001".into(),
             toolkit: "0.1.3-abc".into(),
+            relinker_sha256: None,
+            libs_sha256: None,
         };
         let json = serde_json::to_string_pretty(&record).unwrap();
         assert_eq!(

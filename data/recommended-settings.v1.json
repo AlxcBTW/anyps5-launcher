@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "updated": "2026-10-22",
+  "titles": {
+    "PPSA15388": {
+      "name": "High on Life",
+      "entries": [
+        {
+          "id": "playgo-installed",
+          "kind": "required",
+          "appliesTo": {
+            "when": { "missing": ["sce_sys/playgo-chunk.dat", "sce_sys/playgo-scenario.json"] }
+          },
+          "set": { "env": { "APS5_PLAYGO_UNLISTED_CHUNKS": "installed" } },
+          "why": "This dump has no PlayGo data. Without this the game cannot load its saves.",
+          "evidence": ["https://github.com/boykopovar/AnyPS5/blob/main/docs/user/USAGE.md#playgo-dumps-without-metadata"],
+          "verified": { "toolkit": "v0.1.3", "date": "2026-10-22", "by": "docs" }
+        }
+      ]
+    },
+    "PPSA03001": {
+      "name": "Sifu",
+      "entries": [
+        {
+          "id": "playgo-absent",
+          "kind": "required",
+          "appliesTo": {
+            "when": { "missing": ["sce_sys/playgo-chunk.dat", "sce_sys/playgo-scenario.json"] }
+          },
+          "set": { "env": { "APS5_PLAYGO_UNLISTED_CHUNKS": "absent" } },
+          "why": "This dump has no PlayGo data. The game ends its chunk search when the answer is \"absent\".",
+          "evidence": ["https://github.com/boykopovar/AnyPS5/blob/main/docs/user/USAGE.md#playgo-dumps-without-metadata"],
+          "verified": { "toolkit": "v0.1.3", "date": "2026-10-22", "by": "docs" }
+        }
+      ]
+    },
+    "PPSA03490": {
+      "name": "Demon Slayer: Kimetsu no Yaiba - The Hinokami Chronicles",
+      "entries": [
+        {
+          "id": "playgo-absent",
+          "kind": "required",
+          "appliesTo": {
+            "when": { "missing": ["sce_sys/playgo-chunk.dat", "sce_sys/playgo-scenario.json"] }
+          },
+          "set": { "env": { "APS5_PLAYGO_UNLISTED_CHUNKS": "absent" } },
+          "why": "This dump has no PlayGo data. With \"installed\" the game asks for chunks forever and runs out of memory at start.",
+          "evidence": ["https://github.com/boykopovar/AnyPS5/blob/main/docs/user/USAGE.md#playgo-dumps-without-metadata"],
+          "verified": { "toolkit": "v0.1.3", "date": "2026-10-22", "by": "docs" }
+        }
+      ]
+    },
+    "PPSA68091": {
+      "name": "Ruffle",
+      "entries": [
+        {
+          "id": "fixed-base",
+          "kind": "recommended",
+          "set": { "relink": ["--windows-fixed-base", "0x400000"] },
+          "why": "The program expects to be loaded at 0x400000. Unlock the game again for this to take effect.",
+          "evidence": ["https://github.com/boykopovar/AnyPS5/blob/main/docs/user/USAGE.md#runtime-layout"],
+          "verified": { "toolkit": "v0.1.3", "date": "2026-10-22", "by": "docs" }
+        }
+      ]
+    },
+    "PPSA85300": {
+      "name": "VLC",
+      "entries": [
+        {
+          "id": "fixed-base",
+          "kind": "recommended",
+          "set": { "relink": ["--windows-fixed-base", "0x400000"] },
+          "why": "The program expects to be loaded at 0x400000. Unlock the game again for this to take effect.",
+          "evidence": ["https://github.com/boykopovar/AnyPS5/blob/main/docs/user/USAGE.md#runtime-layout"],
+          "verified": { "toolkit": "v0.1.3", "date": "2026-10-22", "by": "docs" }
+        }
+      ]
+    },
+    "PPSA97358": {
+      "name": "XPSemu",
+      "entries": [
+        {
+          "id": "fixed-base",
+          "kind": "recommended",
+          "set": { "relink": ["--windows-fixed-base", "0x400000"] },
+          "why": "The program expects to be loaded at 0x400000. Unlock the game again for this to take effect.",
+          "evidence": ["https://github.com/boykopovar/AnyPS5/blob/main/docs/user/USAGE.md#runtime-layout"],
+          "verified": { "toolkit": "v0.1.3", "date": "2026-10-22", "by": "docs" }
+        }
+      ]
+    },
+    "PPSA16064": {
+      "name": "Minecraft Dungeons II",
+      "entries": [
+        {
+          "id": "no-fixed-texture-cache",
+          "kind": "avoid",
+          "set": { "env": { "APS5_TEXTURE_CACHE_MIB": "3072" } },
+          "why": "A fixed texture cache of 3072 MiB made this game slower on an 8 GB card. Remove APS5_TEXTURE_CACHE_MIB from your system settings.",
+          "evidence": ["https://github.com/boykopovar/AnyPS5/blob/main/docs/user/USAGE.md#texture-cache-budget"],
+          "verified": { "toolkit": "v0.1.3", "os": "Windows 11", "gpuVendor": "NVIDIA", "date": "2026-10-22", "by": "docs" }
+        }
+      ]
+    }
+  }
+}

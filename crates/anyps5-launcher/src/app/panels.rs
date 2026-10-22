@@ -24,14 +24,16 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use anyps5_core::community::{self, CommunityLayout};
+use anyps5_core::compat;
 use anyps5_core::diagnosis::{self, Diagnosis};
 use anyps5_core::gamefiles::GameInput;
 use anyps5_core::issue;
 use anyps5_core::library::Game;
 use anyps5_core::linkreg::{self, Handler as LinkHandler};
 use anyps5_core::paths::{AppPaths, GameId};
+use anyps5_core::recommended::{self, Catalog, Kind, Plan};
 use anyps5_core::report::{self, ReportInput, SystemInfo};
-use anyps5_core::settings::GameSettings;
+use anyps5_core::settings::{GameSettings, ToolkitChannel};
 use anyps5_core::unlock;
 use egui::{Context, Ui, ViewportCommand};
 
@@ -40,22 +42,24 @@ use crate::app::links;
 use crate::app::model::{Effect, GameState, Model};
 use crate::app::overlay::{Overlay, OverlayCx, OverlayHost};
 use crate::app::selfupdate::{SelfUpdateEvent, SelfUpdateService};
-use crate::app::toolkit::{ToolkitEvent, ToolkitService};
+use crate::app::toolkit::{NotesState, ToolkitEvent, ToolkitService};
 use crate::screens::advanced::{AdvancedAction, AdvancedData, AdvancedPanel};
 use crate::screens::banner::{BannerHost, BannerTrophy};
 use crate::screens::controls::{ControlsAction, ControlsData, ControlsPanel};
 use crate::screens::game_settings::{
-    GameSettingsAction, GameSettingsData, GameSettingsPanel, TrophyProgress, UninstallAction,
-    UninstallPanel,
+    GameSettingsAction, GameSettingsData, GameSettingsPanel, RecommendedRow, TrophyProgress,
+    UninstallAction, UninstallPanel,
 };
 use crate::screens::home::tile_overlay;
 use crate::screens::library::{LibraryAction, LibraryData, LibraryEntry, LibraryGrid, StateText};
 use crate::screens::log::{LogAction, LogData, LogView, ReviewData};
+use crate::screens::recommended::{RecommendedAction, RecommendedData, RecommendedPanel};
 use crate::screens::rows::RowId;
 use crate::screens::settings::{Category, SettingsAction, SettingsEnv, SettingsPanel};
 use crate::screens::share_strings::Share;
 use crate::screens::strings::Extra;
 use crate::screens::trophies::{TrophyAction, TrophyData, TrophyListPanel};
+use crate::screens::whatsnew::{NotesView, WhatsNewAction, WhatsNewData, WhatsNewPanel};
 use crate::screens::{ToastRequest, state_label};
 use crate::ui::chrome::TileImage;
 use crate::ui::focus::HomeFocus;
@@ -87,6 +91,8 @@ enum Work {
         title_id: String,
         layouts: Vec<CommunityLayout>,
     },
+    /// The recommended settings, as shipped or newer from the network.
+    Catalog(Box<Catalog>),
 }
 
 pub struct PanelHost {
@@ -98,6 +104,16 @@ pub struct PanelHost {
     trophies: TrophyListPanel,
     library: LibraryGrid,
     log: LogView,
+    recommended: RecommendedPanel,
+    whats_new: WhatsNewPanel,
+    /// The release the notes panel is about, without a leading `v`.
+    whats_new_tag: String,
+    /// The settings category to open on when coming back from the notes.
+    settings_return: Option<usize>,
+    /// What the catalogue recommends: the shipped one at first, a newer one once fetched.
+    catalog: Catalog,
+    catalog_asked: bool,
+    last_check: Option<std::time::Instant>,
     banners: BannerHost,
     toolkit: ToolkitService,
     /// Commands and raw keys routed here by the model, in order.
@@ -145,6 +161,13 @@ impl PanelHost {
             trophies: TrophyListPanel::default(),
             library: LibraryGrid::default(),
             log: LogView::default(),
+            recommended: RecommendedPanel::default(),
+            whats_new: WhatsNewPanel::default(),
+            whats_new_tag: String::new(),
+            settings_return: None,
+            catalog: Catalog::embedded(),
+            catalog_asked: simulated,
+            last_check: None,
             banners: BannerHost::default(),
             toolkit: ToolkitService::new(ctx, simulated),
             events: Vec::new(),
@@ -193,11 +216,14 @@ impl PanelHost {
     fn settings_ui(&mut self, cx: &mut OverlayCx<'_>, wanted: bool) {
         if wanted && !self.settings.is_open() {
             self.refresh_links();
-            match cx.model.settings_page.take() {
-                Some(page) => self
-                    .settings
-                    .open_at(Category::from_link(page) as usize, false),
-                None => self.settings.open(),
+            if let Some(page) = cx.model.settings_page.take() {
+                self.settings
+                    .open_at(Category::from_link(page) as usize, false);
+            } else {
+                match self.settings_return.take() {
+                    Some(category) => self.settings.open_at(category, true),
+                    None => self.settings.open(),
+                }
             }
         } else if !wanted && self.settings.is_open() {
             self.settings.close();
@@ -210,6 +236,7 @@ impl PanelHost {
             app_version: env!("CARGO_PKG_VERSION"),
             toolkit_version: toolkit_version.as_deref(),
             update: self.toolkit.state.clone(),
+            recent: &self.toolkit.recent,
             launcher: self.launcher.state.clone(),
             default_screenshots: &default_screenshots,
             links: self.links.clone(),
@@ -244,15 +271,52 @@ impl PanelHost {
             SettingsAction::CheckForUpdates => self.check_toolkit(model),
             SettingsAction::InstallToolkit => {
                 // The row of the settings shows the download; the toast only confirms the start.
-                if self
-                    .toolkit
-                    .install(&model.paths, &model.prefs.toolkit_repository)
-                {
+                let pinned = model.prefs.toolkit_pinned.clone();
+                if self.toolkit.install(
+                    &model.paths,
+                    &model.prefs.toolkit_repository,
+                    pinned.as_deref(),
+                ) {
                     let text = Extra::ToolkitDownloading.text(model.language());
                     model.toast(text, Icon::DOWNLOAD_SIMPLE);
                 }
             }
             SettingsAction::AdoptToolkitFolder(folder) => self.toolkit.adopt(folder),
+            SettingsAction::UseStableToolkit => {
+                self.resolutions.clear();
+                model.effects.push(Effect::ReloadToolkit);
+                self.last_check = None;
+                self.check_toolkit(model);
+            }
+            SettingsAction::PinToolkit(tag) => {
+                // Installed already: switch to it. Otherwise fetch it first.
+                let installed = model
+                    .paths
+                    .toolkit_dir()
+                    .join(tag.trim_start_matches('v'))
+                    .is_dir();
+                if installed {
+                    self.resolutions.clear();
+                    model.effects.push(Effect::ReloadToolkit);
+                } else if self.toolkit.install(
+                    &model.paths,
+                    &model.prefs.toolkit_repository,
+                    Some(&tag),
+                ) {
+                    let text = Extra::ToolkitDownloading.text(model.language());
+                    model.toast(text, Icon::DOWNLOAD_SIMPLE);
+                }
+            }
+            SettingsAction::OpenWhatsNew(tag) => {
+                self.toolkit.load_notes(
+                    &model.paths,
+                    &model.prefs.toolkit_repository,
+                    &format!("v{tag}"),
+                );
+                self.whats_new_tag = tag;
+                self.settings_return = Category::ALL.iter().position(|c| *c == Category::Toolkit);
+                model.switch_overlay(Overlay::WhatsNew);
+            }
             SettingsAction::RestartNow => {
                 // The swap and the new exe follow in `exit`, once the preferences are saved.
                 if self.launcher.request_restart() {
@@ -299,7 +363,13 @@ impl PanelHost {
         self.refresh_links();
     }
 
+    /// Asks for the newest release. Only the stable channel follows it: a pinned release or a
+    /// local build is left alone.
     fn check_toolkit(&mut self, model: &Model) {
+        if model.prefs.toolkit_channel() != ToolkitChannel::Stable {
+            return;
+        }
+        self.last_check = Some(std::time::Instant::now());
         self.toolkit
             .check(&model.paths, &model.prefs.toolkit_repository);
     }
@@ -323,12 +393,20 @@ impl PanelHost {
         let installed = matches!(cx.model.state_of(&game), GameState::Installed { .. });
         let language = cx.model.language();
         let accent = cx.shell.accent_color();
+        let plan = self.recommended_plan(cx.model, &game, &settings);
+        let recommended = (!plan.is_empty()).then(|| RecommendedRow {
+            changes: plan.changes.len(),
+            needed: plan.changes.iter().any(|c| c.kind == Kind::Required),
+        });
+        let unlock_note = self.unlock_note(cx.model, &game);
         let mut data = GameSettingsData {
             title: &game.name,
             settings: &mut settings,
             resolutions: &resolutions,
             trophies,
             installed,
+            recommended,
+            unlock_note,
             language,
             accent,
         };
@@ -366,6 +444,7 @@ impl PanelHost {
             GameSettingsAction::Close => model.dismiss_overlay(),
             GameSettingsAction::OpenControls => model.switch_overlay(Overlay::Controls),
             GameSettingsAction::OpenAdvanced => model.switch_overlay(Overlay::Advanced),
+            GameSettingsAction::OpenRecommended => model.switch_overlay(Overlay::Recommended),
             GameSettingsAction::OpenTrophies => model.switch_overlay(Overlay::Trophies),
             GameSettingsAction::AskUninstall => model.switch_overlay(Overlay::ConfirmUninstall),
             GameSettingsAction::Reinstall => {
@@ -549,6 +628,127 @@ impl PanelHost {
     fn back_to_game_settings(&mut self, model: &mut Model, row: RowId) {
         self.return_row = Some(row);
         model.switch_overlay(Overlay::GameSettings);
+    }
+
+    /// What the catalogue would change for `game` with its current settings.
+    fn recommended_plan(&self, model: &Model, game: &Game, settings: &GameSettings) -> Plan {
+        let entries = self.catalog.entries(&game.title_id);
+        if entries.is_empty() {
+            return Plan::default();
+        }
+        let toolkit = model.toolkit.clone().unwrap_or_default();
+        let inherited = |key: &str| std::env::var(key).ok();
+        let context = recommended::Context {
+            title_id: &game.title_id,
+            content_version: &game.version,
+            toolkit: &toolkit,
+            dump: &game.folder,
+            inherited: &inherited,
+        };
+        recommended::plan(entries, &context, settings)
+    }
+
+    /// "Unlocked with v0.1.2. v0.1.3 is installed." and why unlocking again is worth it, for a
+    /// copy made with another toolkit than the one in use.
+    fn unlock_note(&mut self, model: &Model, game: &Game) -> Option<String> {
+        let record = game.unlocked_with.as_deref()?;
+        let current = model.toolkit.as_deref()?;
+        if record == current {
+            return None;
+        }
+        let language = model.language();
+        let name = |version: &str| {
+            compat::release_tag(version).map_or_else(|| version.to_owned(), |t| format!("v{t}"))
+        };
+        let (from, to) = (compat::release_tag(record), compat::release_tag(current));
+        let mut note = match (&from, &to) {
+            (Some(a), Some(b)) if a == b => Extra::UnlockEarlierBuild.text(language).to_owned(),
+            _ => Extra::UnlockedWith.format(
+                language,
+                &[Arg::Str(&name(record)), Arg::Str(&name(current))],
+            ),
+        };
+        if let (Some(from), Some(to)) = (from, to)
+            && compat::compare_versions(&from, &to).is_some_and(std::cmp::Ordering::is_lt)
+        {
+            self.toolkit
+                .ask_conversion(&model.paths, &model.prefs.toolkit_repository, &from, &to);
+            match self.toolkit.conversion_changed(&from, &to) {
+                Some(true) => note = format!("{note} {}", Extra::ConversionChanged.text(language)),
+                Some(false) => note = format!("{note} {}", Extra::UnlockOptional.text(language)),
+                None => {}
+            }
+        }
+        Some(note)
+    }
+
+    fn recommended_ui(&mut self, cx: &mut OverlayCx<'_>, wanted: bool) {
+        let events = self.take_events(wanted);
+        let side_next = cx.model.overlay.is_some_and(Overlay::is_side_panel);
+        let Some(game) = cx.model.selected_game().cloned() else {
+            if wanted {
+                cx.model.dismiss_overlay();
+            }
+            return;
+        };
+        let settings = cx.model.prefs.game_settings(&game.id);
+        let plan = self.recommended_plan(cx.model, &game, &settings);
+        let (language, accent) = (cx.model.language(), cx.shell.accent_color());
+        if wanted && !self.recommended.is_active() {
+            self.recommended.open(&plan, language);
+        } else if !wanted && self.recommended.is_active() {
+            if side_next {
+                self.recommended.dismiss();
+            } else {
+                self.recommended.close();
+            }
+        }
+        let data = RecommendedData {
+            title: &game.name,
+            plan: &plan,
+            language,
+            accent,
+        };
+        for action in self.recommended.show(cx.shell, cx.ctx, &events, &data) {
+            if action == RecommendedAction::Apply {
+                let mut applied = settings.clone();
+                plan.apply(&mut applied);
+                store_game_settings(cx.model, &game.id, applied);
+                let text = if plan.needs_unlock() {
+                    Extra::RecAppliedUnlock
+                } else {
+                    Extra::RecApplied
+                };
+                cx.model.toast(text.text(language), Icon::CHECK_CIRCLE);
+            }
+            self.back_to_game_settings(cx.model, "recommended");
+        }
+    }
+
+    fn whats_new_ui(&mut self, cx: &mut OverlayCx<'_>, wanted: bool) {
+        let events = self.take_events(wanted);
+        if wanted && !self.whats_new.is_active() {
+            self.whats_new.open();
+        } else if !wanted && self.whats_new.is_active() {
+            self.whats_new.close();
+        }
+        let view = match &self.toolkit.notes {
+            NotesState::Ready(published) => NotesView::Ready(published),
+            NotesState::Unavailable => NotesView::Unavailable,
+            NotesState::Idle | NotesState::Loading => NotesView::Loading,
+        };
+        let data = WhatsNewData {
+            tag: &self.whats_new_tag,
+            view,
+            language: cx.model.language(),
+        };
+        let actions = self.whats_new.show(cx.shell, cx.ctx, &events, &data);
+        for action in actions {
+            match action {
+                WhatsNewAction::Close => cx.model.switch_overlay(Overlay::Settings),
+                WhatsNewAction::OpenUrl(url) => open_url(&url),
+            }
+        }
     }
 
     // --- full-screen panels --------------------------------------------------------------------
@@ -809,6 +1009,7 @@ impl PanelHost {
                 Work::Community { title_id, layouts } => {
                     self.community.insert(title_id, layouts);
                 }
+                Work::Catalog(catalog) => self.catalog = *catalog,
                 Work::Uninstalled { game, result } => match result {
                     Ok(()) => {
                         if let Some(g) = model.games.iter_mut().find(|g| g.id == game) {
@@ -831,9 +1032,15 @@ impl PanelHost {
         for event in self.toolkit.poll() {
             let language = model.language();
             match event {
-                ToolkitEvent::Checked(Ok(_)) => {
+                ToolkitEvent::Checked(Ok(found)) => {
                     let stamp = clock::rfc3339_utc(clock::unix_seconds());
                     model.edit_prefs(|p| p.toolkit_checked_at = Some(stamp));
+                    // Told, not installed: the settings offer the download.
+                    if let Some(tag) = found.filter(|_| model.toolkit.is_some()) {
+                        let text = Extra::ToolkitAvailable
+                            .format(language, &[Arg::Str(&format!("v{tag}"))]);
+                        model.toast(text, Icon::DOWNLOAD_SIMPLE);
+                    }
                 }
                 ToolkitEvent::Checked(Err(error)) => tracing::warn!("update check: {error}"),
                 ToolkitEvent::Installed(Ok(version)) => {
@@ -845,7 +1052,10 @@ impl PanelHost {
                 }
                 ToolkitEvent::Adopted(Ok((folder, version))) => {
                     self.resolutions.clear();
-                    model.edit_prefs(|p| p.toolkit = Some(folder));
+                    model.edit_prefs(|p| {
+                        p.toolkit = Some(folder);
+                        p.toolkit_pinned = None;
+                    });
                     model.effects.push(Effect::ReloadToolkit);
                     let text = Extra::ToolkitReady.format(language, &[Arg::Str(&version)]);
                     model.toast(text, Icon::CHECK_CIRCLE);
@@ -916,6 +1126,8 @@ impl OverlayHost for PanelHost {
             Overlay::Trophies => self.trophies_ui(cx, wanted),
             Overlay::Library => self.library_ui(cx, wanted),
             Overlay::Log => self.log_ui(cx, wanted),
+            Overlay::Recommended => self.recommended_ui(cx, wanted),
+            Overlay::WhatsNew => self.whats_new_ui(cx, wanted),
         }
     }
 
@@ -956,14 +1168,43 @@ impl OverlayHost for PanelHost {
         if !self.toolkit_auto_tried && cx.model.toolkit.is_none() {
             self.toolkit_auto_tried = true;
             let model = &*cx.model;
-            self.toolkit
-                .install(&model.paths, &model.prefs.toolkit_repository);
+            self.toolkit.install(
+                &model.paths,
+                &model.prefs.toolkit_repository,
+                model.prefs.toolkit_pinned.as_deref(),
+            );
         }
         if !self.checked_at_start && cx.model.onboarded() {
             self.checked_at_start = true;
             if cx.model.prefs.check_for_updates {
                 self.check_toolkit(cx.model);
             }
+        }
+        // Once a day while the launcher stays open.
+        if cx.model.prefs.check_for_updates
+            && self
+                .last_check
+                .is_some_and(|at| at.elapsed() > std::time::Duration::from_secs(24 * 3600))
+        {
+            self.check_toolkit(cx.model);
+        }
+        if cx.model.prefs.toolkit_channel() == ToolkitChannel::Pinned {
+            let model = &*cx.model;
+            self.toolkit
+                .load_recent(&model.paths, &model.prefs.toolkit_repository);
+        }
+        if !self.catalog_asked && cx.model.onboarded() && cx.model.prefs.check_for_updates {
+            self.catalog_asked = true;
+            let (tx, ctx, paths) = (
+                self.work_tx.clone(),
+                self.ctx.clone(),
+                cx.model.paths.clone(),
+            );
+            spawn("recommended settings", move || {
+                let catalog = recommended::load(&paths);
+                let _ = tx.send(Work::Catalog(Box::new(catalog)));
+                ctx.request_repaint();
+            });
         }
         self.run_banners(cx);
     }
@@ -1002,6 +1243,23 @@ fn open_upstream(ctx: &Context, model: &mut Model, prepared: &issue::Prepared) {
 fn spawn(name: &str, work: impl FnOnce() + Send + 'static) {
     if let Err(error) = std::thread::Builder::new().name(name.into()).spawn(work) {
         tracing::warn!("cannot start the {name} thread: {error}");
+    }
+}
+
+/// Opens a page of the toolkit's repository in the browser. Nothing else is opened.
+fn open_url(url: &str) {
+    if !url.starts_with("https://github.com/boykopovar/AnyPS5/") {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        if let Err(error) = std::process::Command::new("explorer.exe").arg(url).spawn() {
+            tracing::warn!("cannot open {url}: {error}");
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = url;
     }
 }
 
@@ -1130,6 +1388,8 @@ mod tests {
             Overlay::Trophies,
             Overlay::Log,
             Overlay::ConfirmUninstall,
+            Overlay::Recommended,
+            Overlay::WhatsNew,
         ] {
             rig.app.model.open(overlay);
             rig.frames(3);
@@ -1137,7 +1397,11 @@ mod tests {
             rig.press(Command::Back);
             // Controls and advanced step back to the game settings, the rest close.
             let expected = match overlay {
-                Overlay::Controls | Overlay::Advanced => Some(Overlay::GameSettings),
+                Overlay::Controls | Overlay::Advanced | Overlay::Recommended => {
+                    Some(Overlay::GameSettings)
+                }
+                // The notes go back to the Toolkit page of the settings.
+                Overlay::WhatsNew => Some(Overlay::Settings),
                 _ => None,
             };
             assert_eq!(rig.app.model.overlay, expected, "back from {overlay:?}");

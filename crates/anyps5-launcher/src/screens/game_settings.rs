@@ -11,7 +11,7 @@ use crate::screens::share_strings::Share;
 use crate::screens::side::{self, Output, SideState, SideView};
 use crate::screens::strings::Extra;
 use crate::ui::Shell;
-use crate::ui::i18n::{Key, Language};
+use crate::ui::i18n::{Arg, Key, Language};
 use crate::ui::icons::Icon;
 use crate::ui::input::InputEvent;
 
@@ -27,6 +27,8 @@ pub enum GameSettingsAction {
     OpenControls,
     OpenTrophies,
     OpenAdvanced,
+    /// The recommended settings of this game, as a list of changes.
+    OpenRecommended,
     /// Unlock the game again; the panel closes itself.
     Reinstall,
     ShowInExplorer,
@@ -57,6 +59,15 @@ impl From<&anyps5_core::trophies::TrophySet> for TrophyProgress {
     }
 }
 
+/// What the catalogue has for this game, for the row that opens it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecommendedRow {
+    /// Settings that would change.
+    pub changes: usize,
+    /// Some change is needed for the game to start.
+    pub needed: bool,
+}
+
 /// The game the panel is about, borrowed for one frame.
 pub struct GameSettingsData<'a> {
     /// The panel title.
@@ -67,6 +78,10 @@ pub struct GameSettingsData<'a> {
     pub trophies: Option<TrophyProgress>,
     /// The game is unlocked (reinstall and uninstall are offered).
     pub installed: bool,
+    /// Shown only when the catalogue has something for this game.
+    pub recommended: Option<RecommendedRow>,
+    /// Why unlocking again is offered ("Unlocked with v0.1.2. v0.1.3 is installed.").
+    pub unlock_note: Option<String>,
     pub language: Language,
     pub accent: Color32,
 }
@@ -180,6 +195,7 @@ impl GameSettingsPanel {
             "controls" => Some(GameSettingsAction::OpenControls),
             "trophies" => Some(GameSettingsAction::OpenTrophies),
             "advanced" => Some(GameSettingsAction::OpenAdvanced),
+            "recommended" => Some(GameSettingsAction::OpenRecommended),
             "reinstall" => Some(GameSettingsAction::Reinstall),
             "finder" => Some(GameSettingsAction::ShowInExplorer),
             "log" => Some(GameSettingsAction::OpenLog),
@@ -240,12 +256,29 @@ pub fn build_rows(data: &GameSettingsData<'_>) -> Vec<Row> {
         );
     }
     rows.push(Row::toggle("vsync", t(Key::Vsync), s.vsync).icon(Icon::WAVE_SINE));
-    // Groups: display, then play (controls to language), then maintenance, then removal.
-    rows.push(
-        Row::action("controls", t(Key::Controls))
-            .icon(Icon::KEYBOARD)
-            .group_start(),
-    );
+    // Groups: display, then play (recommended to language), then maintenance, then removal.
+    let mut first_of_play = true;
+    if let Some(r) = data.recommended {
+        let detail = if r.needed {
+            Extra::RecNeeded.text(data.language).to_owned()
+        } else if r.changes == 0 {
+            Extra::RecWorthALook.text(data.language).to_owned()
+        } else if r.changes == 1 {
+            Extra::ChangeOne.text(data.language).to_owned()
+        } else {
+            Extra::ChangesCount.format(data.language, &[Arg::Int(r.changes as i64)])
+        };
+        rows.push(
+            Row::action("recommended", Extra::RecTitle.text(data.language))
+                .detail(detail)
+                .icon(Icon::SPARKLE)
+                .group_start(),
+        );
+        first_of_play = false;
+    }
+    let mut controls = Row::action("controls", t(Key::Controls)).icon(Icon::KEYBOARD);
+    controls.group_start = first_of_play;
+    rows.push(controls);
     if let Some(p) = data.trophies {
         rows.push(
             Row::action("trophies", t(Key::Trophies))
@@ -295,7 +328,12 @@ pub fn build_rows(data: &GameSettingsData<'_>) -> Vec<Row> {
     );
     let maintenance = rows.len();
     if data.installed {
-        rows.push(Row::command("reinstall", t(Key::Reinstall)).icon(Icon::ARROWS_CLOCKWISE));
+        let mut reinstall =
+            Row::command("reinstall", t(Key::Reinstall)).icon(Icon::ARROWS_CLOCKWISE);
+        if let Some(note) = &data.unlock_note {
+            reinstall = reinstall.detail(note.clone());
+        }
+        rows.push(reinstall);
     }
     rows.push(Row::command("finder", t(Key::ShowInFinder)).icon(Icon::FOLDER));
     rows.push(Row::command("log", t(Key::OpenLog)).icon(Icon::FILE_TEXT));
@@ -480,6 +518,8 @@ mod tests {
             resolutions: &[],
             trophies: None,
             installed: true,
+            recommended: None,
+            unlock_note: None,
             language: Language::English,
             accent: Color32::WHITE,
         }
@@ -512,6 +552,56 @@ mod tests {
                 "uninstall"
             ],
             "no resolution row without a patch, no trophies row without a list"
+        );
+    }
+
+    #[test]
+    fn the_recommended_row_and_the_unlock_note_appear_only_with_something_to_say() {
+        let mut s = GameSettings::default();
+        let mut d = data(&mut s);
+        d.recommended = Some(RecommendedRow {
+            changes: 2,
+            needed: false,
+        });
+        d.unlock_note = Some("Unlocked with v0.1.2. v0.1.3 is installed.".into());
+        let rows = build_rows(&d);
+        let ids = ids(&rows);
+        let recommended = ids.iter().position(|i| *i == "recommended").unwrap();
+        assert_eq!(
+            ids[recommended + 1],
+            "controls",
+            "the play group starts with it"
+        );
+        assert!(rows[recommended].group_start && !rows[recommended + 1].group_start);
+        assert_eq!(rows[recommended].detail.as_deref(), Some("2 changes"));
+        let reinstall = rows.iter().find(|r| r.id == "reinstall").unwrap();
+        assert_eq!(
+            reinstall.detail.as_deref(),
+            Some("Unlocked with v0.1.2. v0.1.3 is installed.")
+        );
+        d.recommended = Some(RecommendedRow {
+            changes: 1,
+            needed: true,
+        });
+        let rows = build_rows(&d);
+        let row = rows.iter().find(|r| r.id == "recommended").unwrap();
+        assert_eq!(row.detail.as_deref(), Some("Needed to start"));
+        d.recommended = None;
+        d.unlock_note = None;
+        let rows = build_rows(&d);
+        assert!(rows.iter().all(|r| r.id != "recommended"));
+        assert!(
+            rows.iter()
+                .find(|r| r.id == "controls")
+                .unwrap()
+                .group_start
+        );
+        assert!(
+            rows.iter()
+                .find(|r| r.id == "reinstall")
+                .unwrap()
+                .detail
+                .is_none()
         );
     }
 

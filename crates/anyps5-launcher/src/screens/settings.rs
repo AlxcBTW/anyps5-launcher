@@ -8,9 +8,10 @@
 
 use std::path::PathBuf;
 
+use anyps5_core::compat::{self, Feature, Fit, Since};
 use anyps5_core::linkreg::Handler;
 use anyps5_core::links::SettingsPage;
-use anyps5_core::settings::{Backdrop, CpuConversion, Preferences};
+use anyps5_core::settings::{Backdrop, CpuConversion, Preferences, ToolkitChannel};
 use egui::{Align2, Color32, Context, Rect, Sense, Ui, UiBuilder, pos2, vec2};
 
 use crate::screens::convert;
@@ -127,6 +128,8 @@ pub struct SettingsEnv<'a> {
     /// The installed toolkit's version, `None` when there is none.
     pub toolkit_version: Option<&'a str>,
     pub update: UpdateState,
+    /// The last releases (`v0.1.3`), for the pinned channel; empty until fetched.
+    pub recent: &'a [String],
     pub launcher: LauncherUpdate,
     /// The folder screenshots go to when the preference is unset.
     pub default_screenshots: &'a std::path::Path,
@@ -148,6 +151,12 @@ pub enum SettingsAction {
     InstallToolkit,
     /// A toolkit folder was chosen: adopt it.
     AdoptToolkitFolder(PathBuf),
+    /// The channel is stable again (already stored in the preferences): use the newest installed.
+    UseStableToolkit,
+    /// Stay on this release (`v0.1.3`, already stored in the preferences): install it if needed.
+    PinToolkit(String),
+    /// Open the notes of this release (`0.1.3`).
+    OpenWhatsNew(String),
     /// "Restart Now" on the About page: close, and start the staged launcher.
     RestartNow,
     /// "Open AnyPS5 Links with This Launcher" was switched: write or remove the registration.
@@ -177,6 +186,34 @@ fn path_text(path: &Option<PathBuf>) -> String {
     path.as_ref()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "—".to_owned())
+}
+
+/// The releases the pinned channel offers: the last ones, plus the pinned one and the installed
+/// one when they are older than that.
+fn pinned_options(prefs: &Preferences, env: &SettingsEnv<'_>) -> Vec<String> {
+    let mut tags: Vec<String> = env.recent.to_vec();
+    let installed = env.toolkit_version.and_then(compat::release_tag);
+    for extra in [
+        prefs.toolkit_pinned.clone(),
+        installed.map(|t| format!("v{t}")),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !tags.contains(&extra) {
+            tags.push(extra);
+        }
+    }
+    tags
+}
+
+/// The release "What's New" is about: the one waiting to be installed, else the installed one.
+/// `None` for a local build or no toolkit.
+fn whats_new_tag(env: &SettingsEnv<'_>) -> Option<String> {
+    match &env.update {
+        UpdateState::Available(tag) => Some(tag.trim_start_matches('v').to_owned()),
+        _ => env.toolkit_version.and_then(compat::release_tag),
+    }
 }
 
 /// All categories and rows for these preferences.
@@ -314,58 +351,122 @@ pub fn build_categories(
     }
 
     // Toolkit
+    let channel = prefs.toolkit_channel();
     let toolkit_value = env.toolkit_version.map_or_else(
         || Extra::ToolkitMissing.text(language).to_owned(),
         str::to_owned,
     );
-    let update_value = match &env.update {
-        UpdateState::Unknown => None,
-        UpdateState::Checking => Some(Extra::Checking.text(language).to_owned()),
-        UpdateState::Downloading => Some(Extra::ToolkitDownloading.text(language).to_owned()),
-        UpdateState::UpToDate => Some(Extra::UpToDate.text(language).to_owned()),
-        UpdateState::Available(v) => Some(Extra::UpdateAvailable.format(language, &[Arg::Str(v)])),
-        UpdateState::Failed => Some(Extra::CheckFailed.text(language).to_owned()),
-    };
-    let last_checked = prefs
-        .toolkit_checked_at
-        .clone()
-        .unwrap_or_else(|| Extra::NeverChecked.text(language).to_owned());
-    let mut toolkit = vec![
-        Row::info("toolkit", t(Key::ToolkitVersion), Some(toolkit_value)),
-        Row::info(
-            "lastChecked",
-            Extra::LastChecked.text(language),
-            Some(last_checked),
-        ),
-    ];
-    if let Some(value) = update_value {
-        toolkit.push(Row::info("updateState", t(Key::Status), Some(value)));
-    }
-    toolkit.push(
-        Row::toggle(
-            "updateCheck",
-            Extra::UpdateCheck.text(language),
-            prefs.check_for_updates,
-        )
-        .detail(Extra::UpdateCheckDetail.text(language))
-        .icon(Icon::ARROWS_CLOCKWISE),
-    );
-    toolkit
-        .push(Row::command("checkNow", Extra::CheckNow.text(language)).icon(Icon::ARROW_CLOCKWISE));
-    match (&env.toolkit_version, &env.update) {
-        (None, _) => toolkit.push(
-            Row::command("install", Extra::ToolkitInstall.text(language))
-                .icon(Icon::DOWNLOAD_SIMPLE),
-        ),
-        (Some(_), UpdateState::Available(_)) => toolkit.push(
-            Row::command("install", Extra::ToolkitInstallUpdate.text(language))
-                .icon(Icon::DOWNLOAD_SIMPLE),
-        ),
+    let mut toolkit_row = Row::info("toolkit", t(Key::ToolkitVersion), Some(toolkit_value));
+    match env.toolkit_version.map(compat::fit) {
+        Some(Fit::Newer) => toolkit_row = toolkit_row.detail(Extra::FitNewer.text(language)),
+        Some(Fit::Older) => toolkit_row = toolkit_row.detail(Extra::FitOlder.text(language)),
         _ => {}
     }
+    let mut toolkit = vec![toolkit_row];
     toolkit.push(
-        Row::action("toolkitFolder", Extra::ToolkitChooseFolder.text(language)).icon(Icon::FOLDER),
+        Row::choice(
+            "channel",
+            Extra::ChannelTitle.text(language),
+            vec![
+                Extra::ChannelStable.text(language).to_owned(),
+                Extra::ChannelPinned.text(language).to_owned(),
+                Extra::ChannelLocal.text(language).to_owned(),
+            ],
+            match channel {
+                ToolkitChannel::Stable => 0,
+                ToolkitChannel::Pinned => 1,
+                ToolkitChannel::Local => 2,
+            },
+        )
+        .detail(
+            match channel {
+                ToolkitChannel::Stable => Extra::ChannelStableDetail,
+                ToolkitChannel::Pinned => Extra::ChannelPinnedDetail,
+                ToolkitChannel::Local => Extra::ChannelLocalDetail,
+            }
+            .text(language),
+        )
+        .icon(Icon::STACK),
     );
+    match channel {
+        ToolkitChannel::Pinned => {
+            let tags = pinned_options(prefs, env);
+            let selected = prefs
+                .toolkit_pinned
+                .as_ref()
+                .and_then(|p| tags.iter().position(|t| t == p))
+                .unwrap_or(0);
+            toolkit.push(
+                Row::choice(
+                    "pinned",
+                    Extra::PinnedVersion.text(language),
+                    tags,
+                    selected,
+                )
+                .icon(Icon::TAG),
+            );
+        }
+        ToolkitChannel::Local => toolkit.push(
+            Row::action("toolkitFolder", Extra::ToolkitChooseFolder.text(language))
+                .icon(Icon::FOLDER),
+        ),
+        ToolkitChannel::Stable => {}
+    }
+    if let Some(tag) = whats_new_tag(env) {
+        let detail = match &env.update {
+            UpdateState::Available(_) if channel == ToolkitChannel::Stable => {
+                Extra::UpdateAvailable.format(language, &[Arg::Str(&format!("v{tag}"))])
+            }
+            _ => format!("v{tag}"),
+        };
+        toolkit.push(
+            Row::action("whatsNew", Extra::WhatsNew.text(language))
+                .detail(detail)
+                .icon(Icon::LIST),
+        );
+    }
+    let missing = env.toolkit_version.is_none() && channel != ToolkitChannel::Local;
+    let update_ready =
+        channel == ToolkitChannel::Stable && matches!(env.update, UpdateState::Available(_));
+    if missing || update_ready {
+        let text = if missing {
+            Extra::ToolkitInstall
+        } else {
+            Extra::ToolkitInstallUpdate
+        };
+        toolkit.push(Row::command("install", text.text(language)).icon(Icon::DOWNLOAD_SIMPLE));
+    }
+    if channel == ToolkitChannel::Stable {
+        let status = match &env.update {
+            UpdateState::Unknown => None,
+            UpdateState::Checking => Some(Extra::Checking.text(language).to_owned()),
+            UpdateState::Downloading => Some(Extra::ToolkitDownloading.text(language).to_owned()),
+            UpdateState::UpToDate => Some(Extra::UpToDate.text(language).to_owned()),
+            UpdateState::Available(v) => {
+                Some(Extra::UpdateAvailable.format(language, &[Arg::Str(&format!("v{v}"))]))
+            }
+            UpdateState::Failed => Some(Extra::CheckFailed.text(language).to_owned()),
+        };
+        let last_checked = prefs.toolkit_checked_at.as_deref().map_or_else(
+            || Extra::NeverChecked.text(language).to_owned(),
+            |stamp| Extra::LastCheckedOn.format(language, &[Arg::Str(stamp)]),
+        );
+        toolkit.push(
+            Row::toggle(
+                "updateCheck",
+                Extra::UpdateCheck.text(language),
+                prefs.check_for_updates,
+            )
+            .detail(Extra::UpdateCheckDetail.text(language))
+            .icon(Icon::ARROWS_CLOCKWISE)
+            .group_start(),
+        );
+        toolkit.push(
+            Row::command("checkNow", Extra::CheckNow.text(language))
+                .detail(status.unwrap_or(last_checked))
+                .icon(Icon::ARROW_CLOCKWISE),
+        );
+    }
     toolkit.push(
         Row::choice(
             "cpu",
@@ -382,7 +483,8 @@ pub fn build_categories(
             },
         )
         .detail(Extra::CpuConversionDetail.text(language))
-        .icon(Icon::GAUGE),
+        .icon(Icon::GAUGE)
+        .group_start(),
     );
 
     // Advanced
@@ -390,11 +492,33 @@ pub fn build_categories(
         .screenshots_folder
         .as_deref()
         .unwrap_or(env.default_screenshots);
-    let mut advanced = vec![
-        Row::action("screenshots", t(Key::ScreenshotsFolder))
-            .detail(abbreviated(screenshots))
-            .icon(Icon::CAMERA),
-        Row::command("showScreenshots", t(Key::ShowScreenshots)).icon(Icon::IMAGES),
+    let mut advanced = Vec::new();
+    // F12 screenshots need a build newer than v0.1.3; an older toolkit would ignore the folder.
+    match env.toolkit_version {
+        Some(version) if !compat::supports(Feature::Screenshots, version) => {
+            let needs = match Feature::Screenshots.since() {
+                Since::Release(tag) => {
+                    Extra::NeedsToolkit.format(language, &[Arg::Str(&format!("v{tag}"))])
+                }
+                Since::After(tag) => {
+                    Extra::NeedsNewerThan.format(language, &[Arg::Str(&format!("v{tag}"))])
+                }
+            };
+            advanced.push(
+                Row::info("screenshots", t(Key::ScreenshotsFolder), Some(needs)).icon(Icon::CAMERA),
+            );
+        }
+        _ => {
+            advanced.push(
+                Row::action("screenshots", t(Key::ScreenshotsFolder))
+                    .detail(abbreviated(screenshots))
+                    .icon(Icon::CAMERA),
+            );
+            advanced
+                .push(Row::command("showScreenshots", t(Key::ShowScreenshots)).icon(Icon::IMAGES));
+        }
+    }
+    advanced.push(
         Row::action("fonts", t(Key::FontsFolder))
             .detail(
                 prefs
@@ -403,7 +527,7 @@ pub fn build_categories(
                     .map_or_else(|| t(Key::FontsNone), abbreviated),
             )
             .icon(Icon::TEXT_AA),
-    ];
+    );
     if prefs.fonts_folder.is_some() {
         advanced.push(Row::command("fontsReset", t(Key::FontsReset)).icon(Icon::X_CIRCLE));
     }
@@ -591,7 +715,7 @@ impl SettingsPanel {
                 let rows = &cats[self.nav.category.min(cats.len() - 1)].rows;
                 let driven = rows::drive(shell, &mut self.nav, rows, &[command]);
                 for change in &driven.changes {
-                    self.apply(shell, ctx, prefs, change, &mut out);
+                    self.apply(shell, ctx, prefs, env, change, &mut out);
                 }
                 if driven.close {
                     self.close();
@@ -644,7 +768,7 @@ impl SettingsPanel {
                 let rows = &cats[self.nav.category.min(cats.len() - 1)].rows;
                 let (changes, texts) = rows::apply_mouse(shell, &mut self.nav, rows, events);
                 for change in &changes {
-                    self.apply(shell, ctx, prefs, change, &mut out);
+                    self.apply(shell, ctx, prefs, env, change, &mut out);
                 }
                 for (id, value) in texts {
                     if id == "name" && prefs.profile_name != value {
@@ -662,6 +786,7 @@ impl SettingsPanel {
         shell: &mut Shell,
         ctx: &Context,
         prefs: &mut Preferences,
+        env: &SettingsEnv<'_>,
         change: &Change,
         out: &mut Output<SettingsAction>,
     ) {
@@ -729,6 +854,57 @@ impl SettingsPanel {
                 out.actions.push(SettingsAction::CheckForUpdates);
             }
             Change::Run { row: "install" } => out.actions.push(SettingsAction::InstallToolkit),
+            Change::Run { row: "whatsNew" } => {
+                if let Some(tag) = whats_new_tag(env) {
+                    out.actions.push(SettingsAction::OpenWhatsNew(tag));
+                }
+            }
+            Change::Choice {
+                row: "channel",
+                index: 0,
+            } => {
+                prefs.toolkit = None;
+                prefs.toolkit_pinned = None;
+                changed = true;
+                out.actions.push(SettingsAction::UseStableToolkit);
+            }
+            Change::Choice {
+                row: "channel",
+                index: 1,
+            } => {
+                // Stay on what is installed now; the list offers the other releases.
+                let tag = env
+                    .toolkit_version
+                    .and_then(compat::release_tag)
+                    .map(|t| format!("v{t}"))
+                    .or_else(|| env.recent.first().cloned());
+                if let Some(tag) = tag {
+                    prefs.toolkit = None;
+                    prefs.toolkit_pinned = Some(tag.clone());
+                    changed = true;
+                    out.actions.push(SettingsAction::PinToolkit(tag));
+                }
+            }
+            Change::Choice {
+                row: "channel",
+                index: 2,
+            } if prefs.toolkit.is_none() => {
+                if let Some(folder) =
+                    dialogs::pick_folder(shell, Extra::ToolkitChooseFolder.text(language), None)
+                {
+                    out.actions.push(SettingsAction::AdoptToolkitFolder(folder));
+                }
+            }
+            Change::Choice {
+                row: "pinned",
+                index,
+            } => {
+                if let Some(tag) = pinned_options(prefs, env).get(*index).cloned() {
+                    prefs.toolkit_pinned = Some(tag.clone());
+                    changed = true;
+                    out.actions.push(SettingsAction::PinToolkit(tag));
+                }
+            }
             Change::Run { row: "restartNow" } => out.actions.push(SettingsAction::RestartNow),
             Change::Run {
                 row: "toolkitFolder",
@@ -898,6 +1074,7 @@ mod tests {
 
     fn env<'a>(toolkit: Option<&'a str>, update: UpdateState) -> SettingsEnv<'a> {
         SettingsEnv {
+            recent: &[],
             games_found: 9,
             app_version: "0.1.0",
             toolkit_version: toolkit,
@@ -1146,5 +1323,77 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn toolkit_ids(prefs: &Preferences, version: Option<&str>) -> Vec<&'static str> {
+        let cats = build_categories(
+            prefs,
+            &env(version, UpdateState::UpToDate),
+            Language::English,
+        );
+        ids(&cats, Category::Toolkit)
+    }
+
+    #[test]
+    fn the_channel_decides_which_toolkit_rows_exist() {
+        let mut prefs = Preferences::default();
+        let stable = toolkit_ids(&prefs, Some("0.1.3-abc"));
+        for row in ["channel", "whatsNew", "updateCheck", "checkNow", "cpu"] {
+            assert!(stable.contains(&row), "stable has {row}");
+        }
+        assert!(!stable.contains(&"pinned"));
+        prefs.toolkit_pinned = Some("v0.1.2".into());
+        let pinned = toolkit_ids(&prefs, Some("0.1.2-abc"));
+        assert!(pinned.contains(&"pinned") && pinned.contains(&"whatsNew"));
+        assert!(!pinned.contains(&"checkNow") && !pinned.contains(&"updateCheck"));
+        prefs.toolkit = Some("D:/build".into());
+        let local = toolkit_ids(&prefs, Some("local-abc"));
+        assert!(local.contains(&"toolkitFolder") && !local.contains(&"pinned"));
+        assert!(!local.contains(&"checkNow") && !local.contains(&"install"));
+        assert!(
+            !local.contains(&"whatsNew"),
+            "a local build has no release notes"
+        );
+    }
+
+    #[test]
+    fn the_pinned_list_keeps_the_pinned_and_the_installed_release() {
+        let prefs = Preferences {
+            toolkit_pinned: Some("v0.0.9".into()),
+            ..Default::default()
+        };
+        let recent = ["v0.1.3".to_owned(), "v0.1.2".to_owned()];
+        let mut e = env(Some("0.1.0-abc"), UpdateState::Unknown);
+        e.recent = &recent;
+        assert_eq!(
+            pinned_options(&prefs, &e),
+            ["v0.1.3", "v0.1.2", "v0.0.9", "v0.1.0"]
+        );
+    }
+
+    #[test]
+    fn screenshots_need_a_build_newer_than_the_last_release() {
+        let advanced = |version| {
+            let cats = build_categories(
+                &Preferences::default(),
+                &env(Some(version), UpdateState::Unknown),
+                Language::English,
+            );
+            ids(&cats, Category::Advanced)
+        };
+        let released = advanced("0.1.3-abc");
+        assert!(released.contains(&"screenshots") && !released.contains(&"showScreenshots"));
+        for version in ["0.1.4-abc", "local-abc"] {
+            assert!(advanced(version).contains(&"showScreenshots"), "{version}");
+        }
+    }
+
+    #[test]
+    fn the_notes_are_about_the_update_when_one_waits() {
+        let waiting = env(Some("0.1.3-abc"), UpdateState::Available("0.1.4".into()));
+        assert_eq!(whats_new_tag(&waiting).as_deref(), Some("0.1.4"));
+        let current = env(Some("0.1.3-abc"), UpdateState::UpToDate);
+        assert_eq!(whats_new_tag(&current).as_deref(), Some("0.1.3"));
+        assert_eq!(whats_new_tag(&env(None, UpdateState::Unknown)), None);
     }
 }

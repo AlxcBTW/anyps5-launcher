@@ -452,23 +452,11 @@ impl Controls {
     }
 }
 
-/// Whether the toolkit reads `StickModifier`, `KeyboardRampMs` and `TriggerRampMs` (added in
-/// v0.1.3; an older one stops input at such a line). An unknown or local toolkit gets them.
+/// Whether the toolkit reads `StickModifier`, `KeyboardRampMs` and `TriggerRampMs` (an older one
+/// stops input at such a line); see [`crate::compat`]. An unknown or local toolkit gets them.
 pub fn writes_v013_lines(toolkit: Option<&str>) -> bool {
-    let Some(tag) = toolkit.map(|t| t.trim().trim_start_matches('v')) else {
-        return true;
-    };
-    let mut numbers = tag
-        .split(|c: char| !c.is_ascii_digit())
-        .map(|part| part.parse::<u32>());
-    match (numbers.next(), numbers.next(), numbers.next()) {
-        (Some(Ok(major)), Some(Ok(minor)), Some(Ok(patch)))
-            if tag.starts_with(|c: char| c.is_ascii_digit()) =>
-        {
-            (major, minor, patch) >= (0, 1, 3)
-        }
-        _ => true,
-    }
+    use crate::compat::{Feature, supports};
+    toolkit.is_none_or(|t| supports(Feature::StickModifier, t) && supports(Feature::InputRamps, t))
 }
 
 fn strings(sources: &[&str]) -> Vec<String> {

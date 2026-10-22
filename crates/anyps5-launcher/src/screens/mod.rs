@@ -36,6 +36,7 @@ pub mod home;
 pub mod library;
 pub mod log;
 pub mod onboarding;
+pub mod recommended;
 pub mod rows;
 pub mod scroll;
 pub mod settings;
@@ -46,6 +47,7 @@ pub mod start;
 pub mod strings;
 pub mod trophies;
 pub mod unlock;
+pub mod whatsnew;
 
 pub use shared::*;
 

@@ -81,7 +81,7 @@ fn relinker() {
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--windows" => windows = true,
-            "--module-dir" | "--patches" | "--rpath" => {
+            "--module-dir" | "--patches" | "--rpath" | "--windows-fixed-base" => {
                 let value = iter.next().cloned().unwrap_or_default();
                 if arg == "--module-dir" {
                     module_dirs.push(value);

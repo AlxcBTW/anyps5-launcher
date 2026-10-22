@@ -697,6 +697,20 @@ The launcher keeps the port's structure but trims what read as noise next to the
   bar and its percentage on the buttons' centre line. The scanning icon breathes in opacity only.
   The launch splash's explanation wraps at 460 dp, so it never ends on a lone word. The onboarding
   theme names share one baseline under the resting cards; focus grows the card, not the label.
+- **Toolkit channels, notes and recommendations.** The Toolkit page has one `Channel` choice
+  (Stable, Pinned, Local Build) and shows only the rows of that channel: stable has the update
+  toggle and "Check Now" (its detail line carries the status or the last check), pinned has a
+  `Version` choice over the last ten releases and no update, local has the folder row. "What's New"
+  opens the notes of the release waiting to be installed, else of the installed one, in one
+  full-screen panel: header with release, date and count, Highlights (`feat` and `perf` by area,
+  the seven busiest areas folded, the rest as "Other areas"), then Everything. Rows are 44 dp, drawn
+  from the visible range only; select unfolds an area or opens the pull request. The game sheet
+  gains one row, "Recommended for this game", first in the play group, only when the catalogue
+  has something: it opens a side panel with `current -> recommended` lines, the reason under each,
+  and one `Apply`. Warnings alone show a `Close` row instead. "Unlock Again" carries a detail line
+  ("Unlocked with v0.1.2. v0.1.3 is installed.") when the copy was made with another toolkit.
+  What each toolkit release supports is the table in `core::compat`; an older toolkit loses the
+  feature (screenshots row, patch resolutions), never the launch.
 
 ## 4. Materials and blur on the GPU
 
@@ -944,10 +958,11 @@ Console languages (number, name): 19 Türkçe, 1 English (US), 18 English (UK), 
 
 Per-game settings (defaults): resolution nil, fullscreen false, windowSize 75, vsync true, overlay off, language nil, controls nil
 (layout changes), tuning nil, shaderCache nil (= on). Passed to the game as environment variables at start:
-`ANYPS5_FULLSCREEN` (0/1), `ANYPS5_WINDOW_SIZE` (clamped 30..100), `ANYPS5_PRESENT_MODE` (`fifo` / `immediate`),
-`ANYPS5_LANGUAGE`, `ANYPS5_OVERLAY=1` + `ANYPS5_OVERLAY_POS` (`tl`/`tr`/`bl`/`br`), `APS5_RESOLUTION`, `ANYPS5_INPUT_CONFIG`,
-`ANYPS5_SCREENSHOTS`, `ANYPS5_SYSTEM_FONTS`, `ANYPS5_NO_SHADER_CACHE=1`. (Whether the Windows toolkit honours the same names is a
-logic-layer question, outside this UI document.)
+`ANYPS5_PRESENT_MODE` (`fifo` / `immediate`), `ANYPS5_LANGUAGE`, `ANYPS5_OVERLAY=1` + `ANYPS5_OVERLAY_POS` (`tl`/`tr`/`bl`/`br`),
+`ANYPS5_INPUT_CONFIG`, `ANYPS5_SCREENSHOTS`, `ANYPS5_SYSTEM_FONTS`, `ANYPS5_NO_SHADER_CACHE=1`. Upstream reads none of
+`ANYPS5_FULLSCREEN`, `ANYPS5_WINDOW_SIZE` and `APS5_RESOLUTION` (they are in no list of upstream's `docs/dev/ENVIRONMENT.md`): fullscreen
+and window size are the launcher's own window logic, the resolution is a patch. `core::compat` knows from which toolkit release each
+variable and input line is read; what an older toolkit lacks is left out, and `ANYPS5_SCREENSHOTS` needs a build newer than v0.1.3.
 
 **Confirm uninstall panel**: title `uninstall`, subtitle `uninstallConfirm`; two rows: `uninstall` (destructive, trash glyph) and
 `cancel`. Opens in rows focus on the first row.
