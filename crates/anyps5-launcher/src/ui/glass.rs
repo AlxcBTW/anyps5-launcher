@@ -3,8 +3,11 @@
 //! [`paint_glass`] draws one panel; [`GlassStyle`] has a preset for every use in the original
 //! (info cards, toast, log boxes, full-screen panels, side panel, splash).
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use bytemuck::{Pod, Zeroable};
 use eframe::egui_wgpu::{self, wgpu};
+use egui::emath::GuiRounding;
 use egui::{Color32, Context, Painter, Rect, Stroke, StrokeKind, epaint::RectShape};
 
 use crate::ui::background::{BackdropGpu, SLOT_MAIN};
@@ -326,6 +329,20 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
     }
 }
 
+/// Glass panels painted since the last [`begin_frame`]: while there are none, the backdrop skips
+/// the blurred copy nobody samples.
+static PANELS: AtomicUsize = AtomicUsize::new(0);
+
+/// Starts a frame's count of glass panels (the backdrop calls it before any UI is painted).
+pub(crate) fn begin_frame() {
+    PANELS.store(0, Ordering::Relaxed);
+}
+
+/// Whether a glass panel was painted since [`begin_frame`].
+pub(crate) fn panels_painted() -> bool {
+    PANELS.load(Ordering::Relaxed) > 0
+}
+
 /// Next free position in this pass's uniform ring.
 fn next_index(ctx: &Context) -> usize {
     #[derive(Clone, Default)]
@@ -343,6 +360,7 @@ fn next_index(ctx: &Context) -> usize {
         }
         let index = counter.next;
         counter.next += 1;
+        PANELS.store(counter.next, Ordering::Relaxed);
         index
     })
 }
@@ -363,6 +381,9 @@ pub fn paint_glass_on(
     if style.alpha <= 0.0 {
         return;
     }
+    // The shader and the stroke share one pixel-aligned rect and one whole-dp radius.
+    let rect = rect.round_to_pixels(ctx.pixels_per_point());
+    style.radius = style.radius.round();
     painter.add(egui_wgpu::Callback::new_paint_callback(
         rect,
         GlassCallback {
@@ -378,7 +399,7 @@ pub fn paint_glass_on(
         painter.add(RectShape::stroke(
             rect,
             style.radius,
-            Stroke::new(1.0, color::hairline_glass()),
+            Stroke::new(1.0 / ctx.pixels_per_point(), color::hairline_glass()),
             StrokeKind::Inside,
         ));
     }

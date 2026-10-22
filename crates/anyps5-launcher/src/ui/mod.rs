@@ -114,6 +114,7 @@ impl Shell {
     /// Call first thing in every frame: applies the window scale and collects input events.
     pub fn begin_frame(&mut self, ctx: &Context) -> FrameInput {
         self.scale = theme::sync_scale(ctx);
+        text::set_pixels_per_point(ctx.pixels_per_point());
         FrameInput {
             scale: self.scale,
             events: self.input.poll(ctx),

@@ -748,13 +748,24 @@ impl<'a> PanelRow<'a> {
             } else {
                 lerp(CHEVRON_OPACITY, CHEVRON_OPACITY_FOCUS, t)
             };
-            painter.text(
-                at.center(),
-                Align2::CENTER_CENTER,
-                icon.glyph(),
-                icon.font(glyph, false),
-                fade(fg, opacity),
-            );
+            if icon == Icon::CARET_LEFT || icon == Icon::CARET_RIGHT {
+                components::paint_caret(
+                    &painter,
+                    at.center(),
+                    icon == Icon::CARET_RIGHT,
+                    glyph,
+                    fade(fg, opacity),
+                );
+            } else {
+                // The stepper's minus and plus stay glyphs.
+                painter.text(
+                    at.center(),
+                    Align2::CENTER_CENTER,
+                    icon.glyph(),
+                    icon.font(glyph, false),
+                    fade(fg, opacity),
+                );
+            }
             if enabled && r.hovered() {
                 ctx.set_cursor_icon(CursorIcon::PointingHand);
             }
@@ -1017,8 +1028,12 @@ pub fn side_panel<R>(
             let scrim_response = ui.interact(scrim, id.with("scrim"), Sense::click());
             scrim_clicked = scrim_response.clicked();
             paint_glass(ctx, &painter, panel, GlassStyle::side_panel());
+            let edge = Rect::from_min_size(
+                panel.min,
+                vec2(components::hairline_width(&painter), panel.height()),
+            );
             painter.rect_filled(
-                Rect::from_min_size(panel.min, vec2(1.0, panel.height())),
+                components::snap_rect(&painter, edge),
                 0.0,
                 color::hairline_panel_edge(),
             );
@@ -1212,22 +1227,19 @@ pub fn language_card(
     }
     let painter = ui.painter();
     let s = it.scale(1.04);
-    let rect = scale_rect(it.rect, s);
+    let rect = components::snap_rect(painter, scale_rect(it.rect, s));
     let rest = if it.hovered {
         white(0.14)
     } else {
         color::surface()
     };
-    painter.add(shadows::language_card(it.focus).as_shape(rect, corner(radius::LANGUAGE_CARD * s)));
-    painter.rect_filled(
-        rect,
-        corner(radius::LANGUAGE_CARD * s),
-        mix(rest, Color32::WHITE, it.focus),
-    );
+    let r = (radius::LANGUAGE_CARD * s).round();
+    painter.add(shadows::language_card(it.focus).as_shape(rect, corner(r)));
+    painter.rect_filled(rect, corner(r), mix(rest, Color32::WHITE, it.focus));
     paint_hairline(
         painter,
         rect,
-        radius::LANGUAGE_CARD * s,
+        r,
         fade(color::hairline_card(), 1.0 - it.focus),
     );
     let ink = mix(Color32::WHITE, Color32::BLACK, it.focus);

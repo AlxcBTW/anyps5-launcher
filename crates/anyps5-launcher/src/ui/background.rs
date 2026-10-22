@@ -151,6 +151,7 @@ impl Backdrop {
 
     /// Paints the backdrop into `rect`.
     pub fn paint(&mut self, ctx: &Context, painter: &Painter, rect: Rect) {
+        crate::ui::glass::begin_frame();
         let time = self.clock.time();
         let mut layer = Background::new(SLOT_MAIN, self.theme, time);
         layer.blur = self.blur;
@@ -587,7 +588,8 @@ impl egui_wgpu::CallbackTrait for BackgroundCallback {
             drop(pass);
             slot.last_key = Some(key);
         }
-        if let Some(settings) = layer.blur {
+        // Painting happens after all UI: the blurred copy is made only when a panel samples it.
+        if let Some(settings) = layer.blur.filter(|_| crate::ui::glass::panels_painted()) {
             let new_chain = slot.blur.as_ref().is_none_or(|c| c.source_size() != size);
             if new_chain {
                 slot.blur = Some(BlurChain::new(device, blur_pipelines, sampler, size));

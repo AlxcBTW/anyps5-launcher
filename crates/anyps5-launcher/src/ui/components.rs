@@ -6,7 +6,8 @@
 //! animates its focus with `Motion::Focus` and shows hover (mouse only) and press (0.97) states.
 //! A disabled widget is drawn at 40 % and takes no input.
 
-use egui::epaint::{Mesh, RectShape, Shadow, Vertex};
+use egui::emath::GuiRounding;
+use egui::epaint::{Mesh, RectShape, Shadow};
 use egui::{
     Align2, Color32, CornerRadius, Painter, Pos2, Rect, Response, Role, Sense, Shape, Stroke,
     StrokeKind, Ui, Vec2, WidgetInfo, pos2, vec2,
@@ -32,6 +33,22 @@ pub const PRESS_SCALE: f32 = 0.97;
 /// Rectangle scaled about its centre.
 pub fn scale_rect(rect: Rect, factor: f32) -> Rect {
     Rect::from_center_size(rect.center(), rect.size() * factor)
+}
+
+/// `rect` with its edges on physical pixels, so a scaled element never rests on a fractional edge.
+pub fn snap_rect(painter: &Painter, rect: Rect) -> Rect {
+    rect.round_to_pixels(painter.ctx().pixels_per_point())
+}
+
+/// One physical pixel in dp: the width of a crisp hairline.
+pub fn hairline_width(painter: &Painter) -> f32 {
+    1.0 / painter.ctx().pixels_per_point()
+}
+
+/// A stroke width rounded to whole physical pixels (at least one).
+pub fn snap_width(painter: &Painter, width: f32) -> f32 {
+    let ppp = painter.ctx().pixels_per_point();
+    (width * ppp).round().max(1.0) / ppp
 }
 
 /// Converts a radius in dp to egui's integer corner radius.
@@ -67,8 +84,9 @@ pub fn paint_focus_glow(painter: &Painter, rect: Rect, radius: f32, width: f32, 
 pub fn paint_focus_stroke(painter: &Painter, rect: Rect, radius: f32, width: f32, t: f32) {
     let t = t.clamp(0.0, 1.0);
     if t > 0.001 {
+        let width = snap_width(painter, width);
         painter.add(RectShape::stroke(
-            rect.expand(width * 1.6),
+            snap_rect(painter, rect.expand(width * 1.6)),
             corner(radius + width * 1.6),
             Stroke::new(width, white(0.95 * t)),
             StrokeKind::Inside,
@@ -82,10 +100,30 @@ pub fn paint_hairline(painter: &Painter, rect: Rect, radius: f32, color: Color32
         painter.add(RectShape::stroke(
             rect,
             corner(radius),
-            Stroke::new(1.0, color),
+            Stroke::new(hairline_width(painter), color),
             StrokeKind::Inside,
         ));
     }
+}
+
+/// A chevron of `size` dp drawn as a line, centred on `centre`. The font's caret is hairline thin
+/// next to the text weight of a row; this one is 1.75 dp wide and rests on whole device pixels.
+pub fn paint_caret(painter: &Painter, centre: Pos2, right: bool, size: f32, color: Color32) {
+    let ppp = painter.ctx().pixels_per_point();
+    let centre = centre.round_to_pixels(ppp);
+    let (h, w) = (size * 0.34, size * 0.2);
+    let dir = if right { 1.0 } else { -1.0 };
+    // The mass of a chevron sits on its open side; shift toward the tip to centre it optically.
+    let shift = dir * w * 0.33;
+    let points = vec![
+        centre + vec2(shift - dir * w, -h),
+        centre + vec2(shift + dir * w, 0.0),
+        centre + vec2(shift - dir * w, h),
+    ];
+    painter.add(Shape::line(
+        points,
+        Stroke::new(snap_width(painter, 1.75), color),
+    ));
 }
 
 /// A spinning three-quarter arc with round ends (the original's small `ProgressView`).
@@ -314,7 +352,7 @@ impl<'a> ConsoleButton<'a> {
             return it.response;
         }
         let s = it.scale(1.05);
-        let rect = scale_rect(it.rect, s);
+        let rect = snap_rect(&painter, scale_rect(it.rect, s));
         let a = it.alpha();
         let rest = if self.prominent {
             color::surface_prominent()
@@ -333,7 +371,8 @@ impl<'a> ConsoleButton<'a> {
             color::text_on_focus(),
             it.focus,
         );
-        let r = radius::CONSOLE_BUTTON * s;
+        // One whole-dp radius for shadow, fill and stroke keeps them concentric.
+        let r = (radius::CONSOLE_BUTTON * s).round();
         paint_shadow(&painter, rect, r, shadows::console_button(it.focus));
         painter.rect_filled(rect, corner(r), fade(fill, a));
         paint_hairline(
@@ -358,6 +397,14 @@ impl<'a> ConsoleButton<'a> {
                         fade(foreground, a),
                     );
                 }
+            } else if icon == Icon::CARET_LEFT || icon == Icon::CARET_RIGHT {
+                paint_caret(
+                    &painter,
+                    centre,
+                    icon == Icon::CARET_RIGHT,
+                    icon_width * s,
+                    fade(foreground, a),
+                );
             } else {
                 painter.text(
                     centre,
@@ -442,7 +489,7 @@ impl IconButton {
         }
         let painter = ui.painter();
         let s = it.scale(1.1);
-        let rect = scale_rect(it.rect, s);
+        let rect = snap_rect(painter, scale_rect(it.rect, s));
         let a = it.alpha();
         let rest = if it.hovered {
             color::surface_hover()
@@ -450,13 +497,9 @@ impl IconButton {
             color::surface()
         };
         let fill = mix(rest, color::surface_focused(), it.focus);
-        paint_shadow(
-            painter,
-            rect,
-            radius::ICON_BUTTON * s,
-            shadows::icon_button(it.focus),
-        );
-        painter.rect_filled(rect, corner(radius::ICON_BUTTON * s), fade(fill, a));
+        let r = (radius::ICON_BUTTON * s).round();
+        paint_shadow(painter, rect, r, shadows::icon_button(it.focus));
+        painter.rect_filled(rect, corner(r), fade(fill, a));
         painter.text(
             rect.center(),
             Align2::CENTER_CENTER,
@@ -681,28 +724,63 @@ pub fn paint_indeterminate(painter: &Painter, rect: Rect, time: f64, accent: Col
     let phase = anim::indeterminate_phase(time);
     let w = rect.width();
     let x0 = rect.min.x + w * phase;
-    let band = Rect::from_min_max(pos2(x0, rect.min.y), pos2(x0 + w * 0.35, rect.max.y));
-    let clip = painter.with_clip_rect(rect.intersect(painter.clip_rect()));
-    let mid = band.center().x;
-    let clear = Color32::TRANSPARENT;
+    let (x1, mid) = (x0 + w * 0.35, x0 + w * 0.175);
+    let (lo, hi) = (x0.max(rect.min.x), x1.min(rect.max.x));
+    if hi <= lo {
+        return;
+    }
     let accent = accent.to_srgba_unmultiplied();
     let accent = Color32::from_rgba_unmultiplied(accent[0], accent[1], accent[2], 255);
+    // Columns at the band's corners and along both capsule ends; the half height of the capsule
+    // at a column is the band's extent there, so the band follows the rounded ends.
+    let r = (rect.height() * 0.5).min(w * 0.5);
+    let cy = rect.center().y;
+    const CAP_STEPS: usize = 6;
+    let mut xs = [0.0f32; 3 + 2 * (CAP_STEPS + 1)];
+    xs[0] = lo;
+    xs[1] = hi;
+    xs[2] = mid.clamp(lo, hi);
+    for k in 0..=CAP_STEPS {
+        let d = r * k as f32 / CAP_STEPS as f32;
+        xs[3 + 2 * k] = (rect.min.x + d).clamp(lo, hi);
+        xs[4 + 2 * k] = (rect.max.x - d).clamp(lo, hi);
+    }
+    xs.sort_by(f32::total_cmp);
+    let feather = hairline_width(painter);
     let mut mesh = Mesh::default();
-    let vertex = |pos: Pos2, color: Color32| Vertex {
-        pos,
-        uv: egui::epaint::WHITE_UV,
-        color,
-    };
-    mesh.vertices = vec![
-        vertex(band.left_top(), clear),
-        vertex(pos2(mid, band.min.y), accent),
-        vertex(pos2(mid, band.max.y), accent),
-        vertex(band.left_bottom(), clear),
-        vertex(band.right_top(), clear),
-        vertex(band.right_bottom(), clear),
-    ];
-    mesh.indices = vec![0, 1, 2, 0, 2, 3, 1, 4, 5, 1, 5, 2];
-    clip.add(Shape::mesh(mesh));
+    let mut last = f32::NEG_INFINITY;
+    for &x in &xs {
+        if x - last < 0.01 {
+            continue;
+        }
+        last = x;
+        let into_cap = (rect.min.x + r - x).max(x - (rect.max.x - r)).max(0.0);
+        let half = (r * r - into_cap * into_cap).max(0.0).sqrt();
+        let profile = if x <= mid {
+            (x - x0) / (mid - x0)
+        } else {
+            (x1 - x) / (x1 - mid)
+        };
+        let solid = accent.gamma_multiply(profile.clamp(0.0, 1.0));
+        let (inner, outer) = ((half - feather * 0.5).max(0.0), half + feather * 0.5);
+        let base = mesh.vertices.len() as u32;
+        for (dy, c) in [
+            (-outer, Color32::TRANSPARENT),
+            (-inner, solid),
+            (inner, solid),
+            (outer, Color32::TRANSPARENT),
+        ] {
+            mesh.colored_vertex(pos2(x, cy + dy), c);
+        }
+        if base > 0 {
+            for row in 0..3 {
+                let (a, b) = (base - 4 + row, base + row);
+                mesh.add_triangle(a, a + 1, b);
+                mesh.add_triangle(a + 1, b + 1, b);
+            }
+        }
+    }
+    painter.add(Shape::mesh(mesh));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -736,6 +814,8 @@ impl PadGlyph {
         let h = size * 0.5;
         match self {
             PadGlyph::Cross => {
+                // Two diagonals cover less ink than a ring of the same width: draw them heavier.
+                let stroke = Stroke::new(1.8, color);
                 let d = h * 0.78;
                 painter.line_segment([centre + vec2(-d, -d), centre + vec2(d, d)], stroke);
                 painter.line_segment([centre + vec2(-d, d), centre + vec2(d, -d)], stroke);
@@ -745,6 +825,8 @@ impl PadGlyph {
             }
             PadGlyph::Triangle => {
                 let r = h * 0.95;
+                // The bounding box of a triangle sits high; lower it so the mass is centred.
+                let centre = centre + vec2(0.0, r * 0.12);
                 let points = vec![
                     centre + vec2(0.0, -r),
                     centre + vec2(r * 0.9, r * 0.7),

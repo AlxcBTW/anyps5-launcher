@@ -3,9 +3,10 @@
 //! out one by one in cells as wide as the widest digit of the font).
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use egui::text::{LayoutJob, TextFormat};
-use egui::{Align, Align2, Color32, FontId, Galley, Painter, Pos2, Rect, Vec2, pos2, vec2};
+use egui::{Align, Align2, Color32, FontId, Galley, Id, Painter, Pos2, Rect, Vec2, pos2, vec2};
 
 use crate::ui::theme::TextStyle;
 
@@ -61,9 +62,19 @@ pub fn to_upper(text: &str, language: crate::ui::i18n::Language) -> String {
     }
 }
 
-/// Quantises a scaled size so animated scale effects reuse a bounded set of glyph rasters.
+/// Device pixels per dp, bits of an `f32` (set once per frame by the shell).
+static PIXELS_PER_POINT: AtomicU32 = AtomicU32::new(0x3f80_0000);
+
+/// Tells [`quantize_size`] the current device pixel ratio.
+pub fn set_pixels_per_point(ppp: f32) {
+    PIXELS_PER_POINT.store(ppp.to_bits(), Ordering::Relaxed);
+}
+
+/// Quantises a scaled size to whole device pixels: animated scale effects reuse a bounded set of
+/// glyph rasters, and no size falls between two pixel grids (which makes the weight jitter).
 pub fn quantize_size(size: f32) -> f32 {
-    (size * 4.0).round() / 4.0
+    let ppp = f32::from_bits(PIXELS_PER_POINT.load(Ordering::Relaxed)).max(0.5);
+    (size * ppp).round() / ppp
 }
 
 /// A type-scale role scaled by `factor` (the SwiftUI `scaleEffect` of a focused element).
@@ -151,10 +162,25 @@ pub fn shrink_factor(
 // ---------------------------------------------------------------------------------------------
 
 /// Width of the widest digit of `style`'s font: the cell every digit is laid out in.
+/// Measured once per style and pixel ratio: it is needed by every tabular paint and measure.
 pub fn digit_cell(painter: &Painter, style: TextStyle) -> f32 {
-    ('0'..='9')
-        .map(|c| width(painter, style, &c.to_string()))
-        .fold(0.0, f32::max)
+    let ctx = painter.ctx();
+    let key = Id::unique((
+        "anyps5/digit-cell",
+        style.size.to_bits(),
+        style.weight,
+        style.tracking.to_bits(),
+        ctx.pixels_per_point().to_bits(),
+    ));
+    if let Some(cell) = ctx.data(|d| d.get_temp::<f32>(key)) {
+        return cell;
+    }
+    let mut buffer = [0u8; 4];
+    let cell = ('0'..='9')
+        .map(|c| width(painter, style, c.encode_utf8(&mut buffer)))
+        .fold(0.0, f32::max);
+    ctx.data_mut(|d| d.insert_temp(key, cell));
+    cell
 }
 
 /// Total width of `text` with tabular digits.
@@ -165,7 +191,7 @@ pub fn tabular_width(painter: &Painter, style: TextStyle, text: &str) -> f32 {
             if c.is_ascii_digit() {
                 cell
             } else {
-                width(painter, style, &c.to_string())
+                width(painter, style, c.encode_utf8(&mut [0u8; 4]))
             }
         })
         .sum()
@@ -185,7 +211,13 @@ pub fn paint_tabular(
     let mut x = pos.x;
     let mut height: f32 = 0.0;
     for c in text.chars() {
-        let galley = layout(painter, style, &c.to_string(), color, f32::INFINITY);
+        let galley = layout(
+            painter,
+            style,
+            c.encode_utf8(&mut [0u8; 4]),
+            color,
+            f32::INFINITY,
+        );
         let w = galley.size().x;
         let advance = if c.is_ascii_digit() { cell } else { w };
         let offset = if c.is_ascii_digit() {

@@ -85,6 +85,8 @@ struct PadNote {
 struct Note {
     freq: f32,
     age: u32,
+    /// `exp(-t / 0.9)`, stepped once per frame instead of evaluated.
+    decay: f32,
     amp: f32,
     pan: (f32, f32),
 }
@@ -101,6 +103,12 @@ pub struct Music {
     next_note: u64,
     drone_phase: f32,
     drone_level: f32,
+    /// The drone's slow swell (about 23 s), refreshed every block.
+    breathe: f32,
+    /// Per-frame factor of a note's decay, and the gains that need a `powf` to find.
+    note_decay: f32,
+    out_gain: f32,
+    quiet_gain: f32,
     filters: [[Lowpass; 2]; 2],
     reverb: Reverb,
     rng: Rng,
@@ -120,6 +128,10 @@ impl Music {
             next_note: (rate * 4.0) as u64,
             drone_phase: 0.0,
             drone_level: 0.0,
+            breathe: 1.0,
+            note_decay: (-1.0 / (0.9 * rate)).exp(),
+            out_gain: db_to_gain(GAIN_DB),
+            quiet_gain: db_to_gain(-3.0),
             filters: Default::default(),
             reverb: Reverb::new(rate, 5.0, 0.6),
             rng: Rng::new(seed),
@@ -177,6 +189,7 @@ impl Music {
                 .is_none_or(|at| frame - at < (RELEASE_SECONDS * rate) as u64)
         });
 
+        self.breathe = 1.0 + 0.15 * (TAU * seconds / 23.0).sin();
         let drone_target = if self.with_drone() { 1.0 } else { 0.0 };
         let drone_step = BLOCK as f32 / (6.0 * rate);
         self.drone_level += (drone_target - self.drone_level).clamp(-drone_step, drone_step);
@@ -209,6 +222,7 @@ impl Music {
         self.notes.push(Note {
             freq: midi_hz(midi as f32),
             age: 0,
+            decay: 1.0,
             amp: NOTE_GAIN * quiet * self.rng.range(0.55, 1.0),
             pan: pan(self.rng.range(-0.45, 0.45)),
         });
@@ -230,7 +244,7 @@ impl Music {
         let quiet = if self.with_drone() {
             1.0
         } else {
-            db_to_gain(-3.0)
+            self.quiet_gain
         };
         let [[l1, l2], [r1, r2]] = &mut self.filters;
         left = l2.process(l1.process(left)) * PAD_GAIN * quiet;
@@ -239,8 +253,8 @@ impl Music {
         self.drone_phase += DRONE_HZ / rate;
         self.drone_phase -= self.drone_phase.floor();
         let p = TAU * self.drone_phase;
-        let breathe = 1.0 + 0.15 * (TAU * self.frame as f32 / rate / 23.0).sin();
-        let drone = (p.sin() + 0.3 * (2.0 * p).sin()) * DRONE_GAIN * self.drone_level * breathe;
+        let drone =
+            (p.sin() + 0.3 * (2.0 * p).sin()) * DRONE_GAIN * self.drone_level * self.breathe;
         left += drone;
         right += drone;
 
@@ -248,19 +262,20 @@ impl Music {
         for note in &mut self.notes {
             let t = note.age as f32 / rate;
             let attack = (t / 0.01).min(1.0);
-            let envelope = attack * attack * (-t / 0.9).exp();
+            let envelope = attack * attack * note.decay;
             let q = TAU * note.freq * t;
             let s = (q.sin() + 0.2 * (2.0 * q).sin()) * envelope * note.amp;
             notes_l += s * note.pan.0;
             notes_r += s * note.pan.1;
             note.age += 1;
+            note.decay *= self.note_decay;
         }
 
         let (wet_l, wet_r) = self
             .reverb
             .process((left + right) * 0.5 * REVERB_SEND + (notes_l + notes_r) * 0.9);
         self.frame += 1;
-        let gain = db_to_gain(GAIN_DB);
+        let gain = self.out_gain;
         (
             (left + notes_l * 0.6 + wet_l) * gain,
             (right + notes_r * 0.6 + wet_r) * gain,
