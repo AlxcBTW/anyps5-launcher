@@ -29,12 +29,10 @@ rfd = "0.17.2"
 raw-window-handle = "0.6"
 
 time.workspace = true
+naga = { version = "30", features = ["wgsl-in"] }
 
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_SystemInformation", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }
-
-[dev-dependencies]
-naga = { version = "30", features = ["wgsl-in"] }
