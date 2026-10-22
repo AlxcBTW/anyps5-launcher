@@ -10,11 +10,11 @@ use egui::{
 
 use crate::ui::anim::{self, AnimExt, Motion, lerp};
 use crate::ui::components::{
-    self, Force, corner, key_cap, paint_capsule, paint_hairline, paint_progress, paint_shadow,
-    scale_rect,
+    self, Force, PRESS_SCALE, corner, key_cap, paint_capsule, paint_hairline, paint_progress,
+    paint_shadow, scale_rect,
 };
 use crate::ui::glass::{GlassStyle, paint_glass};
-use crate::ui::i18n::Language;
+use crate::ui::i18n::{Key, Language};
 use crate::ui::icons::Icon;
 use crate::ui::text;
 use crate::ui::theme::{self, black, color, fade, mix, radius, shadows, size, ty, white};
@@ -229,9 +229,11 @@ pub struct Fact<'a> {
 }
 
 /// One 236 x 96 glass card.
-pub fn info_card(ui: &mut Ui, fact: &Fact<'_>) -> Response {
+pub fn info_card(ui: &mut Ui, fact: &Fact<'_>, language: Language) -> Response {
     let (rect, response) =
         ui.allocate_exact_size(vec2(size::INFO_CARD.0, size::INFO_CARD.1), Sense::hover());
+    let name = format!("{}: {}", fact.title, fact.value);
+    response.widget_info(|| WidgetInfo::labeled(Role::Label, true, name.as_str()));
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         paint_glass(ui.ctx(), painter, rect, GlassStyle::card());
@@ -253,7 +255,7 @@ pub fn info_card(ui: &mut Ui, fact: &Fact<'_>) -> Response {
             pos2(rect.min.x + pad + icon_size + 6.0, overline_y),
             Align2::LEFT_TOP,
             ty::INFO_OVERLINE,
-            &fact.title.to_uppercase(),
+            &text::to_upper(fact.title, language),
             color::text_overline(),
         );
         let value_y = overline_y + ty::INFO_OVERLINE.line_height() + 10.0;
@@ -272,11 +274,11 @@ pub fn info_card(ui: &mut Ui, fact: &Fact<'_>) -> Response {
 }
 
 /// A row of info cards with the 14 dp gap.
-pub fn facts_line(ui: &mut Ui, facts: &[Fact<'_>]) {
+pub fn facts_line(ui: &mut Ui, facts: &[Fact<'_>], language: Language) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = size::INFO_CARD_GAP;
         for fact in facts {
-            info_card(ui, fact);
+            info_card(ui, fact, language);
         }
     });
 }
@@ -339,6 +341,8 @@ pub struct PanelRow<'a> {
     pub focused: bool,
     pub destructive: bool,
     pub force: Option<Force>,
+    /// Language of the accessible names of the chevrons.
+    pub language: Language,
 }
 
 /// What happened in a row this frame.
@@ -366,7 +370,12 @@ impl<'a> PanelRow<'a> {
             focused: false,
             destructive: false,
             force: None,
+            language: Language::English,
         }
+    }
+    pub fn language(mut self, language: Language) -> Self {
+        self.language = language;
+        self
     }
     pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
@@ -389,6 +398,48 @@ impl<'a> PanelRow<'a> {
         !matches!(self.control, RowControl::Info { .. })
     }
 
+    /// The row as one accessibility node: a switch for toggles, a label for static rows, a button
+    /// (with its current value) for everything else.
+    fn widget_info(&self) -> WidgetInfo {
+        match &self.control {
+            RowControl::Info { value } => {
+                let name = match value {
+                    Some(v) => format!("{}: {v}", self.title),
+                    None => self.title.to_owned(),
+                };
+                WidgetInfo::labeled(Role::Label, true, name)
+            }
+            RowControl::Toggle { on, .. } => {
+                WidgetInfo::selected(Role::Switch, true, *on, self.title)
+            }
+            RowControl::Choice { value, .. } | RowControl::Stepper { value, .. } => {
+                let mut info = WidgetInfo::labeled(Role::Button, true, self.title);
+                info.current_text_value = Some((*value).to_owned());
+                info
+            }
+            RowControl::Keys {
+                caps,
+                capturing,
+                press_label,
+                ..
+            } => {
+                let mut info = WidgetInfo::labeled(Role::Button, true, self.title);
+                info.current_text_value = Some(if *capturing {
+                    (*press_label).to_owned()
+                } else {
+                    caps.iter()
+                        .map(|c| c.label.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                });
+                info
+            }
+            RowControl::Action | RowControl::Text { .. } => {
+                WidgetInfo::labeled(Role::Button, true, self.title)
+            }
+        }
+    }
+
     /// Draws the row across the available width.
     pub fn show(mut self, ui: &mut Ui) -> RowOutput {
         let painter = ui.painter().clone();
@@ -398,7 +449,7 @@ impl<'a> PanelRow<'a> {
         let pad = size::ROW_PADDING_X;
 
         // Value width decides how much room the text column has.
-        let value_width = self.value_width(&painter);
+        let value_width = self.value_width(&painter, width);
         let icon_block = if self.icon.is_some() {
             size::ROW_ICON_BOX + 14.0
         } else {
@@ -444,14 +495,13 @@ impl<'a> PanelRow<'a> {
             title_galley.size().y + detail_galley.as_ref().map_or(0.0, |d| 3.0 + d.size().y);
         let height = size::ROW_MIN_HEIGHT.max(text_height + 20.0);
 
-        let sense = if focusable {
+        let sense = if focusable && !matches!(self.control, RowControl::Text { .. }) {
             Sense::click()
         } else {
             Sense::hover()
         };
         let (rect, response) = ui.allocate_exact_size(vec2(width, height), sense);
-        let title = self.title;
-        response.widget_info(|| WidgetInfo::labeled(Role::Button, focusable, title));
+        response.widget_info(|| self.widget_info());
         let hovered = focusable && (response.hovered() || self.force.is_some());
         if hovered {
             ctx.set_cursor_icon(CursorIcon::PointingHand);
@@ -481,11 +531,11 @@ impl<'a> PanelRow<'a> {
 
         let fg = mix(Color32::WHITE, Color32::BLACK, t);
         let dim = |factor: f32| fade(fg, factor);
-        let destructive = self.destructive && t < 0.5;
+        let destructive = self.destructive;
         let mut x = rect.min.x + pad;
         if let Some(icon) = self.icon {
             let tint = if destructive {
-                color::destructive_icon()
+                mix(color::destructive_icon(), dim(0.85), t)
             } else {
                 dim(0.85)
             };
@@ -500,7 +550,7 @@ impl<'a> PanelRow<'a> {
         }
         let top = rect.center().y - text_height * 0.5;
         let title_color = if destructive {
-            color::destructive_text()
+            mix(color::destructive_text(), fg, t)
         } else if focusable {
             fg
         } else {
@@ -521,7 +571,7 @@ impl<'a> PanelRow<'a> {
         out
     }
 
-    fn value_width(&self, painter: &Painter) -> f32 {
+    fn value_width(&self, painter: &Painter, row_width: f32) -> f32 {
         let chevron = size::CHEVRON_BOX;
         match &self.control {
             RowControl::Choice { value, .. } => {
@@ -532,9 +582,10 @@ impl<'a> PanelRow<'a> {
             RowControl::Stepper { .. } => chevron * 2.0 + size::STEPPER_VALUE_WIDTH + 24.0,
             RowControl::Toggle { .. } => size::SWITCH.0,
             RowControl::Action => 14.0,
-            RowControl::Info { value } => {
-                value.map_or(0.0, |v| text::width(painter, ty::ROW_INFO, v))
-            }
+            // A long value must not squeeze the title column: at most 40 % of the row.
+            RowControl::Info { value } => value.map_or(0.0, |v| {
+                text::width(painter, ty::ROW_INFO, v).min(row_width * 0.4)
+            }),
             RowControl::Text { .. } => size::TEXT_FIELD_WIDTH,
             RowControl::Keys {
                 caps,
@@ -576,6 +627,8 @@ impl<'a> PanelRow<'a> {
         let painter = ui.painter().clone();
         let chevron_box = size::CHEVRON_BOX;
         let row_id = out.response.id;
+        let title = self.title;
+        let language = self.language;
         let chevron = |ui: &mut Ui, at: Rect, icon: Icon, enabled: bool, step: i8, glyph: f32| {
             let r = ui.interact(
                 at,
@@ -586,10 +639,32 @@ impl<'a> PanelRow<'a> {
                     Sense::hover()
                 },
             );
-            let opacity = if enabled {
-                CHEVRON_OPACITY
-            } else {
+            let name = format!(
+                "{title}: {}",
+                language.text(if step < 0 {
+                    Key::DirectionLeft
+                } else {
+                    Key::DirectionRight
+                })
+            );
+            r.widget_info(|| WidgetInfo::labeled(Role::Button, enabled, name.as_str()));
+            let hover = enabled && r.hovered();
+            let press = enabled && r.is_pointer_button_down_on();
+            if hover {
+                // A soft disc behind the glyph: the mouse affordance of the otherwise bare chevron.
+                let disc = Rect::from_center_size(at.center(), Vec2::splat(chevron_box));
+                painter.circle_filled(
+                    disc.center(),
+                    chevron_box * 0.5 * if press { PRESS_SCALE } else { 1.0 },
+                    fade(fg, 0.10),
+                );
+            }
+            let opacity = if !enabled {
                 CHEVRON_OPACITY_END
+            } else if hover {
+                1.0
+            } else {
+                CHEVRON_OPACITY
             };
             painter.text(
                 at.center(),
@@ -697,7 +772,8 @@ impl<'a> PanelRow<'a> {
                 );
                 let mut child = ui.new_child(UiBuilder::new().max_rect(switch_rect));
                 let switch = components::Switch::new(*on, *accent)
-                    .focused(t > 0.5)
+                    .focus_amount(t)
+                    .announce(false)
                     .label(self.title)
                     .show(&mut child);
                 out.toggled = switch.clicked();
@@ -774,7 +850,7 @@ impl<'a> PanelRow<'a> {
                     );
                     child.spacing_mut().item_spacing.x = size::KEYCAP_GAP;
                     for cap in caps.iter() {
-                        key_cap(&mut child, &cap.label, cap.keyboard, t > 0.5);
+                        key_cap(&mut child, &cap.label, cap.keyboard, t);
                     }
                 }
             }
@@ -981,6 +1057,8 @@ pub fn toast(
                 vec2(w, h),
             );
             let a = v.clamp(0.0, 1.0);
+            let status = ui.interact(rect, Id::unique(("toast-status", message)), Sense::hover());
+            status.widget_info(|| WidgetInfo::labeled(Role::Status, true, message));
             paint_shadow(
                 &painter,
                 rect,

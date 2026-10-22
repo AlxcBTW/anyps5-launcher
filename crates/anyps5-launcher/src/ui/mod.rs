@@ -6,6 +6,7 @@
 //! |---|---|
 //! | [`theme`] | colours, radii, sizes, shadows, type scale, fonts, window scale |
 //! | [`anim`] | springs, easings, `ctx.animate_to(...)` / `ctx.focus_t(...)`, endless loops |
+//! | [`artwork`] | game artwork over the backdrop: aspect-fill, drift, scrims |
 //! | [`background`] | the three animated themes, [`Backdrop`](background::Backdrop) driver |
 //! | [`blur`], [`glass`] | material blur and frosted panels |
 //! | [`components`], [`chrome`] | buttons, switch, progress, hints, tile, rows, panels, toast |
@@ -22,6 +23,7 @@
 #![allow(dead_code)]
 
 pub mod anim;
+pub mod artwork;
 pub mod background;
 pub mod blur;
 pub mod chrome;

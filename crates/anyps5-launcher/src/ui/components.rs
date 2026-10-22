@@ -172,12 +172,15 @@ pub struct ConsoleButton<'a> {
     min_width: f32,
     enabled: bool,
     force: Option<Force>,
+    /// Accessible name when the button shows no text.
+    label: Option<String>,
 }
 
 impl<'a> ConsoleButton<'a> {
     pub fn new(title: &'a str) -> Self {
         Self {
             title,
+            label: None,
             icon: None,
             icon_fill: false,
             focused: false,
@@ -189,9 +192,11 @@ impl<'a> ConsoleButton<'a> {
         }
     }
 
-    /// A button with only a glyph (18 dp side padding).
-    pub fn icon_only(icon: Icon) -> ConsoleButton<'static> {
-        ConsoleButton::new("").icon(icon)
+    /// A button with only a glyph (18 dp side padding). `label` is its accessible name.
+    pub fn icon_only(icon: Icon, label: impl Into<String>) -> ConsoleButton<'static> {
+        let mut button = ConsoleButton::new("").icon(icon);
+        button.label = Some(label.into());
+        button
     }
 
     pub fn icon(mut self, icon: Icon) -> Self {
@@ -266,9 +271,14 @@ impl<'a> ConsoleButton<'a> {
             self.enabled,
             self.force,
         );
-        let (title, enabled) = (self.title, self.enabled);
+        let enabled = self.enabled;
+        let name = if self.title.is_empty() {
+            self.label.as_deref().unwrap_or_default()
+        } else {
+            self.title
+        };
         it.response
-            .widget_info(|| WidgetInfo::labeled(Role::Button, enabled, title));
+            .widget_info(|| WidgetInfo::labeled(Role::Button, enabled, name));
         if !ui.is_rect_visible(it.rect) {
             return it.response;
         }
@@ -424,8 +434,12 @@ impl IconButton {
 pub struct Switch {
     on: bool,
     accent: Color32,
-    focused: bool,
+    /// Focus amount of the row the switch sits in (0..=1): the off track turns black 0.18.
+    focus: f32,
     label: String,
+    enabled: bool,
+    /// Expose the switch to assistive technology (off when the row already does).
+    announce: bool,
 }
 
 impl Switch {
@@ -433,13 +447,20 @@ impl Switch {
         Self {
             on,
             accent,
-            focused: false,
+            focus: 0.0,
             label: String::new(),
+            enabled: true,
+            announce: true,
         }
     }
     /// The row is focused: the off track turns black 0.18.
     pub fn focused(mut self, focused: bool) -> Self {
-        self.focused = focused;
+        self.focus = if focused { 1.0 } else { 0.0 };
+        self
+    }
+    /// Animated focus amount of the surrounding row (0..=1).
+    pub fn focus_amount(mut self, focus: f32) -> Self {
+        self.focus = focus.clamp(0.0, 1.0);
         self
     }
     /// Accessible name.
@@ -447,26 +468,46 @@ impl Switch {
         self.label = label.into();
         self
     }
+    /// A disabled switch is drawn at 40 % and takes no input.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+    /// Whether the switch is its own accessibility node (default). A row that already announces
+    /// its toggle state turns it off so screen readers do not read it twice.
+    pub fn announce(mut self, announce: bool) -> Self {
+        self.announce = announce;
+        self
+    }
 
     pub fn show(self, ui: &mut Ui) -> Response {
-        let (rect, response) =
-            ui.allocate_exact_size(vec2(size::SWITCH.0, size::SWITCH.1), Sense::click());
-        let (on, label) = (self.on, self.label.as_str());
-        response.widget_info(|| WidgetInfo::selected(Role::CheckBox, true, on, label));
-        if response.hovered() {
+        let sense = if self.enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let (rect, response) = ui.allocate_exact_size(vec2(size::SWITCH.0, size::SWITCH.1), sense);
+        let (on, label, enabled) = (self.on, self.label.as_str(), self.enabled);
+        if self.announce {
+            response.widget_info(|| WidgetInfo::selected(Role::Switch, enabled, on, label));
+        }
+        let hovered = self.enabled && response.hovered();
+        if hovered {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
         if !ui.is_rect_visible(rect) {
             return response;
         }
         let t = ui.ctx().flag_t((response.id, "on"), self.on, Motion::Focus);
-        let off = if self.focused {
-            color::switch_track_off_on_focus()
+        let rest = if hovered {
+            white(0.24)
         } else {
             color::switch_track_off()
         };
+        let off = mix(rest, color::switch_track_off_on_focus(), self.focus);
+        let a = if self.enabled { 1.0 } else { 0.4 };
         let painter = ui.painter();
-        paint_capsule(painter, rect, mix(off, self.accent, t));
+        paint_capsule(painter, rect, fade(mix(off, self.accent, t), a));
         let knob = size::SWITCH.1 - 2.0 * size::SWITCH_INSET;
         let travel = size::SWITCH.0 - 2.0 * size::SWITCH_INSET - knob;
         let centre = pos2(
@@ -474,8 +515,10 @@ impl Switch {
             rect.center().y,
         );
         let knob_rect = Rect::from_center_size(centre, Vec2::splat(knob));
-        paint_shadow(painter, knob_rect, knob * 0.5, shadows::switch_knob());
-        painter.circle_filled(centre, knob * 0.5, Color32::WHITE);
+        if self.enabled {
+            paint_shadow(painter, knob_rect, knob * 0.5, shadows::switch_knob());
+        }
+        painter.circle_filled(centre, knob * 0.5, fade(Color32::WHITE, a));
         response
     }
 }
@@ -490,6 +533,7 @@ pub struct ProgressLine {
     color: Color32,
     height: f32,
     width: Option<f32>,
+    label: String,
 }
 
 impl ProgressLine {
@@ -499,6 +543,7 @@ impl ProgressLine {
             color,
             height: size::PROGRESS_HEIGHT,
             width: None,
+            label: String::new(),
         }
     }
     pub fn height(mut self, height: f32) -> Self {
@@ -510,13 +555,18 @@ impl ProgressLine {
         self.width = Some(width);
         self
     }
+    /// Accessible name (the current step, for example).
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = label.into();
+        self
+    }
 
     pub fn show(self, ui: &mut Ui) -> Response {
         let width = self.width.unwrap_or_else(|| ui.available_width());
         let (rect, response) = ui.allocate_exact_size(vec2(width, self.height), Sense::hover());
         let fraction = self.fraction.clamp(0.0, 1.0);
         response.widget_info(|| {
-            let mut info = WidgetInfo::new(Role::ProgressIndicator);
+            let mut info = WidgetInfo::labeled(Role::ProgressIndicator, true, self.label.as_str());
             info.value = Some(f64::from(fraction));
             info
         });
@@ -811,8 +861,8 @@ pub fn hint_bar(ui: &mut Ui, language: Language, options: bool) {
 }
 
 /// A key cap of the controls panel: 30 x 28 minimum, radius 7, 13.5 semibold, 1 px stroke at 0.18.
-/// `keyboard` keys fill at 0.12, mouse and wheel sources at 0.06; `on_focus` inverts to black.
-pub fn key_cap(ui: &mut Ui, label: &str, keyboard: bool, on_focus: bool) -> Response {
+/// `keyboard` keys fill at 0.12, mouse and wheel sources at 0.06; `focus` (0..=1, the row's focus amount) inverts to black.
+pub fn key_cap(ui: &mut Ui, label: &str, keyboard: bool, focus: f32) -> Response {
     let painter = ui.painter().clone();
     let galley = text::layout(
         &painter,
@@ -825,11 +875,7 @@ pub fn key_cap(ui: &mut Ui, label: &str, keyboard: bool, on_focus: bool) -> Resp
     let height = size::KEYCAP_MIN.1.max(galley.size().y);
     let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     if ui.is_rect_visible(rect) {
-        let ink = if on_focus {
-            Color32::BLACK
-        } else {
-            Color32::WHITE
-        };
+        let ink = mix(Color32::WHITE, Color32::BLACK, focus);
         let fill = fade(ink, if keyboard { 0.12 } else { 0.06 });
         painter.rect_filled(rect, corner(radius::KEYCAP), fill);
         paint_hairline(&painter, rect, radius::KEYCAP, fade(ink, 0.18));

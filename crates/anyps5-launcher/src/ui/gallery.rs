@@ -2,7 +2,7 @@
 //! screenshotted and compared with the original (`docs/screenshots/launcher-themes.jpg`).
 //!
 //! ```text
-//! anyps5-launcher --gallery[=components|panels|themes|bg0|bg1|bg2]
+//! anyps5-launcher --gallery[=components|panels|artwork|themes|bg0|bg1|bg2]
 //!                 [--screenshot=out.png] [--size=1600x900] [--time=260]
 //! ```
 //!
@@ -40,6 +40,7 @@ use crate::ui::theme::{self, Accent, Theme, color, radius, size, ty, white};
 pub enum Page {
     Components,
     Panels,
+    Artwork,
     Themes,
     Background(Theme),
 }
@@ -71,6 +72,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Option<Options> {
             seen = true;
             options.page = match page {
                 "panels" => Page::Panels,
+                "artwork" => Page::Artwork,
                 "themes" => Page::Themes,
                 "bg0" | "cosmic" => Page::Background(Theme::Cosmic),
                 "bg1" | "aurora" => Page::Background(Theme::Aurora),
@@ -184,6 +186,19 @@ impl eframe::App for Gallery {
                 let art = self.art(&ctx);
                 panels_page(ui, &self.shell, &art);
             }
+            Page::Artwork => {
+                let art = self.art(&ctx);
+                crate::ui::artwork::paint_artwork(
+                    &painter,
+                    screen,
+                    art.id(),
+                    1.0,
+                    ctx.clock(),
+                    false,
+                    1.0,
+                );
+                panels_page(ui, &self.shell, &art);
+            }
         }
 
         self.frames += 1;
@@ -287,8 +302,8 @@ fn components_page(ui: &mut Ui, shell: &Shell) {
         ConsoleButton::new(language.text(Key::Options))
             .enabled(false)
             .show(ui);
-        ConsoleButton::icon_only(Icon::DOTS_THREE).show(ui);
-        ConsoleButton::icon_only(Icon::DOTS_THREE)
+        ConsoleButton::icon_only(Icon::DOTS_THREE, language.text(Key::Options)).show(ui);
+        ConsoleButton::icon_only(Icon::DOTS_THREE, language.text(Key::Options))
             .focused(true)
             .show(ui);
         ConsoleButton::new("8/34")
@@ -330,11 +345,11 @@ fn components_page(ui: &mut Ui, shell: &Shell) {
     ui.add_space(12.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        components::key_cap(ui, "W", true, false);
-        components::key_cap(ui, "Space", true, false);
-        components::key_cap(ui, "Shift", true, false);
-        components::key_cap(ui, language.text(Key::MouseLeft), false, false);
-        components::key_cap(ui, "↑", true, true);
+        components::key_cap(ui, "W", true, 0.0);
+        components::key_cap(ui, "Space", true, 0.0);
+        components::key_cap(ui, "Shift", true, 0.0);
+        components::key_cap(ui, language.text(Key::MouseLeft), false, 0.0);
+        components::key_cap(ui, "↑", true, 1.0);
     });
     ui.add_space(26.0);
 
@@ -471,6 +486,7 @@ fn panels_page(ui: &mut Ui, shell: &Shell, art: &TextureHandle) {
                 value_color: None,
             },
         ],
+        language,
     );
 
     // Panel rows in a side-panel-wide column.

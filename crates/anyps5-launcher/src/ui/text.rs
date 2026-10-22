@@ -46,6 +46,21 @@ pub fn layout_font(
     painter.layout_job(job)
 }
 
+/// Uppercase for overlines. Turkish keeps its dotted and dotless i: `i` becomes `İ` and `ı` stays `I`.
+pub fn to_upper(text: &str, language: crate::ui::i18n::Language) -> String {
+    if language == crate::ui::i18n::Language::Turkish {
+        text.chars()
+            .flat_map(|c| match c {
+                'i' => vec!['İ'],
+                'ı' => vec!['I'],
+                other => other.to_uppercase().collect(),
+            })
+            .collect()
+    } else {
+        text.to_uppercase()
+    }
+}
+
 /// Quantises a scaled size so animated scale effects reuse a bounded set of glyph rasters.
 pub fn quantize_size(size: f32) -> f32 {
     (size * 4.0).round() / 4.0
@@ -236,6 +251,14 @@ mod tests {
         assert_eq!(ellipsize_middle(&chars, 8), "C:/U…ames");
         assert_eq!(ellipsize_middle(&chars, 100), "C:/Users/alec/Games");
         assert_eq!(ellipsize_middle(&chars, 0), "…");
+    }
+
+    #[test]
+    fn turkish_uppercase_keeps_the_dotted_i() {
+        use crate::ui::i18n::Language;
+        assert_eq!(to_upper("kimliği", Language::Turkish), "KİMLİĞİ");
+        assert_eq!(to_upper("ışık", Language::Turkish), "IŞIK");
+        assert_eq!(to_upper("title id", Language::English), "TITLE ID");
     }
 
     #[test]
