@@ -1,7 +1,7 @@
 //! Made-up data and the hidden `--gallery=<scene>` / `--demo` modes.
 //!
 //! ```text
-//! anyps5-launcher --gallery=home [--screenshot=out.png] [--size=1600x900] [--tr] [--pad] [--frames=100]
+//! anyps5-launcher --gallery=home [--screenshot=out.png] [--size=1600x900] [--tr] [--pad] [--intro] [--frames=100]
 //! anyps5-launcher --demo
 //! ```
 //!
@@ -126,6 +126,8 @@ pub struct Options {
     pub turkish: bool,
     /// `--pad`: hint bars show gamepad buttons instead of keys.
     pub pad: bool,
+    /// `--intro`: play the launch intro (to screenshot it part way with `--frames`).
+    pub intro: bool,
     pub frames: u32,
     /// Commands fed to the app one after the other (`--script=right,select,wait60`).
     pub script: Vec<Step>,
@@ -170,6 +172,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Option<Options> {
         size: (1600.0, 900.0),
         turkish: false,
         pad: false,
+        intro: false,
         frames: 100,
         script: Vec::new(),
         real_art: std::env::var_os("ANYPS5_PREVIEW_REAL_ART").map(PathBuf::from),
@@ -196,6 +199,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Option<Options> {
             options.script = parse_script(script);
         } else if arg == "--pad" {
             options.pad = true;
+        } else if arg == "--intro" {
+            options.intro = true;
         } else if arg == "--tr" {
             options.turkish = true;
         }
@@ -560,6 +565,7 @@ impl PreviewApp {
             scan_on_start: false,
         };
         let mut inner = LauncherApp::from_shell(shell, &cc.egui_ctx, config);
+        inner.intro = options.intro;
         inner.offline = true;
         inner.freeze_backdrop = !demo;
         let mut games = games;

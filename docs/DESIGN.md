@@ -620,6 +620,39 @@ window is inactive/a game runs/reduced motion. Video decoding is out of scope fo
 
 ---
 
+### 3.7 Cleaner home, panels and launch (deviation from 1.4, 5.x and 7.1)
+
+The launcher keeps the port's structure but trims what read as noise next to the PS5 home.
+
+- **Launch intro** (`ui::intro`). The window opens black for 0.15 s, the backdrop comes up out of it
+  over 1.1 s (ease-in-out) while the `boot` cue (7.3) swells and the home music starts its 2 s fade.
+  Then the parts rise 18 dp into place on a strong ease-out (`cubic-bezier(0.23, 1, 0.32, 1)`):
+  top bar at 0.45 s for 0.7 s, tile row at 0.55 s for 0.75 s, hero at 0.7 s for 0.8 s, hints at
+  0.9 s for 0.6 s. Once per launch; with reduced motion only a 0.45 s fade from black remains.
+  Previews and tests skip it (`--intro` forces it in the preview).
+- **Tile row.** The selected tile no longer carries its name beside it (the hero title shows it,
+  the state line moves above the title), so the row closes up (`TILE_LABEL_COLUMN = 0`). Small
+  tiles share the large tile's centre line. Only the selected tile shows the locked badge and dim.
+- **Hero.** One left edge with the top bar (`HERO_X = 64`). The four boxed info cards become a
+  plain facts line (Size, Title ID, Version: 13 dp tracked overline over a 17 dp value, 48 dp
+  apart, no card). The status card is gone; the state stands above the title. Switching games
+  cross-fades without the 14 dp slide (it happens on every arrow press). The "more" button is a
+  54 dp square with three painted dots.
+- **Hint bar.** Follows the device in use (`input::device`): keycaps `Enter`, `Esc`, `O` on a
+  keyboard, ✕ ○ △ in circles on a gamepad. No combined labels, no Move hint. 26 dp keys, 15 dp
+  labels, 28 dp between hints.
+- **Top bar.** Outline icons at 20 dp (`squares-four` for the library), 12 dp between the two
+  buttons, 32 dp between the groups. The avatar's gradient circle is feathered by hand (a raw mesh
+  gets no anti-aliasing).
+- **Shadows and focus.** Elevation is a quiet dark shadow (tile black 0.22 to 0.32), focus is
+  the white fill or ring with only a faint halo (0.07 to 0.14 instead of 0.22 to 0.45). Focus
+  rings grow their radius with their outset, so they stay concentric. Button hairlines drop to
+  white 0.07; the primary button rests at white 0.26 so it does not read as disabled.
+- **Panels.** Rows grow a fixed 3 dp when focused (no proportional scale). Choice values are
+  regular weight in a fixed 190 dp column. The game sheet groups display, play, maintenance and
+  removal with a double gap. The removal confirmation opens on Cancel and the destructive row
+  stays dark red when focused. Full-screen overlays share a 90 dp margin.
+
 ## 4. Materials and blur on the GPU
 
 SwiftUI `.ultraThinMaterial` is a backdrop blur with a light tint and some saturation; it is used under every panel. egui has no
@@ -1185,6 +1218,7 @@ decay with time constant τ), followed by a one-pole lowpass and a Freeverb send
 | `back` | A3, E4 (0.7) | as `select` | 10 / 90 ms | -15 dBFS | 0.12 / 0.8 s |
 | `error` | A3, B♭3 (0.9) | 1; 2 at 0.25 | 12 / 90 ms | -15 dBFS | 0.06 / 0.8 s |
 | `unlocked` | F4 C5 G5 C6 (1, 0.85, 0.7, 0.55), 15 ms apart, each as two voices 5 cents apart | 1; 2 at 0.25 | 25 / 250 ms | -9 dBFS | 0.20 / 1.2 s |
+| `boot` | F3 C4 G4 C5 F5 (0.9 to 0.45), 70 ms apart, two voices 5 cents apart, glitter at 0.3 s | 1; 2 at 0.25 | 350 / 650 ms | -12 dBFS | 0.35 / 2.2 s |
 
 `unlocked` adds a faint glitter: six sines between 3.15 and 7.88 kHz at 0.12, gone within about 0.1 s. `error` is new and plays
 with every warning toast (`Model::toast` with `Icon::WARNING`); the other cues keep the events listed in 7.1.

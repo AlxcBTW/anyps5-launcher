@@ -109,6 +109,7 @@ impl Duck {
             Cue::Move => (1.5, 0.12),
             Cue::Select | Cue::Back | Cue::Error => (3.0, 0.25),
             Cue::Unlocked => (6.0, 1.2),
+            Cue::Boot => (6.0, 1.5),
         };
         self.floor = self.floor.min(db_to_gain(-depth_db));
         self.hold = self.hold.max((hold * self.rate) as u32);

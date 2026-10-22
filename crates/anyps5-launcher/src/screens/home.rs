@@ -23,6 +23,7 @@ use crate::ui::components::{
 use crate::ui::focus::HomeFocus;
 use crate::ui::i18n::{Key, Language, byte_text};
 use crate::ui::icons::Icon;
+use crate::ui::intro;
 use crate::ui::text;
 use crate::ui::theme::{self, Weight, color, pad, size, ty, white};
 
@@ -57,15 +58,28 @@ struct HeroTrack {
 
 /// Paints the whole home screen and applies the presses.
 pub fn show(ui: &mut Ui, cx: &mut ScreenCx<'_>) {
-    let screen = cx.ctx.content_rect();
+    let ctx = cx.ctx.clone();
+    let screen = ctx.content_rect();
     let mut presses = Vec::new();
-    top_bar(ui, cx, screen, &mut presses);
+    // At launch the parts rise into place one after another (ui::intro).
+    staged(ui, &ctx, intro::TOP_BAR, screen, |ui, screen| {
+        top_bar(ui, cx, screen, &mut presses);
+    });
     if cx.model.games.is_empty() {
-        empty_library(ui, cx, screen, &mut presses);
+        staged(ui, &ctx, intro::HERO, screen, |ui, screen| {
+            empty_library(ui, cx, screen, &mut presses);
+        });
     } else {
-        tile_row(ui, cx, screen, &mut presses);
-        hero(ui, cx, screen, &mut presses);
-        hints(ui, cx.language(), screen);
+        staged(ui, &ctx, intro::TILES, screen, |ui, screen| {
+            tile_row(ui, cx, screen, &mut presses);
+        });
+        staged(ui, &ctx, intro::HERO, screen, |ui, screen| {
+            hero(ui, cx, screen, &mut presses);
+        });
+        let language = cx.language();
+        staged(ui, &ctx, intro::HINTS, screen, |ui, screen| {
+            hints(ui, language, screen);
+        });
     }
     for press in presses {
         match press {
@@ -74,6 +88,25 @@ pub fn show(ui: &mut Ui, cx: &mut ScreenCx<'_>) {
             Press::ChooseFolder => cx.model.request_folder_dialog(),
         }
     }
+}
+
+/// Draws one part of the screen at its intro stage: faded and lowered while it arrives, directly
+/// once it is in place.
+fn staged(
+    ui: &mut Ui,
+    ctx: &Context,
+    timing: (f32, f32),
+    screen: Rect,
+    add: impl FnOnce(&mut Ui, Rect),
+) {
+    let t = intro::stage(ctx, timing);
+    if t >= 1.0 {
+        add(ui, screen);
+        return;
+    }
+    let mut child = ui.new_child(UiBuilder::new().max_rect(screen));
+    child.multiply_opacity(t);
+    add(&mut child, intro::lift(screen, t));
 }
 
 /// Focus is only drawn while no overlay covers the home screen.
@@ -412,7 +445,8 @@ fn paint_hero(
     let language = cx.language();
     let state = cx.model.state_of(game);
     let mut child = ui.new_child(UiBuilder::new().max_rect(screen));
-    child.set_opacity(alpha.clamp(0.0, 1.0));
+    // Multiplied, so the hero also follows the intro and the onboarding cross-fade.
+    child.multiply_opacity(alpha.clamp(0.0, 1.0));
     let ui = &mut child;
     let painter = ui.painter().clone();
     let (_, hint_height) = hint_bar_size(&painter, language, true);
