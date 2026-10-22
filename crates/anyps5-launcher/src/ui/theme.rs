@@ -458,6 +458,18 @@ pub mod color {
     pub fn state_neutral() -> Color32 {
         white(0.75)
     }
+    /// Window caption glyphs (minimise, maximise, close) at rest; white on hover.
+    pub fn caption_glyph() -> Color32 {
+        white(0.6)
+    }
+    /// Behind a hovered minimise or maximise button.
+    pub fn caption_hover() -> Color32 {
+        white(0.08)
+    }
+    /// Behind a hovered close button: the Windows close red.
+    pub fn caption_close() -> Color32 {
+        Color32::from_rgb(0xC4, 0x2B, 0x1C)
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -528,6 +540,11 @@ pub mod size {
     pub const CHOICE_VALUE_WIDTH: (f32, f32) = (100.0, 190.0);
     pub const STEPPER_VALUE_WIDTH: f32 = 100.0;
     pub const TEXT_FIELD_WIDTH: f32 = 200.0;
+    /// A window caption button, in points at zoom 1 (the Windows 11 size, not scaled with the UI).
+    pub const CAPTION_BUTTON: (f32, f32) = (46.0, 32.0);
+    pub const CAPTION_GLYPH: f32 = 10.0;
+    /// The band along the window edges that resizes, in points at zoom 1.
+    pub const RESIZE_EDGE: f32 = 6.0;
     pub const SWITCH: (f32, f32) = (50.0, 28.0);
     pub const SWITCH_INSET: f32 = 3.0;
     pub const KEYCAP_MIN: (f32, f32) = (30.0, 28.0);

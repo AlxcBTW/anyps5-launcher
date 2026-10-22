@@ -27,6 +27,7 @@ pub mod anim;
 pub mod artwork;
 pub mod background;
 pub mod blur;
+pub mod caption;
 pub mod chrome;
 pub mod components;
 pub mod focus;

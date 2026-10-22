@@ -435,6 +435,7 @@ impl LauncherApp {
             ctx: &ctx,
         };
         self.panels.frame(&mut cx);
+        crate::ui::caption::show(&ctx);
         crate::ui::intro::paint_curtain(&ctx);
         self.run_effects(&ctx);
         self.save_preferences();
@@ -606,6 +607,8 @@ pub fn run() -> eframe::Result {
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("AnyPS5")
+            // The launcher draws its own caption (ui::caption).
+            .with_decorations(false)
             .with_inner_size([1600.0, 900.0])
             .with_min_inner_size([
                 crate::ui::theme::MIN_WINDOW.0,
@@ -630,7 +633,7 @@ pub fn run() -> eframe::Result {
 /// The eframe wrapper of [`LauncherApp`].
 pub struct App {
     pub app: LauncherApp,
-    /// The title bar is recoloured once, on the first frame (the window exists by then).
+    /// The window frame is styled once, on the first frame (the window exists by then).
     chrome_applied: bool,
 }
 
