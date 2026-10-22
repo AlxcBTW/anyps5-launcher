@@ -1251,32 +1251,15 @@ fn open_url(url: &str) {
     if !url.starts_with("https://github.com/boykopovar/AnyPS5/") {
         return;
     }
-    #[cfg(windows)]
-    {
-        if let Err(error) = std::process::Command::new("explorer.exe").arg(url).spawn() {
-            tracing::warn!("cannot open {url}: {error}");
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = url;
+    if let Err(error) = anyps5_core::platform::open_url(url) {
+        tracing::warn!("cannot open {url}: {error}");
     }
 }
 
-/// Opens a folder in Explorer.
+/// Opens a folder in the file manager.
 fn open_folder(folder: &std::path::Path) {
-    #[cfg(windows)]
-    {
-        if let Err(error) = std::process::Command::new("explorer.exe")
-            .arg(folder)
-            .spawn()
-        {
-            tracing::warn!("cannot open {}: {error}", folder.display());
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = folder;
+    if let Err(error) = anyps5_core::platform::open_folder(folder) {
+        tracing::warn!("cannot open {}: {error}", folder.display());
     }
 }
 

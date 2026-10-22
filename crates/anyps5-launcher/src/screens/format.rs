@@ -110,7 +110,7 @@ pub fn abbreviate_path(path: &Path, home: Option<&Path>) -> String {
         return if rest.is_empty() {
             "~".to_owned()
         } else {
-            format!("~\\{rest}")
+            format!("~{}{rest}", std::path::MAIN_SEPARATOR)
         };
     }
     full
@@ -194,6 +194,22 @@ mod tests {
         assert_eq!(milliseconds(30, "Off"), "30 ms");
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn the_home_folder_becomes_a_tilde_on_unix() {
+        let home = Path::new("/home/me");
+        assert_eq!(
+            abbreviate_path(Path::new("/home/me/Pictures/AnyPS5"), Some(home)),
+            "~/Pictures/AnyPS5"
+        );
+        assert_eq!(
+            abbreviate_path(Path::new("/mnt/games"), Some(home)),
+            "/mnt/games"
+        );
+        assert_eq!(abbreviate_path(home, Some(home)), "~");
+    }
+
+    #[cfg(windows)]
     #[test]
     fn the_home_folder_becomes_a_tilde() {
         let home = Path::new("C:\\Users\\me");

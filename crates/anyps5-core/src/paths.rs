@@ -107,35 +107,28 @@ pub fn bundle_identifier(title_id: &str) -> String {
 /// The roots all launcher data lives under.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppPaths {
-    /// `%APPDATA%\AnyPS5`: preferences and input files.
+    /// `%APPDATA%\AnyPS5` (Linux: `~/.config/anyps5`): preferences and input files.
     pub config: PathBuf,
-    /// `%LOCALAPPDATA%\AnyPS5`: toolkit, logs, caches.
+    /// `%LOCALAPPDATA%\AnyPS5` (Linux: `~/.local/share/anyps5`): toolkit, logs, caches.
     pub data: PathBuf,
     /// The Pictures known folder.
     pub pictures: PathBuf,
 }
 
 impl AppPaths {
-    /// The real locations, from `APPDATA`, `LOCALAPPDATA` and `USERPROFILE`. `None` when the
-    /// environment has none of them.
+    /// The real locations of this system (see [`crate::platform::roots`]). `None` when the
+    /// environment names no home.
     pub fn from_env() -> Option<AppPaths> {
-        let var = |name: &str| {
-            std::env::var_os(name)
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-        };
-        let profile = var("USERPROFILE").or_else(|| var("HOME"));
-        let config = var("APPDATA")
-            .or_else(|| profile.as_ref().map(|p| p.join("AppData").join("Roaming")))?;
-        let data = var("LOCALAPPDATA")
-            .or_else(|| profile.as_ref().map(|p| p.join("AppData").join("Local")))?;
-        let pictures = profile
-            .map(|p| p.join("Pictures"))
-            .unwrap_or_else(|| data.clone());
+        use crate::platform::{self, Os};
+        let os = Os::current();
+        let user_dirs = (os == Os::Linux)
+            .then(|| platform::read_user_dirs(&platform::process_vars))
+            .flatten();
+        let roots = platform::roots(os, &platform::process_vars, user_dirs.as_deref())?;
         Some(AppPaths {
-            config: config.join("AnyPS5"),
-            data: data.join("AnyPS5"),
-            pictures,
+            config: roots.config,
+            data: roots.data,
+            pictures: roots.pictures,
         })
     }
 

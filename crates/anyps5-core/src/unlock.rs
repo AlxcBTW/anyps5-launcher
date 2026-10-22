@@ -20,8 +20,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::{CancelToken, EventSink};
 use crate::fsx::{self, LinkMode, Linker, TreeError};
 use crate::paths::GameId;
+use crate::platform::Os;
 use crate::process::{ToolProcess, ToolSpec};
-use crate::toolkit::{MINGW_DLLS, Toolkit, ToolkitError};
+use crate::toolkit::{Toolkit, ToolkitError};
 use crate::unwrap::{self, Refused};
 
 /// The name of the hidden store folder inside the games folder.
@@ -31,7 +32,7 @@ pub const RECORD_FILE: &str = "anyps5-unlock.json";
 /// The name macOS launchers wrote; still read.
 const LEGACY_RECORD_FILE: &str = "anyps5-install.json";
 /// The relinked executable inside an unlocked copy.
-pub const EXECUTABLE: &str = "eboot.exe";
+pub const EXECUTABLE: &str = Os::current().executable();
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Step {
@@ -79,7 +80,7 @@ pub enum UnlockError {
         "{file} is neither an ELF nor a decrypted SELF container (an encrypted dump cannot be used)"
     )]
     NotAnExecutable { file: String },
-    #[error("relinker.exe failed ({}): {last_line}", .code.map_or("ended".to_string(), |c| c.to_string()))]
+    #[error("relinker failed ({}): {last_line}", .code.map_or("ended".to_string(), |c| c.to_string()))]
     Relinker {
         code: Option<i32>,
         last_line: String,
@@ -550,12 +551,16 @@ pub fn run_unlock(
         reporter.progress(Step::Unwrap, (index + 1) as f64 / inputs.len() as f64);
     }
 
-    // 2. The relinker turns them into a PE executable and guest modules.
+    // 2. The relinker turns them into a native executable and guest modules.
     reporter.progress(Step::Relink, 0.0);
     let out = work.join("out");
     fs::create_dir_all(&out).map_err(io_context("create work folder"))?;
     stage_metadata(&request.folder, &source, &mut linker, control)?;
-    let mut args: Vec<std::ffi::OsString> = vec!["--windows".into()];
+    let mut args: Vec<std::ffi::OsString> = Os::current()
+        .relinker_args()
+        .iter()
+        .map(Into::into)
+        .collect();
     if request.to_intel {
         args.push("--to-intel".into());
     }
@@ -564,7 +569,12 @@ pub fn run_unlock(
         args.push(directory.into());
     }
     if crate::recommended::relink_allowed(&request.relink_flags) {
-        args.extend(request.relink_flags.iter().map(std::ffi::OsString::from));
+        args.extend(
+            Os::current()
+                .relink_flags(&request.relink_flags)
+                .into_iter()
+                .map(std::ffi::OsString::from),
+        );
     }
     if let Some(toml) = &request.patches_toml {
         let file = work.join("patches.toml");
@@ -636,7 +646,7 @@ pub fn run_unlock(
                 .map_err(io_context(format!("copy {}", extra.display())))?;
         }
     }
-    for dll in MINGW_DLLS {
+    for dll in Os::current().runtime_libs() {
         if !partial.join("libs").join(dll).is_file() {
             return Err(UnlockError::Io {
                 context: format!("{dll} (MinGW runtime) not found in the toolkit"),
@@ -730,7 +740,7 @@ fn run_relinker(
         cwd: Some(cwd.to_path_buf()),
         env: Vec::new(),
     };
-    let process = ToolProcess::spawn(&spec).map_err(io_context("start relinker.exe"))?;
+    let process = ToolProcess::spawn(&spec).map_err(io_context("start the relinker"))?;
     control.register(&process);
     let mut estimate = RelinkProgress::new();
     // Segments and lines both arrive on this thread; one cell keeps the reporter shared.
@@ -744,7 +754,7 @@ fn run_relinker(
         &mut |line| reporter_cell.borrow().log(line.to_string()),
     );
     control.unregister();
-    let result = result.map_err(io_context("read relinker.exe output"))?;
+    let result = result.map_err(io_context("read the relinker output"))?;
     if control.is_cancelled() || result.killed {
         return Err(UnlockError::Cancelled);
     }

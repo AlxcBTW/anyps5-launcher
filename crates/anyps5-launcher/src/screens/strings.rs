@@ -30,6 +30,8 @@ pub enum Extra {
     CpuIntel,
     /// `%@` = the missing CPU features.
     DiagnosisHostCpu,
+    /// Linux: the user cannot open `/dev/udmabuf`.
+    DiagnosisNoUdmabuf,
     SaveReport,
     /// Toast while the toolkit downloads.
     ToolkitDownloading,
@@ -186,6 +188,9 @@ impl Extra {
             Extra::CpuNone => "None",
             Extra::CpuIntel => "Intel",
             Extra::DiagnosisHostCpu => "This CPU lacks %@, which the game needs.",
+            Extra::DiagnosisNoUdmabuf => {
+                "The game cannot open /dev/udmabuf. Add your user to the kvm group and log in again."
+            }
             Extra::SaveReport => "Save Report",
             Extra::ToolkitDownloading => "Downloading the toolkit…",
             Extra::ToolkitReady => "Toolkit %@ is ready",
@@ -203,7 +208,7 @@ impl Extra {
             Extra::EmptyLog => "No log yet. Play the game once and it appears here.",
             Extra::Remove => "Remove",
             Extra::ToolkitFolderInvalid => {
-                "This folder is not a toolkit. Pick the folder that holds relinker.exe and libs."
+                "This folder is not a toolkit. Pick the folder that holds the relinker and libs."
             }
             Extra::Layout => "Layout",
             Extra::LayoutLauncher => "Launcher",
@@ -311,6 +316,9 @@ impl Extra {
             Extra::CpuNone => "Yok",
             Extra::CpuIntel => "Intel",
             Extra::DiagnosisHostCpu => "Bu işlemcide oyunun ihtiyaç duyduğu %@ yok.",
+            Extra::DiagnosisNoUdmabuf => {
+                "Oyun /dev/udmabuf dosyasını açamıyor. Kullanıcını kvm grubuna ekleyip yeniden oturum aç."
+            }
             Extra::SaveReport => "Raporu kaydet",
             Extra::ToolkitDownloading => "Araç seti indiriliyor…",
             Extra::ToolkitReady => "Araç seti %@ hazır",
@@ -326,7 +334,7 @@ impl Extra {
             Extra::EmptyLog => "Henüz günlük yok. Oyunu bir kez oynadığında burada görünür.",
             Extra::Remove => "Kaldır",
             Extra::ToolkitFolderInvalid => {
-                "Bu klasör bir araç seti değil. relinker.exe ve libs içeren klasörü seç."
+                "Bu klasör bir araç seti değil. relinker ve libs içeren klasörü seç."
             }
             Extra::Layout => "Düzen",
             Extra::LayoutLauncher => "Başlatıcı",
@@ -421,7 +429,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 98] = [
+    pub const ALL: [Extra; 99] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -442,6 +450,7 @@ impl Extra {
         Extra::CpuNone,
         Extra::CpuIntel,
         Extra::DiagnosisHostCpu,
+        Extra::DiagnosisNoUdmabuf,
         Extra::SaveReport,
         Extra::ToolkitDownloading,
         Extra::ToolkitReady,

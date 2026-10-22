@@ -292,11 +292,11 @@ fn is_self_magic(magic: [u8; 4]) -> bool {
 }
 
 /// The toolkit version recorded in the unlocked copy of `game`, if there is a copy with a record.
-/// Same rules as the unlock record (`eboot.exe` must exist; `anyps5-unlock.json`, or the macOS
+/// Same rules as the unlock record (the relinked executable must exist; `anyps5-unlock.json`, or the macOS
 /// name `anyps5-install.json`, must parse).
 pub fn unlocked_with(root: &Path, game: &Game) -> Option<String> {
     let copy = paths::unlocked_copy_dir(root, &game.title_id, &game.id);
-    if !copy.join("eboot.exe").is_file() {
+    if !copy.join(crate::unlock::EXECUTABLE).is_file() {
         return None;
     }
     ["anyps5-unlock.json", "anyps5-install.json"]
@@ -807,8 +807,8 @@ mod tests {
             r#"{"date":"2026-10-22T09:30:00Z","toolkit":"v0.1.3"}"#,
         )
         .unwrap();
-        assert!(scan(root)[0].unlocked_with.is_none(), "no eboot.exe yet");
-        fs::write(copy.join("eboot.exe"), b"MZ").unwrap();
+        assert!(scan(root)[0].unlocked_with.is_none(), "no executable yet");
+        fs::write(copy.join(crate::unlock::EXECUTABLE), b"MZ").unwrap();
         assert_eq!(scan(root)[0].unlocked_with.as_deref(), Some("v0.1.3"));
         fs::rename(
             copy.join("anyps5-unlock.json"),

@@ -1,7 +1,9 @@
-//! Embeds the application icon and the version information into the Windows executable.
+//! Embeds the application icon and the version information into the Windows executable (the Windows
+//! host builds it; embed-resource is a Windows-only build dependency).
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/icon.ico");
+    #[cfg(windows)]
     if std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows") {
         let out = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
         let source = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("manifest"))
@@ -18,6 +20,7 @@ fn main() {
     }
 }
 
+#[cfg(windows)]
 /// The icon plus a VERSIONINFO block (Explorer's Details tab, the installer's checks).
 fn resource_script(icon: &str) -> String {
     let version = std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION");

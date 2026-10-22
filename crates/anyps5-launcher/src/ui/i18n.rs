@@ -69,6 +69,11 @@ impl Language {
 
     /// Looks a key up in this language.
     pub const fn text(self, key: Key) -> &'static str {
+        if !cfg!(windows)
+            && let Some(text) = elsewhere(self, key)
+        {
+            return text;
+        }
         match self {
             Language::Turkish => key.turkish(),
             Language::English => key.english(),
@@ -87,6 +92,28 @@ impl Language {
             Language::English => "en-US",
         }
     }
+}
+
+/// The few strings that name the system. The table is generated with Windows in them; on every
+/// other system these take their place.
+const fn elsewhere(language: Language, key: Key) -> Option<&'static str> {
+    Some(match (language, key) {
+        (Language::English, Key::StartingText) => {
+            "The game is opening, please wait. The first start can take a few minutes while the game gets ready for Linux."
+        }
+        (Language::English, Key::StepRelink) => "Converting for Linux",
+        (Language::English, Key::ShowInFinder) => "Show in file manager",
+        (Language::English, Key::AboutText) => "AnyPS5 runs PS5 games natively on Linux.",
+        (Language::Turkish, Key::StartingText) => {
+            "Oyun açılıyor, lütfen bekle. İlk açılış, oyun Linux için hazırlanırken birkaç dakika sürebilir."
+        }
+        (Language::Turkish, Key::StepRelink) => "Linux için çevriliyor",
+        (Language::Turkish, Key::ShowInFinder) => "Dosya yöneticisinde göster",
+        (Language::Turkish, Key::AboutText) => {
+            "AnyPS5, PS5 oyunlarını Linux'ta yerel olarak çalıştırır."
+        }
+        _ => return None,
+    })
 }
 
 /// One format argument.
@@ -209,6 +236,20 @@ mod tests {
         }
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn system_names_follow_the_system() {
+        assert_eq!(
+            Language::English.text(Key::StepRelink),
+            "Converting for Linux"
+        );
+        assert_eq!(
+            Language::Turkish.text(Key::ShowInFinder),
+            "Dosya yöneticisinde göster"
+        );
+    }
+
+    #[cfg(windows)]
     #[test]
     fn windows_replacements_are_applied() {
         assert_eq!(

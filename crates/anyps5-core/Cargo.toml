@@ -21,6 +21,9 @@ zip.workspace = true
 flate2 = "1"
 oozextract = "0.5"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [
     "Win32_Foundation",

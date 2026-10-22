@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=AnyPS5 Launcher
+Comment=Play PS5 games with AnyPS5
+Exec=anyps5-launcher %u
+Icon=anyps5-launcher
+Terminal=false
+Categories=Game;
+MimeType=x-scheme-handler/anyps5;
+StartupWMClass=anyps5-launcher

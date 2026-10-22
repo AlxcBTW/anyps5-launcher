@@ -34,11 +34,7 @@ pub fn fake_binary() -> &'static Path {
     })
 }
 
-pub const MINGW: [&str; 3] = [
-    "libgcc_s_seh-1.dll",
-    "libstdc++-6.dll",
-    "libwinpthread-1.dll",
-];
+pub const MINGW: &[&str] = anyps5_core::platform::Os::current().runtime_libs();
 
 pub fn write(path: &Path, bytes: &[u8]) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -50,10 +46,14 @@ pub fn configure_fake(dir: &Path, lines: &[&str]) {
     write(&dir.join("fake.env"), lines.join("\n").as_bytes());
 }
 
-/// A toolkit folder whose `relinker.exe` is the fake.
+/// A toolkit folder whose relinker is the fake.
 pub fn make_toolkit(root: &Path, relinker_settings: &[&str]) -> anyps5_core::toolkit::Toolkit {
     fs::create_dir_all(root.join("libs")).unwrap();
-    fs::copy(fake_binary(), root.join("relinker.exe")).unwrap();
+    fs::copy(
+        fake_binary(),
+        root.join(anyps5_core::platform::Os::current().relinker_file()),
+    )
+    .unwrap();
     configure_fake(root, relinker_settings);
     write(&root.join("libs/libSceLibc.prx"), b"PRX-LIBC");
     write(&root.join("libs/libSceFoo.prx"), b"PRX-FOO");

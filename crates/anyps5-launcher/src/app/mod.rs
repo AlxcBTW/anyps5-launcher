@@ -639,18 +639,22 @@ pub fn run(inbox: Option<crate::instance::Inbox>, arguments: Vec<String>) -> efr
     let fullscreen = AppPaths::from_env()
         .map(|paths| Preferences::load(&paths).fullscreen)
         .unwrap_or(true);
+    let viewport = egui::ViewportBuilder::default()
+        .with_title("AnyPS5")
+        // The launcher draws its own caption (ui::caption).
+        .with_decorations(false)
+        .with_inner_size([1600.0, 900.0])
+        .with_min_inner_size([
+            crate::ui::theme::MIN_WINDOW.0,
+            crate::ui::theme::MIN_WINDOW.1,
+        ])
+        // Filling the screen starts from a plain window (see `enter_fullscreen`).
+        .with_maximized(!fullscreen);
+    // X11 and Wayland match the window to its desktop entry by this name.
+    #[cfg(not(windows))]
+    let viewport = viewport.with_app_id("anyps5-launcher");
     let mut options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("AnyPS5")
-            // The launcher draws its own caption (ui::caption).
-            .with_decorations(false)
-            .with_inner_size([1600.0, 900.0])
-            .with_min_inner_size([
-                crate::ui::theme::MIN_WINDOW.0,
-                crate::ui::theme::MIN_WINDOW.1,
-            ])
-            // Filling the screen starts from a plain window (see `enter_fullscreen`).
-            .with_maximized(!fullscreen),
+        viewport,
         ..Default::default()
     };
     crate::ui::restrict_backends(&mut options);

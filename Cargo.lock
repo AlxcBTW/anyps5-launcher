@@ -271,6 +271,7 @@ name = "anyps5-core"
 version = "0.1.1"
 dependencies = [
  "flate2",
+ "libc",
  "notify",
  "oozextract",
  "regex",
@@ -299,6 +300,7 @@ dependencies = [
  "embed-resource",
  "gilrs",
  "image",
+ "libc",
  "naga",
  "raw-window-handle",
  "rfd",

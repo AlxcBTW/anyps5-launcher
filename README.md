@@ -1,6 +1,6 @@
 # AnyPS5 Launcher
 
-A native Windows launcher for [AnyPS5](https://github.com/boykopovar/AnyPS5), laid out like the PS5 home screen.
+A native launcher for [AnyPS5](https://github.com/boykopovar/AnyPS5) on Windows and Linux, laid out like the PS5 home screen.
 
 This is a port of the macOS launcher from [utkuhalis/AnyPS5-ARM](https://github.com/utkuhalis/AnyPS5-ARM). Upstream AnyPS5 is [boykopovar/AnyPS5](https://github.com/boykopovar/AnyPS5).
 
@@ -28,7 +28,7 @@ This is a port of the macOS launcher from [utkuhalis/AnyPS5-ARM](https://github.
 
 ## Download
 
-Get the latest version from the [releases page](https://github.com/AlxcBTW/anyps5-launcher/releases/latest). It needs 64-bit Windows 10 or 11. There is nothing else to install first.
+Get the latest version from the [releases page](https://github.com/AlxcBTW/anyps5-launcher/releases/latest). On Windows it needs 64-bit Windows 10 or 11. There is nothing else to install first.
 
 - **`AnyPS5-Launcher-<version>-Setup.exe`** installs the launcher for your user account (no administrator rights). It adds a Start menu entry, an optional desktop shortcut and an uninstaller.
 - **`AnyPS5-Launcher-<version>-x64.exe`** is the same launcher as a single file. Put it anywhere and run it.
@@ -38,6 +38,30 @@ Each release lists SHA-256 checksums in `SHA256SUMS.txt`. To check a download, r
 ### Windows says "Windows protected your PC"
 
 The files are not code-signed yet, so SmartScreen warns about them. Click **More info**, then **Run anyway**. You only see this once per file.
+
+### Linux
+
+The Linux build is new. It needs a 64-bit (x86-64) distribution with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, Arch and later), a Vulkan driver, and the ALSA and udev libraries that every desktop already has.
+
+- **`AnyPS5-Launcher-<version>-x86_64.AppImage`**: make it executable and run it.
+
+  ```sh
+  chmod +x AnyPS5-Launcher-*-x86_64.AppImage
+  ./AnyPS5-Launcher-*-x86_64.AppImage
+  ```
+
+  If your system has no FUSE 2, run it with `--appimage-extract-and-run`.
+- **`AnyPS5-Launcher-<version>-linux-x86_64.tar.gz`** holds the plain executable, a `.desktop` file and the icon. Unpack it anywhere; copy the `.desktop` file to `~/.local/share/applications` and the icon to `~/.local/share/icons` for a menu entry.
+
+The launcher keeps its settings in `~/.config/anyps5` and the toolkit, logs and caches in `~/.local/share/anyps5` (or where `XDG_CONFIG_HOME` and `XDG_DATA_HOME` point). It downloads the Linux toolkit (`relinker-<tag>` and `prx-linux-<tag>.zip`) from AnyPS5 itself.
+
+What the games need from your system is up to AnyPS5, not the launcher:
+
+- A CPU with AVX2, FMA, F16C, BMI1, BMI2, LZCNT and MOVBE (any Zen 2 or Intel Haswell and newer).
+- A Vulkan 1.1 GPU. With Mesa drivers (AMD, Intel) the game imports memory through `/dev/udmabuf`: join the `kvm` group (`sudo usermod -aG kvm $USER`) and log in again. The launcher says so when a game fails for this reason.
+- A window cannot be found or placed from outside on Wayland, so the launcher treats a game as shown after a few seconds, and the game's fullscreen and size follow its own settings (F11 in the game).
+
+Self-update is not part of the Linux build yet; download a new version from the releases page.
 
 ## First start
 
@@ -66,6 +90,8 @@ cargo build --release
 ```
 
 The executable is `target/release/anyps5-launcher.exe`.
+
+On Linux the executable is `target/release/anyps5-launcher`. Install the development packages first (Debian and Ubuntu names: `pkg-config libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev`). `tools/linux/package.sh <version> <binary> <folder>` makes the AppImage and the tarball.
 
 Two toolchains are used:
 
