@@ -24,6 +24,7 @@ pub mod process;
 pub mod recommended;
 pub mod releases;
 pub mod report;
+pub mod saves;
 pub mod selfupdate;
 pub mod settings;
 pub mod toolkit;

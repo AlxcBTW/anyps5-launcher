@@ -132,6 +132,20 @@ _Avoid_: Account, user
 An input file the engine reads for one title ID, beside the shared input file. Not used by the launcher yet.
 _Avoid_: Controls (the launcher's own layout)
 
+### Save data
+
+**Save data**:
+What a game keeps of the player's progress in its unlocked copy: its saves in `_sd` and `_sd_mem`, and its trophies in `_trophy`. An unlock again carries it over; removing the copy deletes it.
+_Avoid_: Saves (alone, for the folders), profile
+
+**Backup**:
+A zip of a game's save data under the launcher's data folder, named by when and why it was made. The newest ten of a game are kept, those made after playing going first. A backup is made by the player, before an unlock again, before a removal, before a restore and, at most once an hour, after a game ends well.
+_Avoid_: Snapshot, save game
+
+**Restore**:
+Put a backup back in place of the game's save data. It refuses while the game runs, checks the zip before it changes anything, and backs up the current state first, so it can be undone.
+_Avoid_: Load, roll back, import
+
 ### Trophies
 
 **Trophy**:

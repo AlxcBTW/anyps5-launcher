@@ -439,6 +439,36 @@ fn unlocking_again_keeps_saves_and_trophies() {
 }
 
 #[test]
+fn unlocking_again_backs_up_the_saves_first_when_asked() {
+    let w = world(&[]);
+    let mut request = w.dump("Backup", "PPSA00015", &elf_bytes());
+    let backups = w.root.join("backups");
+    request.backup_dir = Some(backups.clone());
+    // The first unlock has no copy to protect.
+    run(&request).0.unwrap();
+    assert!(!backups.exists());
+    let copy = unlock::unlocked_copy("PPSA00015", &request.game, &w.root);
+    write(&copy.join("_sd/slot0.sav"), b"SAVE-1");
+    run(&request).0.unwrap();
+    let kept = anyps5_core::saves::SaveData::new(copy.clone(), backups).list();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].reason, anyps5_core::saves::Reason::BeforeUnlock);
+    // The saves are also still where the game wants them.
+    assert_eq!(fs::read(copy.join("_sd/slot0.sav")).unwrap(), b"SAVE-1");
+    // Without a backup folder nothing extra is written.
+    let mut quiet = request.clone();
+    quiet.backup_dir = None;
+    run(&quiet).0.unwrap();
+    assert_eq!(
+        anyps5_core::saves::SaveData::new(copy, w.root.join("backups"))
+            .list()
+            .len(),
+        1
+    );
+    no_leftovers(&w.root);
+}
+
+#[test]
 fn the_record_names_the_release_checksums() {
     let w = world(&[]);
     let request = w.dump("Sums", "PPSA00014", &elf_bytes());
