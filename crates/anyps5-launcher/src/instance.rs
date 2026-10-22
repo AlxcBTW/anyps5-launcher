@@ -90,6 +90,42 @@ const MAX_ARGUMENTS: usize = 8;
 const MESSAGE_BYTES: usize = 8 * (anyps5_core::links::MAX_LEN + 1) + 64;
 const ANSWER: &[u8] = b"ok";
 
+/// Added by a restart after a self-update: the old launcher's process ID. The new one waits for it
+/// to end before it joins, so it does not hand itself over to the launcher that is closing.
+pub const AFTER_UPDATE: &str = "--after-update=";
+
+/// Removes `--after-update=<pid>` from `args` and waits, up to ten seconds, for that process.
+pub fn wait_after_update(args: &mut Vec<String>) {
+    let Some(index) = args.iter().position(|a| a.starts_with(AFTER_UPDATE)) else {
+        return;
+    };
+    let arg = args.remove(index);
+    if let Ok(pid) = arg[AFTER_UPDATE.len()..].parse::<u32>() {
+        wait_for_exit(pid, std::time::Duration::from_secs(10));
+    }
+}
+
+#[cfg(windows)]
+fn wait_for_exit(pid: u32, timeout: std::time::Duration) {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
+    // SAFETY: plain calls on a process handle this function owns and closes.
+    unsafe {
+        let process = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+        if !process.is_null() {
+            WaitForSingleObject(process, timeout.as_millis() as u32);
+            CloseHandle(process);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn wait_for_exit(_pid: u32, timeout: std::time::Duration) {
+    std::thread::sleep(timeout.min(std::time::Duration::from_secs(1)));
+}
+
 #[cfg(windows)]
 pub use windows_impl::join;
 
@@ -353,6 +389,21 @@ mod windows_impl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_update_flag_is_removed_and_a_gone_process_is_not_waited_for() {
+        let mut args = vec![
+            "anyps5://v1/game/PPSA16064".to_string(),
+            format!("{AFTER_UPDATE}4294967290"),
+        ];
+        let started = std::time::Instant::now();
+        wait_after_update(&mut args);
+        assert_eq!(args, vec!["anyps5://v1/game/PPSA16064".to_string()]);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        let mut none = vec!["--demo".to_string()];
+        wait_after_update(&mut none);
+        assert_eq!(none, vec!["--demo".to_string()]);
+    }
 
     #[test]
     fn a_message_round_trips() {

@@ -136,7 +136,16 @@ impl SelfUpdateService {
         self.state = LauncherUpdate::None;
         let exe: PathBuf = std::env::current_exe()?;
         if std::mem::take(&mut self.restart) {
-            staged.restart(&exe, std::env::args_os().skip(1))
+            // The new launcher waits for this one to end before it takes the single instance.
+            let mut args: Vec<std::ffi::OsString> = std::env::args_os()
+                .skip(1)
+                .filter(|a| {
+                    !a.to_string_lossy()
+                        .starts_with(crate::instance::AFTER_UPDATE)
+                })
+                .collect();
+            args.push(format!("{}{}", crate::instance::AFTER_UPDATE, std::process::id()).into());
+            staged.restart(&exe, args)
         } else {
             staged.swap_in(&exe)
         }

@@ -12,7 +12,8 @@ use instance::Join;
 
 fn main() -> eframe::Result {
     tracing_subscriber::fmt().init();
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    instance::wait_after_update(&mut args);
     // A first argument that is no flag is a link or a folder (the URL scheme and the folder menu
     // pass one): it is never a preview flag, whatever follows it.
     let opened = args.first().is_some_and(|a| !a.starts_with('-'));
