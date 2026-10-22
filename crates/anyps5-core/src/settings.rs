@@ -74,6 +74,24 @@ fn default_window_size() -> u32 {
     75
 }
 
+/// How long a game was played: total seconds, and how many sessions they came from. A session is
+/// counted when the game's window showed, and its seconds are added while it runs, so a crash or a
+/// closed launcher keeps what was seen.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+pub struct Playtime {
+    #[serde(default)]
+    pub seconds: u64,
+    #[serde(default)]
+    pub sessions: u32,
+}
+
+impl Playtime {
+    /// The game was played at all.
+    pub fn is_played(self) -> bool {
+        self.seconds > 0 || self.sessions > 0
+    }
+}
+
 /// The per-game choices passed to a started game. Fields are in alphabetical order of their JSON
 /// names so serialised files have sorted keys like the Swift launcher's.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -458,6 +476,9 @@ pub struct Preferences {
     /// RFC 3339 time each game was last played, by [`GameId`] string.
     #[serde(default)]
     pub last_played: BTreeMap<String, String>,
+    /// Time played of each game, by [`GameId` string](GameId).
+    #[serde(default)]
+    pub playtime: BTreeMap<String, Playtime>,
     /// A toolkit folder the player picked instead of the downloaded one.
     #[serde(default)]
     pub toolkit: Option<PathBuf>,
@@ -500,6 +521,7 @@ impl Default for Preferences {
             fonts_folder: None,
             games: BTreeMap::new(),
             last_played: BTreeMap::new(),
+            playtime: BTreeMap::new(),
             toolkit: None,
             check_for_updates: true,
             toolkit_checked_at: None,
@@ -589,6 +611,23 @@ impl Preferences {
 
     pub fn set_game_settings(&mut self, id: &GameId, settings: GameSettings) {
         self.games.insert(id.as_str().to_string(), settings);
+    }
+
+    /// What is known of the time a game was played (nothing before its first session).
+    pub fn playtime(&self, id: &GameId) -> Playtime {
+        self.playtime.get(id.as_str()).copied().unwrap_or_default()
+    }
+
+    /// Counts a session that was seen to start.
+    pub fn count_session(&mut self, id: &GameId) {
+        let entry = self.playtime.entry(id.as_str().to_owned()).or_default();
+        entry.sessions = entry.sessions.saturating_add(1);
+    }
+
+    /// Adds seconds played to a game.
+    pub fn add_playtime(&mut self, id: &GameId, seconds: u64) {
+        let entry = self.playtime.entry(id.as_str().to_owned()).or_default();
+        entry.seconds = entry.seconds.saturating_add(seconds);
     }
 
     /// The folder for F12 screenshots: the chosen one or `Pictures\AnyPS5`.
@@ -930,6 +969,9 @@ mod tests {
         prefs
             .last_played
             .insert("d:/dumps/stray".into(), "2026-10-22T09:30:00Z".into());
+        let stray = GameId::from_key("d:/dumps/stray");
+        prefs.count_session(&stray);
+        prefs.add_playtime(&stray, 3725);
         prefs.save(&paths).unwrap();
         assert!(!paths.preferences_file().with_extension("json.tmp").exists());
         assert_eq!(Preferences::load(&paths), prefs);
@@ -942,6 +984,33 @@ mod tests {
             prefs.game_settings(&GameId::from_key("other")),
             GameSettings::default()
         );
+    }
+
+    #[test]
+    fn playtime_adds_up_and_old_files_have_none() {
+        let mut prefs = Preferences::default();
+        let id = GameId::from_key("d:/dumps/stray");
+        assert_eq!(prefs.playtime(&id), Playtime::default());
+        assert!(!prefs.playtime(&id).is_played());
+        prefs.count_session(&id);
+        prefs.add_playtime(&id, 40);
+        prefs.add_playtime(&id, 80);
+        prefs.count_session(&id);
+        let time = prefs.playtime(&id);
+        assert_eq!((time.seconds, time.sessions), (120, 2));
+        assert!(time.is_played());
+        // Another game is untouched, and the sums cannot overflow.
+        assert!(!prefs.playtime(&GameId::from_key("other")).is_played());
+        prefs.add_playtime(&id, u64::MAX);
+        assert_eq!(prefs.playtime(&id).seconds, u64::MAX);
+        // A file from before playtime was recorded loads without it.
+        let old: Preferences = serde_json::from_str(r#"{"version":1,"lastPlayed":{}}"#).unwrap();
+        assert!(old.playtime.is_empty());
+        // The key is the game's id; a half-written entry keeps what it has.
+        let json = serde_json::to_value(&prefs).unwrap();
+        assert_eq!(json["playtime"]["d:/dumps/stray"]["sessions"], 2);
+        let half: Playtime = serde_json::from_str(r#"{"seconds":9}"#).unwrap();
+        assert_eq!((half.seconds, half.sessions), (9, 0));
     }
 
     #[test]

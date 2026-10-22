@@ -737,6 +737,11 @@ The launcher keeps the port's structure but trims what read as noise next to the
   header sat 3 dp off them at 1280 x 720). Settings and the log were already lower.
 - **One GitHub button.** "Open on GitHub" in the notes and in the report review has the same
   words and the same glyph (`github-logo`).
+- **Played.** The facts line gains a fourth fact, "Played" over the playtime ("45 min", "3 h 20 min",
+  "12 h"; "Under 1 min" for a first minute), only for a game that was played. Hours are rounded down
+  and the minutes drop from ten hours on. The clock (`app::playtime`) starts when the game's
+  window shows, and adds what it counted to the preferences every minute and at the exit, so a
+  crash keeps it. The game sheet shows no second copy: the home screen stays visible behind it.
 - **A steady toolkit header.** The toolkit version row is one line always; the note about a toolkit
   newer or older than the launcher was tested with is its own attached row below it, so the
   title no longer moves up when it appears (gallery scene `toolkit-newer`).

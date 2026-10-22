@@ -23,6 +23,7 @@ pub mod model;
 pub mod overlay;
 pub mod panels;
 pub mod pipeline;
+pub mod playtime;
 pub mod preview;
 pub mod selfupdate;
 pub mod services;

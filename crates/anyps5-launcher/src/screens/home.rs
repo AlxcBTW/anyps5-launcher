@@ -11,6 +11,7 @@ use egui::{
 };
 
 use crate::app::model::{GameState, Model, SizeState};
+use crate::screens::strings::{Extra, playtime_text};
 use crate::screens::{
     ScreenCx, StateLabel, paint_gradient_circle, paint_label, paint_spinner, place, state_label,
     wrapped,
@@ -588,20 +589,22 @@ fn paint_hero(
         Some(SizeState::Known(bytes)) => byte_text(*bytes as i64, language),
         _ => byte_text(-1, language),
     };
-    let facts = [
-        (Key::Size, size_text.as_str()),
-        (Key::TitleID, game.title_id.as_str()),
-        (Key::Version, game.version.as_str()),
+    let mut facts = vec![
+        (language.text(Key::Size), size_text),
+        (language.text(Key::TitleID), game.title_id.clone()),
+        (language.text(Key::Version), game.version.clone()),
     ];
+    // Said only once there is something to say: a game never played shows no "0 min".
+    let played = cx.model.prefs.playtime(&game.id);
+    if played.is_played() {
+        facts.push((
+            Extra::Played.text(language),
+            playtime_text(played.seconds, language),
+        ));
+    }
     let mut left = x;
-    for (key, value) in facts {
-        left += fact(
-            ui,
-            pos2(left, geometry.facts_top),
-            language.text(key),
-            value,
-            language,
-        ) + FACTS_SPACING;
+    for (title, value) in &facts {
+        left += fact(ui, pos2(left, geometry.facts_top), title, value, language) + FACTS_SPACING;
     }
 }
 

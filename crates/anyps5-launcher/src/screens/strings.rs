@@ -159,6 +159,16 @@ pub enum Extra {
     RecApplied,
     /// Toast.
     RecAppliedUnlock,
+    /// Facts line of the home screen: the label over the time played.
+    Played,
+    /// Time played, under a minute.
+    PlayedUnderMinute,
+    /// `%@` = minutes.
+    PlayedMinutes,
+    /// `%@` = hours.
+    PlayedHours,
+    /// `%@` = hours, then minutes.
+    PlayedHoursMinutes,
 }
 
 impl Extra {
@@ -287,6 +297,11 @@ impl Extra {
             Extra::RecUnlockHint => "After you apply this, unlock the game again.",
             Extra::RecApplied => "Applied",
             Extra::RecAppliedUnlock => "Saved. Unlock the game again to use it.",
+            Extra::Played => "Played",
+            Extra::PlayedUnderMinute => "Under 1 min",
+            Extra::PlayedMinutes => "%@ min",
+            Extra::PlayedHours => "%@ h",
+            Extra::PlayedHoursMinutes => "%@ h %@ min",
         }
     }
 
@@ -415,6 +430,11 @@ impl Extra {
             Extra::RecUnlockHint => "Bunun geçerli olması için oyunun kilidini yeniden aç.",
             Extra::RecApplied => "Uygulandı",
             Extra::RecAppliedUnlock => "Kaydedildi. Kullanmak için oyunun kilidini yeniden aç.",
+            Extra::Played => "Oynama süresi",
+            Extra::PlayedUnderMinute => "1 dk altı",
+            Extra::PlayedMinutes => "%@ dk",
+            Extra::PlayedHours => "%@ sa",
+            Extra::PlayedHoursMinutes => "%@ sa %@ dk",
         }
     }
 
@@ -429,7 +449,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 99] = [
+    pub const ALL: [Extra; 104] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -529,7 +549,30 @@ impl Extra {
         Extra::RecUnlockHint,
         Extra::RecApplied,
         Extra::RecAppliedUnlock,
+        Extra::Played,
+        Extra::PlayedUnderMinute,
+        Extra::PlayedMinutes,
+        Extra::PlayedHours,
+        Extra::PlayedHoursMinutes,
     ];
+}
+
+/// The time played as the home screen shows it: under a minute, whole minutes below an hour, hours
+/// and minutes below ten hours, then whole hours (rounded down, so it never claims more than was
+/// played).
+pub fn playtime_text(seconds: u64, language: Language) -> String {
+    let minutes = seconds / 60;
+    if minutes == 0 {
+        return Extra::PlayedUnderMinute.text(language).to_owned();
+    }
+    let (hours, rest) = (minutes / 60, minutes % 60);
+    match (hours, rest) {
+        (0, minutes) => Extra::PlayedMinutes.format(language, &[Arg::Int(minutes as i64)]),
+        (hours, 0) => Extra::PlayedHours.format(language, &[Arg::Int(hours as i64)]),
+        (hours, rest) if hours < 10 => Extra::PlayedHoursMinutes
+            .format(language, &[Arg::Int(hours as i64), Arg::Int(rest as i64)]),
+        (hours, _) => Extra::PlayedHours.format(language, &[Arg::Int(hours as i64)]),
+    }
 }
 
 #[cfg(test)]
@@ -543,6 +586,28 @@ mod tests {
                 assert!(!extra.text(language).is_empty(), "{extra:?} {language:?}");
             }
         }
+    }
+
+    #[test]
+    fn playtime_reads_calmly_in_both_languages() {
+        let en = |s| playtime_text(s, Language::English);
+        assert_eq!(en(0), "Under 1 min");
+        assert_eq!(en(59), "Under 1 min");
+        assert_eq!(en(60), "1 min");
+        assert_eq!(en(45 * 60 + 59), "45 min");
+        assert_eq!(en(3600), "1 h");
+        assert_eq!(en(3 * 3600 + 20 * 60), "3 h 20 min");
+        assert_eq!(en(9 * 3600 + 59 * 60 + 59), "9 h 59 min");
+        // From ten hours the minutes are noise.
+        assert_eq!(en(10 * 3600 + 59 * 60), "10 h");
+        assert_eq!(en(12 * 3600 + 34 * 60), "12 h");
+        assert_eq!(en(112 * 3600 + 1800), "112 h");
+        assert_eq!(
+            playtime_text(3 * 3600 + 20 * 60, Language::Turkish),
+            "3 sa 20 dk"
+        );
+        assert_eq!(playtime_text(45 * 60, Language::Turkish), "45 dk");
+        assert_eq!(playtime_text(5, Language::Turkish), "1 dk altı");
     }
 
     #[test]

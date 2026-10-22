@@ -112,6 +112,14 @@ _Avoid_: Button (sticks and wheels are not buttons)
 The numeric input settings of a game: stick deadzones, mouse-as-right-stick response, keyboard ramps.
 _Avoid_: Sensitivity (one of its values)
 
+**Session**:
+One run of a game as the launcher saw it: from the moment the game's first window showed to its exit. A game that exits before a window shows has no session.
+_Avoid_: Run, round
+
+**Playtime**:
+The total time of a game's sessions and how many there were, kept per game in the preferences. It is added to while the game runs, so a crash or a closed launcher keeps what was seen. The home screen shows it as "Played".
+_Avoid_: Time played (in code), hours, uptime
+
 **Shared settings**:
 A game's settings exported to a file so another player can import them.
 _Avoid_: Preset, profile
