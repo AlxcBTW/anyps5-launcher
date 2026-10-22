@@ -187,6 +187,10 @@ pub enum Change {
     Capture {
         row: RowId,
     },
+    /// A text row asks for the caret.
+    Edit {
+        row: RowId,
+    },
 }
 
 impl Change {
@@ -196,14 +200,15 @@ impl Change {
             | Change::Toggle { row, .. }
             | Change::Stepper { row, .. }
             | Change::Run { row }
-            | Change::Capture { row } => row,
+            | Change::Capture { row }
+            | Change::Edit { row } => row,
         }
     }
 
     /// Value changes tick, actions and captures confirm (section 7.1).
     pub fn cue(&self) -> Cue {
         match self {
-            Change::Run { .. } | Change::Capture { .. } => Cue::Select,
+            Change::Run { .. } | Change::Capture { .. } | Change::Edit { .. } => Cue::Select,
             _ => Cue::Move,
         }
     }
@@ -271,6 +276,7 @@ pub fn resolve(rows: &[Row], effect: PanelEffect) -> Option<Change> {
                 }),
                 Control::Action => Some(Change::Run { row: r.id }),
                 Control::Keys { .. } => Some(Change::Capture { row: r.id }),
+                Control::Text(_) => Some(Change::Edit { row: r.id }),
                 _ => None,
             }
         }
@@ -354,7 +360,7 @@ pub fn source_label(source: &str, language: Language) -> String {
         ("WHEEL", "Up") => t(Key::WheelUp),
         ("WHEEL", "Down") => t(Key::WheelDown),
         ("KEY", "Space") => t(Key::KeySpace),
-        ("KEY", "Return") => t(Key::KeyEnter),
+        ("KEY", "Return") => "Enter".to_owned(),
         ("KEY", "Escape") => "Esc".to_owned(),
         ("KEY", "Backspace") => "⌫".to_owned(),
         ("KEY", "Up") => "↑".to_owned(),

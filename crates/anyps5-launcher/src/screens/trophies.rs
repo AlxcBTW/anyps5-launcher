@@ -124,6 +124,22 @@ pub fn paint_trophy_icon(ui: &mut Ui, rect: Rect, texture: Option<TextureId>, ea
     }
 }
 
+/// The accessible name of a trophy row: name, grade and whether it is earned.
+fn trophy_label(trophy: &Trophy, language: Language) -> String {
+    let secret = trophy.hidden && !trophy.is_unlocked();
+    let name = if secret {
+        language.text(Key::TrophyHidden)
+    } else {
+        trophy.name.as_str()
+    };
+    let grade = convert::grade(trophy.grade).title(language);
+    let state = match trophy.unlocked {
+        Some(micros) => format::local_date_text(micros, language),
+        None => language.text(Key::TrophyLocked).to_owned(),
+    };
+    format!("{name}, {grade}, {state}")
+}
+
 /// The trophy list overlay.
 #[derive(Default)]
 pub struct TrophyListPanel {
@@ -346,6 +362,10 @@ impl TrophyListPanel {
                         // Hit-test after drawing so the click reads the row's own response.
                         let response =
                             ui.interact(rect, id.with(("trophy-row", i)), Sense::click());
+                        let label = trophy_label(trophy, data.language);
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::Role::Button, true, label.as_str())
+                        });
                         if response.clicked() {
                             *clicked = Some(i);
                         }

@@ -838,7 +838,15 @@ impl<'a> PanelRow<'a> {
                         .max_rect(field)
                         .layout(Layout::right_to_left(Align::Center)),
                 );
-                let response = child.add(edit);
+                // A keyboard or pad "select" on the row asks for the caret (see `screens::rows`).
+                let edit_id = row_id.with("text-edit");
+                let want_focus = ctx
+                    .data_mut(|d| d.remove_temp::<bool>(Id::unique("panel-text-focus")))
+                    .unwrap_or(false);
+                if want_focus {
+                    ctx.memory_mut(|m| m.request_focus(edit_id));
+                }
+                let response = child.add(edit.id(edit_id));
                 out.text_changed = response.changed();
             }
             RowControl::Keys {
@@ -977,15 +985,17 @@ pub fn side_panel<R>(
             child.add_space(title_h + 8.0);
             if let Some(subtitle) = subtitle {
                 let top = child.cursor().min.y;
-                let rect = text::paint(
+                // Wraps (the confirmation sentence is long, and longer in Turkish).
+                let galley = text::layout(
                     &painter,
-                    pos2(inner.min.x, top),
-                    Align2::LEFT_TOP,
                     theme::TextStyle::new(15.0, theme::Weight::Regular),
                     subtitle,
                     color::text_detail(),
+                    inner.width(),
                 );
-                child.add_space(rect.height() + 8.0);
+                let height = galley.size().y;
+                painter.galley(pos2(inner.min.x, top), galley, color::text_detail());
+                child.add_space(height + 8.0);
             }
             child.add_space(18.0);
             let content = child.available_rect_before_wrap();

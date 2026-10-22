@@ -614,6 +614,10 @@ impl SettingsPanel {
                     out.actions.push(SettingsAction::GamesFolderChosen(folder));
                 }
             }
+            Change::Edit { .. } => {
+                ctx.data_mut(|d| d.insert_temp(egui::Id::unique("panel-text-focus"), true));
+                ctx.request_repaint();
+            }
             Change::Run { row: "rescan" } => out.actions.push(SettingsAction::Rescan),
             Change::Run { row: "screenshots" } => {
                 let start = prefs.screenshots_folder.clone();
