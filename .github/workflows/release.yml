@@ -1,0 +1,104 @@
+name: release
+
+# A pushed v* tag builds and publishes the release. Run by hand, it builds both files and keeps
+# them as workflow artifacts only (a dry run: nothing is published).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # The installer compiler. Pinned, and checked against this SHA-256 before it runs.
+  INNO_VERSION: 7.1.0
+  INNO_SHA256: 0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40df2f
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Version
+        id: version
+        run: |
+          $toml = Get-Content Cargo.toml -Raw
+          if ($toml -notmatch '(?ms)\[workspace\.package\].*?^version\s*=\s*"([^"]+)"') {
+            throw 'no version in [workspace.package] of Cargo.toml'
+          }
+          $version = $Matches[1]
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") {
+            throw "tag $env:GITHUB_REF_NAME does not match Cargo.toml version $version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2.9.3
+
+      # .cargo/config.toml links the C runtime statically (crt-static).
+      - name: Build
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Portable exe
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $exe = "dist/AnyPS5-Launcher-${{ steps.version.outputs.version }}-x64.exe"
+          Copy-Item target/x86_64-pc-windows-msvc/release/anyps5-launcher.exe $exe
+          # A statically linked runtime leaves no import of the Visual C++ runtime DLLs.
+          $text = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($exe))
+          foreach ($dll in 'VCRUNTIME140', 'MSVCP140') {
+            if ($text -match $dll) { throw "$dll is still imported: the runtime is not static" }
+          }
+
+      - name: Install Inno Setup
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP "innosetup-$env:INNO_VERSION-x64.exe"
+          Invoke-WebRequest -UseBasicParsing -OutFile $setup `
+            "https://github.com/jrsoftware/issrc/releases/download/is-$($env:INNO_VERSION.Replace('.', '_'))/innosetup-$env:INNO_VERSION-x64.exe"
+          if ((Get-FileHash $setup -Algorithm SHA256).Hash -ne $env:INNO_SHA256) {
+            throw 'the Inno Setup download does not match the pinned SHA-256'
+          }
+          $dir = Join-Path $env:RUNNER_TEMP 'inno'
+          Start-Process -Wait -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', "/DIR=$dir"
+          if (-not (Test-Path "$dir/ISCC.exe")) { throw 'Inno Setup did not install' }
+          "INNO_DIR=$dir" >> $env:GITHUB_ENV
+
+      - name: Installer
+        run: |
+          $exe = (Resolve-Path "dist/AnyPS5-Launcher-${{ steps.version.outputs.version }}-x64.exe").Path
+          & "$env:INNO_DIR/ISCC.exe" "/DAppVersion=${{ steps.version.outputs.version }}" "/DExeSource=$exe" "/DOutputDir=$((Resolve-Path dist).Path)" tools/installer/anyps5-launcher.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+
+      - name: Checksums
+        run: |
+          Set-Location dist
+          Get-ChildItem -File -Filter 'AnyPS5-Launcher-*.exe' | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()) *$($_.Name)"
+          } | Set-Content -Encoding ascii SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: anyps5-launcher-${{ steps.version.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+
+      - uses: softprops/action-gh-release@v3.0.3
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: AnyPS5 Launcher ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/AnyPS5-Launcher-${{ steps.version.outputs.version }}-x64.exe
+            dist/AnyPS5-Launcher-${{ steps.version.outputs.version }}-Setup.exe
+            dist/SHA256SUMS.txt
