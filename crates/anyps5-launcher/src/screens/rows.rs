@@ -40,9 +40,14 @@ pub enum Control {
         /// The value as shown (`75%`, `1.0×`).
         text: String,
     },
+    /// Opens a picker or a panel: a trailing chevron.
     Action,
+    /// Runs at once: no chevron.
+    Command,
     /// Static text; without a value only the title shows (section headers, hints).
     Info(Option<String>),
+    /// A section caption over the rows that follow.
+    Caption,
     Text(String),
     /// A pad action's key and mouse sources (`KEY:K`, `MOUSE:Left`).
     Keys {
@@ -123,8 +128,16 @@ impl Row {
         Row::new(id, title, Control::Action)
     }
 
+    pub fn command(id: RowId, title: impl Into<String>) -> Row {
+        Row::new(id, title, Control::Command)
+    }
+
     pub fn info(id: RowId, title: impl Into<String>, value: Option<String>) -> Row {
         Row::new(id, title, Control::Info(value))
+    }
+
+    pub fn caption(id: RowId, title: impl Into<String>) -> Row {
+        Row::new(id, title, Control::Caption)
     }
 
     pub fn text(id: RowId, title: impl Into<String>, value: impl Into<String>) -> Row {
@@ -160,8 +173,8 @@ impl Row {
             Control::Choice { .. } => RowKind::Choice,
             Control::Toggle(_) => RowKind::Toggle,
             Control::Stepper { .. } => RowKind::Stepper,
-            Control::Action => RowKind::Action,
-            Control::Info(_) => RowKind::Info,
+            Control::Action | Control::Command => RowKind::Action,
+            Control::Info(_) | Control::Caption => RowKind::Info,
             Control::Text(_) => RowKind::Text,
             Control::Keys { .. } => RowKind::Keys,
         }
@@ -283,7 +296,7 @@ pub fn resolve(rows: &[Row], effect: PanelEffect) -> Option<Change> {
                         value + step
                     },
                 }),
-                Control::Action => Some(Change::Run { row: r.id }),
+                Control::Action | Control::Command => Some(Change::Run { row: r.id }),
                 Control::Keys { .. } => Some(Change::Capture { row: r.id }),
                 Control::Text(_) => Some(Change::Edit { row: r.id }),
                 _ => None,
@@ -523,6 +536,8 @@ fn show_row(
             can_increment: *value < *max,
         },
         Control::Action => RowControl::Action,
+        Control::Command => RowControl::Command,
+        Control::Caption => RowControl::Caption,
         Control::Info(value) => RowControl::Info {
             value: value.as_deref(),
         },
@@ -538,7 +553,7 @@ fn show_row(
         }
     };
     let is_text = matches!(rc, RowControl::Text { .. });
-    let focusable = !matches!(rc, RowControl::Info { .. });
+    let focusable = !matches!(rc, RowControl::Info { .. } | RowControl::Caption);
     let mut panel_row = PanelRow::new(title, rc)
         .language(language)
         .focused(focused)
@@ -631,7 +646,7 @@ mod tests {
 
     fn rows() -> Vec<Row> {
         vec![
-            Row::info("head", "Section", None),
+            Row::caption("head", "Section"),
             Row::choice(
                 "choice",
                 "Choice",

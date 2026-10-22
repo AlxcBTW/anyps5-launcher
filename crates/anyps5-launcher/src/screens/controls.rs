@@ -225,7 +225,8 @@ pub fn build_rows(
         rows.push(row);
     }
     rows.push(
-        Row::action("reset", language.text(Key::ResetControls)).icon(Icon::ARROW_COUNTER_CLOCKWISE),
+        Row::command("reset", language.text(Key::ResetControls))
+            .icon(Icon::ARROW_COUNTER_CLOCKWISE),
     );
     rows
 }

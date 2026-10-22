@@ -228,10 +228,10 @@ pub fn build_rows(settings: &GameSettings, language: Language) -> Vec<Row> {
         tune_row(tune, &tuning, language)
     };
     vec![
-        Row::info("sticksSection", t(Key::SectionSticks), None),
+        Row::caption("sticksSection", t(Key::SectionSticks)),
         tune("leftDeadzone"),
         tune("rightDeadzone"),
-        Row::info("mouseSection", t(Key::SectionMouse), None),
+        Row::caption("mouseSection", t(Key::SectionMouse)),
         tune("sensitivity"),
         tune("vertical"),
         tune("curve"),
@@ -239,11 +239,11 @@ pub fn build_rows(settings: &GameSettings, language: Language) -> Vec<Row> {
         tune("maxSpeed"),
         tune("smoothing"),
         tune("decay"),
-        Row::info("keyboardSection", t(Key::SectionKeyboard), None),
+        Row::caption("keyboardSection", t(Key::SectionKeyboard)),
         tune("modifier"),
         tune("keyboardRamp"),
         tune("triggerRamp"),
-        Row::info("graphicsSection", t(Key::SectionGraphics), None),
+        Row::caption("graphicsSection", t(Key::SectionGraphics)),
         Row::toggle(
             "shaderCache",
             t(Key::ShaderCache),
@@ -251,14 +251,14 @@ pub fn build_rows(settings: &GameSettings, language: Language) -> Vec<Row> {
         )
         .detail(t(Key::ShaderCacheDetail))
         .icon(Icon::STACK),
-        Row::info("shareSection", t(Key::SectionShare), None),
-        Row::action("export", t(Key::ExportSettings))
+        Row::caption("shareSection", t(Key::SectionShare)),
+        Row::command("export", t(Key::ExportSettings))
             .detail(t(Key::ExportSettingsDetail))
             .icon(Icon::EXPORT),
-        Row::action("import", t(Key::ImportSettings))
+        Row::command("import", t(Key::ImportSettings))
             .detail(t(Key::ImportSettingsDetail))
             .icon(Icon::DOWNLOAD_SIMPLE),
-        Row::action("resetAdvanced", t(Key::ResetAdvanced)).icon(Icon::ARROW_COUNTER_CLOCKWISE),
+        Row::command("resetAdvanced", t(Key::ResetAdvanced)).icon(Icon::ARROW_COUNTER_CLOCKWISE),
     ]
 }
 

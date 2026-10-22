@@ -672,6 +672,13 @@ The launcher keeps the port's structure but trims what read as noise next to the
   regular weight. The game sheet groups display, play, maintenance and
   removal with a double gap. The removal confirmation opens on Cancel and the destructive row
   stays dark red when focused. Full-screen overlays share a 90 dp margin.
+- **Panel rows, quieter.** Chevrons and steppers rest at 0.45 and come up on the focused row;
+  choice and stepper values share a 100 dp minimum so their chevrons line up down a panel. Only
+  rows that open a picker or a panel keep the trailing chevron; commands (rescan, remove, reset,
+  log) have none. Section captions (14 dp semibold, white 0.55) and notes (14 dp regular, white
+  0.5) are bare text on the panel, as high as their text, not 58 dp rows. The settings rows start
+  level with the first category, and the trophy rows and library grid stand on the title edge. The
+  focused trophy is the white card (3 dp grow, dark ink, darker grade tones), not a ring.
 
 ## 4. Materials and blur on the GPU
 
