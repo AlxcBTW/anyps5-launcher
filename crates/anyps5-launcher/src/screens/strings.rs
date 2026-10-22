@@ -38,6 +38,9 @@ pub enum Extra {
     ToolkitFailed,
     /// Toast: the picked folder has no relinker or libraries.
     ToolkitFolderInvalid,
+    /// Settings row: the home screen music toggle.
+    HomeMusic,
+    HomeMusicDetail,
 }
 
 impl Extra {
@@ -72,6 +75,10 @@ impl Extra {
             Extra::ToolkitReady => "Toolkit %@ is ready",
             Extra::ToolkitFailed => {
                 "Could not install the toolkit. Check your connection and try again."
+            }
+            Extra::HomeMusic => "Home Screen Music",
+            Extra::HomeMusicDetail => {
+                "Plays quiet ambient music on the home screen. It fades out while a game runs."
             }
             Extra::ToolkitFolderInvalid => {
                 "This folder is not a toolkit. Pick the folder that holds relinker.exe and libs."
@@ -109,6 +116,10 @@ impl Extra {
             Extra::ToolkitDownloading => "Araç seti indiriliyor…",
             Extra::ToolkitReady => "Araç seti %@ hazır",
             Extra::ToolkitFailed => "Araç seti kurulamadı. Bağlantını denetleyip yeniden dene.",
+            Extra::HomeMusic => "Ana Ekran Müziği",
+            Extra::HomeMusicDetail => {
+                "Ana ekranda sakin bir ortam müziği çalar. Oyun çalışırken susar."
+            }
             Extra::ToolkitFolderInvalid => {
                 "Bu klasör bir araç seti değil. relinker.exe ve libs içeren klasörü seç."
             }
@@ -126,7 +137,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 25] = [
+    pub const ALL: [Extra; 27] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -152,6 +163,8 @@ impl Extra {
         Extra::ToolkitReady,
         Extra::ToolkitFailed,
         Extra::ToolkitFolderInvalid,
+        Extra::HomeMusic,
+        Extra::HomeMusicDetail,
     ];
 }
 

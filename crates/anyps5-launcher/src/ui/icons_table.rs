@@ -46,6 +46,7 @@ impl Icon {
     pub const WIND: Icon = Icon('\u{e5d2}');
     pub const USER_CIRCLE: Icon = Icon('\u{e4c4}');
     pub const SPEAKER_HIGH: Icon = Icon('\u{e44a}');
+    pub const MUSIC_NOTES: Icon = Icon('\u{e340}');
     pub const EYE_SLASH: Icon = Icon('\u{e224}');
     pub const POWER: Icon = Icon('\u{e3da}');
     pub const RECTANGLE: Icon = Icon('\u{e3f0}');

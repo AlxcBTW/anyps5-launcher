@@ -210,7 +210,7 @@ impl LauncherApp {
         }
     }
 
-    /// Shows the preferences to the shell: language, theme, accent, motion, sounds.
+    /// Shows the preferences to the shell: language, theme, accent, motion, sounds, music.
     fn apply_preferences(&mut self, ctx: &Context) {
         self.shell.language = self.model.language();
         let theme = self.model.theme();
@@ -225,6 +225,11 @@ impl LauncherApp {
             self.shell.set_reduced_motion(ctx, reduced);
         }
         self.shell.sounds.enabled = self.model.prefs.sounds;
+        // The music fades out while a game starts or runs and while another window has focus.
+        let playing = self.model.running.is_some() || self.model.starting.is_some();
+        self.shell
+            .sounds
+            .set_music(self.model.prefs.music && !playing && self.focused);
         self.shell.backdrop.paused =
             self.model.running.is_some() || !self.focused || self.freeze_backdrop;
     }
