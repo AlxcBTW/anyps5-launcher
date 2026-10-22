@@ -241,23 +241,50 @@ pub fn modules_in(folder: &Path) -> io::Result<Vec<String>> {
 /// The folders besides `sce_module` whose modules the relinker converts too (Unity's
 /// `Media/Modules`, `Media/Plugins`, `.prx` next to `eboot.bin`): `.` first. Only `.prx` files add
 /// a folder; `fakelib` holds stand-ins for system libraries that AnyPS5 implements itself.
+///
+/// The relinker writes every converted module under its file name and fails when two modules share
+/// one ("Conflicting guest output filename"). A dump can hold a second copy of its modules (the
+/// Minecraft Dungeons II dump has `decrypted/prx` and `decrypted/sce_module`), so a folder is only
+/// added when none of its file names was already taken by an earlier folder or by the default
+/// locations (`sce_module`, `sce_modules`, `prx`).
 pub fn module_directories(modules: &[String]) -> Vec<String> {
+    const DEFAULT: [&str; 3] = ["sce_module", "sce_modules", "prx"];
+    let split = |module: &str| -> (String, String) {
+        match module.rsplit_once('/') {
+            Some((dir, name)) => (dir.to_string(), name.to_lowercase()),
+            None => (".".to_string(), module.to_lowercase()),
+        }
+    };
+    let first_of = |dir: &str| dir.split('/').next().unwrap_or(".").to_lowercase();
+    let mut taken: std::collections::HashSet<String> = modules
+        .iter()
+        .map(|m| split(m))
+        .filter(|(dir, _)| DEFAULT.contains(&first_of(dir).as_str()))
+        .map(|(_, name)| name)
+        .collect();
+    // Candidate folders in order of first appearance, with their file names.
+    let mut candidates: Vec<(String, Vec<String>)> = Vec::new();
+    for module in modules
+        .iter()
+        .filter(|m| m.to_lowercase().ends_with(".prx"))
+    {
+        let (dir, name) = split(module);
+        let first = first_of(&dir);
+        if DEFAULT.contains(&first.as_str()) || first == "fakelib" || dir == "." {
+            continue;
+        }
+        match candidates.iter_mut().find(|(d, _)| *d == dir) {
+            Some((_, names)) => names.push(name),
+            None => candidates.push((dir, vec![name])),
+        }
+    }
     let mut directories = vec![".".to_string()];
-    for module in modules {
-        if !module.to_lowercase().ends_with(".prx") {
+    for (dir, names) in candidates {
+        if names.iter().any(|n| taken.contains(n)) {
             continue;
         }
-        let directory = match module.rsplit_once('/') {
-            Some((dir, _)) => dir.to_string(),
-            None => ".".to_string(),
-        };
-        let first = directory.split('/').next().unwrap_or(".").to_lowercase();
-        if ["sce_module", "sce_modules", "prx", "fakelib"].contains(&first.as_str())
-            || directories.contains(&directory)
-        {
-            continue;
-        }
-        directories.push(directory);
+        taken.extend(names);
+        directories.push(dir);
     }
     directories
 }
@@ -1002,6 +1029,21 @@ mod tests {
         );
         assert_eq!(list(&["fakelib/deep/x.prx"]), ["."]);
         assert_eq!(list(&["a.PRX"]), ["."]);
+        // A second copy of the default folders is not added again.
+        assert_eq!(
+            list(&[
+                "decrypted/prx/a.prx",
+                "decrypted/sce_module/libc.prx",
+                "prx/a.prx",
+                "sce_module/libc.prx"
+            ]),
+            ["."]
+        );
+        // Two plugin folders with the same names: the first one wins.
+        assert_eq!(
+            list(&["Media/A/x.prx", "Media/B/x.prx", "Media/C/y.prx"]),
+            [".", "Media/A", "Media/C"]
+        );
     }
 
     #[test]

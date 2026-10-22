@@ -4,6 +4,7 @@
 //! ```text
 //! ANYPS5_E2E_DUMP=<dump folder> ANYPS5_E2E_STORE=<empty folder on the dump's volume> \
 //!   [ANYPS5_E2E_TOOLKIT=<toolkit folder>] [ANYPS5_E2E_WAIT=240] [ANYPS5_E2E_KEEP=1] \
+//!   [ANYPS5_E2E_NOLAUNCH=1: unlock only] \
 //!   cargo test -p anyps5-core --test real_dump -- --ignored --nocapture
 //! ```
 //!
@@ -113,6 +114,14 @@ fn unlock_and_start_a_real_dump() {
     let game = GameId::from_path(&dump);
     let copy = unlock::unlocked_copy(&title_id, &game, &store);
     assert!(unlock::read_record(&copy).is_some());
+
+    if std::env::var_os("ANYPS5_E2E_NOLAUNCH").is_some() {
+        println!("ANYPS5_E2E_NOLAUNCH set: not starting the game");
+        if std::env::var_os("ANYPS5_E2E_KEEP").is_none() {
+            unlock::remove_unlocked(&title_id, &request.game, &store).expect("remove the copy");
+        }
+        return;
+    }
 
     // Play.
     let log = paths.log_file(&title_id);
