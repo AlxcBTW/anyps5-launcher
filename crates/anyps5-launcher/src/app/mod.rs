@@ -639,7 +639,8 @@ pub fn run() -> eframe::Result {
                 crate::ui::theme::MIN_WINDOW.0,
                 crate::ui::theme::MIN_WINDOW.1,
             ])
-            .with_maximized(true),
+            // Filling the screen starts from a plain window (see `enter_fullscreen`).
+            .with_maximized(!fullscreen),
         ..Default::default()
     };
     crate::ui::restrict_backends(&mut options);
@@ -677,7 +678,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.frames = self.frames.saturating_add(1);
         if self.start_fullscreen && self.frames == 2 {
-            enter_fullscreen(&ctx, true);
+            ctx.send_viewport_cmd(ViewportCommand::Fullscreen(true));
         }
         self.app.step(&ctx);
         self.app.paint(ui);
