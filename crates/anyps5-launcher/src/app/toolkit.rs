@@ -1,18 +1,23 @@
-//! The toolkit work behind the Toolkit category of the settings: asking GitHub for the latest
-//! release, downloading it and adopting a folder. Everything runs on worker threads and reports
-//! through one channel, so the UI thread never waits on the network or the disk.
+//! The toolkit work behind the Toolkit category of the settings: asking what the newest release
+//! is, downloading one, adopting a folder, the release list for pinning, the release notes and
+//! whether an update changes how games are converted. Everything runs on worker threads and
+//! reports through one channel, so the UI thread never waits on the network or the disk.
 //!
 //! Simulated services (the demo and the tests) never touch the network or the disk.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
 use anyps5_core::events::CancelToken;
+use anyps5_core::notes::ReleaseNotes;
 use anyps5_core::paths::AppPaths;
+use anyps5_core::releases::{self, Endpoints, Published};
 use anyps5_core::toolkit::{self, Toolkit, ToolkitError};
 use egui::Context;
 
 use crate::screens::settings::UpdateState;
+use crate::screens::whatsnew::SAMPLE_NOTES;
 
 /// What a worker reports.
 #[derive(Debug)]
@@ -25,17 +30,50 @@ pub enum ToolkitEvent {
     Adopted(Result<(std::path::PathBuf, String), String>),
 }
 
+/// The "What's new" notes of one release.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum NotesState {
+    #[default]
+    Idle,
+    Loading,
+    Ready(Box<Published>),
+    Unavailable,
+}
+
+enum Inbox {
+    Event(ToolkitEvent),
+    Recent(Result<Vec<String>, String>),
+    Notes {
+        tag: String,
+        result: Result<Option<Published>, String>,
+    },
+    Conversion {
+        from: String,
+        to: String,
+        changed: bool,
+    },
+}
+
 pub struct ToolkitService {
-    tx: Sender<ToolkitEvent>,
-    rx: Receiver<ToolkitEvent>,
+    tx: Sender<Inbox>,
+    rx: Receiver<Inbox>,
     ctx: Context,
     simulated: bool,
     checking: bool,
     installing: bool,
     /// What the settings show.
     pub state: UpdateState,
-    /// The latest release found by the last check, for "install".
-    latest: Option<String>,
+    /// The latest release found by the last check.
+    pub latest: Option<String>,
+    /// The last releases, newest first, as `v0.1.3`; empty until fetched.
+    pub recent: Vec<String>,
+    recent_asked: bool,
+    /// The notes last asked for, and the release they belong to.
+    pub notes: NotesState,
+    pub notes_tag: Option<String>,
+    /// Whether the releases between two versions changed the conversion, by (from, to).
+    conversion: HashMap<(String, String), bool>,
+    conversion_asked: HashSet<(String, String)>,
 }
 
 impl ToolkitService {
@@ -50,6 +88,12 @@ impl ToolkitService {
             installing: false,
             state: UpdateState::Unknown,
             latest: None,
+            recent: Vec::new(),
+            recent_asked: false,
+            notes: NotesState::Idle,
+            notes_tag: None,
+            conversion: HashMap::new(),
+            conversion_asked: HashSet::new(),
         }
     }
 
@@ -57,19 +101,14 @@ impl ToolkitService {
         self.installing
     }
 
-    /// Asks for the latest release. Ignored while a check or a download runs.
+    /// Asks for the newest release. Ignored while a check or a download runs.
     pub fn check(&mut self, paths: &AppPaths, repository: &str) {
         if self.checking || self.installing {
             return;
         }
         self.checking = true;
         self.state = UpdateState::Checking;
-        let (tx, ctx, paths, repo) = (
-            self.tx.clone(),
-            self.ctx.clone(),
-            paths.clone(),
-            repository.to_owned(),
-        );
+        let (tx, ctx, paths, repo) = self.worker(paths, repository);
         let simulated = self.simulated;
         spawn("toolkit check", move || {
             let result = if simulated {
@@ -78,33 +117,28 @@ impl ToolkitService {
             } else {
                 check_latest(&paths, &repo)
             };
-            let _ = tx.send(ToolkitEvent::Checked(result));
+            let _ = tx.send(Inbox::Event(ToolkitEvent::Checked(result)));
             ctx.request_repaint();
         });
     }
 
-    /// Downloads and installs the latest release. False when a download already runs.
-    pub fn install(&mut self, paths: &AppPaths, repository: &str) -> bool {
+    /// Downloads and installs a release: `tag`, or the latest. False when a download already runs.
+    pub fn install(&mut self, paths: &AppPaths, repository: &str, tag: Option<&str>) -> bool {
         if self.installing {
             return false;
         }
         self.installing = true;
         self.state = UpdateState::Downloading;
-        let (tx, ctx, paths, repo) = (
-            self.tx.clone(),
-            self.ctx.clone(),
-            paths.clone(),
-            repository.to_owned(),
-        );
-        let simulated = self.simulated;
+        let (tx, ctx, paths, repo) = self.worker(paths, repository);
+        let (simulated, tag) = (self.simulated, tag.map(str::to_owned));
         spawn("toolkit install", move || {
             let result = if simulated {
                 std::thread::sleep(Duration::from_millis(900));
                 Err("the demo does not download".to_owned())
             } else {
-                install_latest(&paths, &repo)
+                install_release(&paths, &repo, tag.as_deref())
             };
-            let _ = tx.send(ToolkitEvent::Installed(result));
+            let _ = tx.send(Inbox::Event(ToolkitEvent::Installed(result)));
             ctx.request_repaint();
         });
         true
@@ -122,35 +156,170 @@ impl ToolkitService {
                     .map(|t| (folder.clone(), t.version().to_owned()))
                     .map_err(describe)
             };
-            let _ = tx.send(ToolkitEvent::Adopted(result));
+            let _ = tx.send(Inbox::Event(ToolkitEvent::Adopted(result)));
             ctx.request_repaint();
         });
     }
 
-    /// Finished work; also updates [`state`](Self::state).
+    /// Fetches the list of the last releases once (for the pinned channel).
+    pub fn load_recent(&mut self, paths: &AppPaths, repository: &str) {
+        if self.recent_asked {
+            return;
+        }
+        self.recent_asked = true;
+        let (tx, ctx, paths, repo) = self.worker(paths, repository);
+        let simulated = self.simulated;
+        spawn("toolkit releases", move || {
+            let result = if simulated {
+                Ok(["v0.1.3", "v0.1.2", "v0.1.1", "v0.1.0"]
+                    .map(str::to_owned)
+                    .to_vec())
+            } else {
+                releases::recent(
+                    &paths,
+                    &Endpoints::github(&repo),
+                    &repo,
+                    Duration::from_secs(6 * 3600),
+                )
+                .map(|list| list.iter().map(|r| r.tag.clone()).collect())
+                .map_err(describe)
+            };
+            let _ = tx.send(Inbox::Recent(result));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Fetches the notes of release `tag`. The panel shows [`NotesState::Loading`] meanwhile.
+    pub fn load_notes(&mut self, paths: &AppPaths, repository: &str, tag: &str) {
+        if self.notes_tag.as_deref() == Some(tag)
+            && matches!(self.notes, NotesState::Loading | NotesState::Ready(_))
+        {
+            return;
+        }
+        self.notes = NotesState::Loading;
+        self.notes_tag = Some(tag.to_owned());
+        let (tx, ctx, paths, repo) = self.worker(paths, repository);
+        let (simulated, tag) = (self.simulated, tag.to_owned());
+        spawn("toolkit notes", move || {
+            let result = if simulated {
+                std::thread::sleep(Duration::from_millis(300));
+                Ok(Some(Published {
+                    tag: tag.trim_start_matches('v').to_owned(),
+                    date: "2026-10-20".to_owned(),
+                    notes: ReleaseNotes::parse(SAMPLE_NOTES),
+                }))
+            } else {
+                releases::published_notes(&paths, &Endpoints::github(&repo), &repo, &tag)
+                    .map_err(describe)
+            };
+            let _ = tx.send(Inbox::Notes { tag, result });
+            ctx.request_repaint();
+        });
+    }
+
+    /// Whether the releases after `from` up to `to` changed how games are converted: `None` until
+    /// known (or when the notes could not be had).
+    pub fn conversion_changed(&self, from: &str, to: &str) -> Option<bool> {
+        self.conversion
+            .get(&(from.to_owned(), to.to_owned()))
+            .copied()
+    }
+
+    /// Looks it up once per pair, in the background.
+    pub fn ask_conversion(&mut self, paths: &AppPaths, repository: &str, from: &str, to: &str) {
+        let key = (from.to_owned(), to.to_owned());
+        if !self.conversion_asked.insert(key.clone()) {
+            return;
+        }
+        let (tx, ctx, paths, repo) = self.worker(paths, repository);
+        let simulated = self.simulated;
+        spawn("toolkit conversion", move || {
+            let changed = if simulated {
+                Some(true)
+            } else {
+                releases::conversion_changed(
+                    &paths,
+                    &Endpoints::github(&repo),
+                    &repo,
+                    &key.0,
+                    &key.1,
+                )
+                .inspect_err(|e| tracing::debug!("conversion lookup: {e}"))
+                .ok()
+            };
+            if let Some(changed) = changed {
+                let _ = tx.send(Inbox::Conversion {
+                    from: key.0,
+                    to: key.1,
+                    changed,
+                });
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    fn worker(
+        &self,
+        paths: &AppPaths,
+        repository: &str,
+    ) -> (Sender<Inbox>, Context, AppPaths, String) {
+        (
+            self.tx.clone(),
+            self.ctx.clone(),
+            paths.clone(),
+            repository.to_owned(),
+        )
+    }
+
+    /// Finished work that the host reacts to; also updates the service's own state.
     pub fn poll(&mut self) -> Vec<ToolkitEvent> {
-        let events: Vec<ToolkitEvent> = self.rx.try_iter().collect();
-        for event in &events {
-            match event {
-                ToolkitEvent::Checked(result) => {
-                    self.checking = false;
-                    self.state = match result {
-                        Ok(Some(tag)) => {
-                            self.latest = Some(tag.clone());
-                            UpdateState::Available(tag.clone())
+        let mut events = Vec::new();
+        for inbox in self.rx.try_iter().collect::<Vec<_>>() {
+            match inbox {
+                Inbox::Event(event) => {
+                    match &event {
+                        ToolkitEvent::Checked(result) => {
+                            self.checking = false;
+                            self.state = match result {
+                                Ok(Some(tag)) => {
+                                    self.latest = Some(tag.clone());
+                                    UpdateState::Available(tag.clone())
+                                }
+                                Ok(None) => UpdateState::UpToDate,
+                                Err(_) => UpdateState::Failed,
+                            };
                         }
-                        Ok(None) => UpdateState::UpToDate,
-                        Err(_) => UpdateState::Failed,
-                    };
+                        ToolkitEvent::Adopted(_) => {}
+                        ToolkitEvent::Installed(result) => {
+                            self.installing = false;
+                            self.state = if result.is_ok() {
+                                UpdateState::UpToDate
+                            } else {
+                                UpdateState::Failed
+                            };
+                        }
+                    }
+                    events.push(event);
                 }
-                ToolkitEvent::Adopted(_) => {}
-                ToolkitEvent::Installed(result) => {
-                    self.installing = false;
-                    self.state = if result.is_ok() {
-                        UpdateState::UpToDate
-                    } else {
-                        UpdateState::Failed
-                    };
+                Inbox::Recent(Ok(list)) => self.recent = list,
+                Inbox::Recent(Err(error)) => {
+                    tracing::debug!("release list: {error}");
+                    self.recent_asked = false;
+                }
+                Inbox::Notes { tag, result } => {
+                    if self.notes_tag.as_deref() == Some(tag.as_str()) {
+                        self.notes = match result {
+                            Ok(Some(published)) => NotesState::Ready(Box::new(published)),
+                            Ok(None) => NotesState::Unavailable,
+                            Err(error) => {
+                                tracing::debug!("release notes: {error}");
+                                NotesState::Unavailable
+                            }
+                        };
+                    }
+                }
+                Inbox::Conversion { from, to, changed } => {
+                    self.conversion.insert((from, to), changed);
                 }
             }
         }
@@ -169,16 +338,40 @@ fn describe(error: ToolkitError) -> String {
 }
 
 fn check_latest(paths: &AppPaths, repository: &str) -> Result<Option<String>, String> {
-    let latest = toolkit::check_latest(repository).map_err(describe)?;
+    let newest = releases::newest_tag(paths, &Endpoints::github(repository), repository)
+        .map_err(describe)?;
     let newer = match Toolkit::locate(paths, None) {
-        Some(installed) => toolkit::update_available(&latest, &installed),
+        Some(installed) => match installed.tag() {
+            Some(tag) if !installed.is_adopted() => toolkit::is_newer(&newest, tag),
+            _ => false,
+        },
         None => true,
     };
-    Ok(newer.then(|| latest.plain_tag().to_owned()))
+    Ok(newer.then_some(newest))
 }
 
-fn install_latest(paths: &AppPaths, repository: &str) -> Result<String, String> {
-    let info = toolkit::check_latest(repository).map_err(describe)?;
+fn install_release(
+    paths: &AppPaths,
+    repository: &str,
+    tag: Option<&str>,
+) -> Result<String, String> {
+    let endpoints = Endpoints::github(repository);
+    let info = match tag {
+        None => toolkit::check_latest(repository).map_err(describe)?,
+        Some(tag) => {
+            let wanted = tag.trim_start_matches('v');
+            releases::recent(paths, &endpoints, repository, Duration::ZERO)
+                .map_err(describe)?
+                .into_iter()
+                .find(|r| r.plain_tag() == wanted)
+                .ok_or_else(|| format!("release {tag} was not found"))?
+        }
+    };
+    if releases::libs_digest_disagrees(paths, &endpoints, &info) {
+        tracing::warn!(
+            "the Pages release file and the API disagree about the libraries; using the API"
+        );
+    }
     let cancel = CancelToken::new();
     let installed = toolkit::download_and_install(&info, paths, None, &mut |_, _| {}, &cancel)
         .map_err(describe)?;

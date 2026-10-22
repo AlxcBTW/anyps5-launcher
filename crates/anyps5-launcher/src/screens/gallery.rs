@@ -3,7 +3,9 @@
 //!
 //! ```text
 //! anyps5-launcher --gallery=settings|settings1..6|game-settings|confirm|controls|controls-capture|
-//!                           controls-end|advanced|trophies|banner|start|unlocking|log|report|library
+//!                           controls-end|advanced|trophies|banner|start|unlocking|log|report|library|
+//!                           toolkit|toolkit-update|toolkit-pinned|toolkit-local|
+//!                           recommended|recommended-warning|whats-new|whats-new-loading
 //!                 [--screenshot=out.png] [--size=WxH] [--tr]
 //! ```
 //!
@@ -14,8 +16,11 @@
 use anyps5_core::community::CommunityLayout;
 use anyps5_core::controls::{PadAction, Preset};
 use anyps5_core::library::{ExecutableKind, Game};
+use anyps5_core::notes::ReleaseNotes;
 use anyps5_core::paths::GameId;
 use anyps5_core::report::{ReportInput, SystemInfo};
+use anyps5_core::recommended::{Caution, Change, Kind, Plan, Setting};
+use anyps5_core::releases::Published;
 use anyps5_core::settings::{GameSettings, Preferences};
 use anyps5_core::trophies::{Grade, Trophy, TrophySet};
 use egui::{
@@ -27,10 +32,11 @@ use crate::screens::advanced::{AdvancedData, AdvancedPanel};
 use crate::screens::banner::{self, BannerLook, BannerTrophy};
 use crate::screens::controls::{ControlsData, ControlsPanel};
 use crate::screens::game_settings::{
-    GameSettingsData, GameSettingsPanel, TrophyProgress, UninstallPanel,
+    GameSettingsData, GameSettingsPanel, RecommendedRow, TrophyProgress, UninstallPanel,
 };
 use crate::screens::library::{LibraryData, LibraryEntry, LibraryGrid, StateText};
 use crate::screens::log::{LogData, LogView, ReviewData};
+use crate::screens::recommended::{RecommendedData, RecommendedPanel};
 use crate::screens::settings::{
     LauncherUpdate, SettingsEnv, SettingsPanel, UpdateState, apply_preferences,
 };
@@ -38,6 +44,7 @@ use crate::screens::share_strings::Share;
 use crate::screens::start::{StartData, StartScreen};
 use crate::screens::trophies::{IconCache, TrophyData, TrophyListPanel};
 use crate::screens::unlock::{UnlockProgress, UnlockStep, hero_progress};
+use crate::screens::whatsnew::{NotesView, SAMPLE_NOTES, WhatsNewData, WhatsNewPanel};
 use crate::ui::Shell;
 use crate::ui::anim::AnimExt;
 use crate::ui::artwork::paint_artwork;
@@ -70,6 +77,20 @@ pub enum ScreenPage {
     /// The review of a report to AnyPS5.
     Report,
     Library,
+    /// The Toolkit category, in its rows: stable, an update waiting, pinned, a local build.
+    Toolkit(ToolkitLook),
+    Recommended,
+    RecommendedWarning,
+    WhatsNew,
+    WhatsNewLoading,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolkitLook {
+    Stable,
+    Update,
+    Pinned,
+    Local,
 }
 
 /// The page named on the command line.
@@ -89,12 +110,57 @@ pub fn parse(name: &str) -> Option<ScreenPage> {
         "log" => ScreenPage::Log,
         "report" => ScreenPage::Report,
         "library" => ScreenPage::Library,
+        "toolkit" => ScreenPage::Toolkit(ToolkitLook::Stable),
+        "toolkit-update" => ScreenPage::Toolkit(ToolkitLook::Update),
+        "toolkit-pinned" => ScreenPage::Toolkit(ToolkitLook::Pinned),
+        "toolkit-local" => ScreenPage::Toolkit(ToolkitLook::Local),
+        "recommended" => ScreenPage::Recommended,
+        "recommended-warning" => ScreenPage::RecommendedWarning,
+        "whats-new" => ScreenPage::WhatsNew,
+        "whats-new-loading" => ScreenPage::WhatsNewLoading,
         other => {
             let n: usize = other.strip_prefix("settings")?.parse().ok()?;
             (n < crate::screens::settings::Category::ALL.len())
                 .then_some(ScreenPage::Settings(n))?
         }
     })
+}
+
+/// What the catalogue could say about the invented game: two changes, or only a warning.
+fn sample_plan(warning: bool) -> Plan {
+    if warning {
+        return Plan {
+            changes: Vec::new(),
+            cautions: vec![Caution {
+                entry: "no-fixed-texture-cache".into(),
+                setting: Setting::Env("APS5_TEXTURE_CACHE_MIB".into()),
+                value: "3072".into(),
+                why: "A fixed texture cache made this game slower on an 8 GB card. Remove APS5_TEXTURE_CACHE_MIB from your system settings.".into(),
+            }],
+        };
+    }
+    Plan {
+        changes: vec![
+            Change {
+                entry: "playgo-installed".into(),
+                kind: Kind::Required,
+                setting: Setting::Env("APS5_PLAYGO_UNLISTED_CHUNKS".into()),
+                current: None,
+                proposed: "installed".into(),
+                why: "This dump has no PlayGo data. Without this the game cannot load its saves."
+                    .into(),
+            },
+            Change {
+                entry: "fixed-base".into(),
+                kind: Kind::Recommended,
+                setting: Setting::Relink("--windows-fixed-base".into()),
+                current: None,
+                proposed: "0x400000".into(),
+                why: "The program expects to be loaded at 0x400000.".into(),
+            },
+        ],
+        cautions: Vec::new(),
+    }
 }
 
 /// Names of the invented games.
@@ -297,6 +363,11 @@ pub struct ScreenGallery {
     settings: SettingsPanel,
     game_panel: GameSettingsPanel,
     uninstall: UninstallPanel,
+    recommended: RecommendedPanel,
+    whats_new: WhatsNewPanel,
+    notes: Published,
+    update: UpdateState,
+    toolkit_version: String,
     controls: ControlsPanel,
     /// A game whose files name its controls, for the controls page.
     game_input: GameInput,
@@ -317,7 +388,33 @@ impl ScreenGallery {
         prefs.onboarded = true;
         prefs.profile_name = "Mira".into();
         prefs.games_folder = Some("D:\\Games".into());
+        prefs.toolkit_checked_at = Some("2026-10-22 09:30".into());
+        let mut update = UpdateState::UpToDate;
+        let mut toolkit_version = "0.1.3-4f2a9c".to_owned();
+        if let ScreenPage::Toolkit(look) = page {
+            match look {
+                ToolkitLook::Stable => {}
+                ToolkitLook::Update => update = UpdateState::Available("0.1.4".into()),
+                ToolkitLook::Pinned => {
+                    prefs.toolkit_pinned = Some("v0.1.2".into());
+                    toolkit_version = "0.1.2-9d1e47".into();
+                }
+                ToolkitLook::Local => {
+                    prefs.toolkit = Some("D:\\anyps5\\build".into());
+                    toolkit_version = "local-4f2a9c1d7e03".into();
+                }
+            }
+        }
         Self {
+            recommended: RecommendedPanel::default(),
+            whats_new: WhatsNewPanel::default(),
+            notes: Published {
+                tag: "0.1.3".into(),
+                date: "2026-10-20".into(),
+                notes: ReleaseNotes::parse(SAMPLE_NOTES),
+            },
+            update,
+            toolkit_version,
             page,
             covers: Vec::new(),
             hero: None,
@@ -407,12 +504,16 @@ impl ScreenGallery {
             })
             .collect();
         let resolutions: Vec<String> = Vec::new();
+        let recent: Vec<String> = ["v0.1.3", "v0.1.2", "v0.1.1", "v0.1.0"]
+            .map(str::to_owned)
+            .to_vec();
         let progress = TrophyProgress::from(&self.set);
         let env = SettingsEnv {
             games_found: self.games.len(),
             app_version: "0.1.0",
-            toolkit_version: Some("0.1.3-4f2a9c"),
-            update: UpdateState::UpToDate,
+            toolkit_version: Some(&self.toolkit_version),
+            update: self.update.clone(),
+            recent: &recent,
             launcher: LauncherUpdate::None,
             default_screenshots: std::path::Path::new("C:\\Users\\mira\\Pictures\\AnyPS5"),
             links: anyps5_core::linkreg::Handler::Absent,
@@ -427,12 +528,43 @@ impl ScreenGallery {
                 resolutions: &resolutions,
                 trophies: Some(progress),
                 installed: true,
+                recommended: Some(RecommendedRow {
+                    changes: 1,
+                    needed: true,
+                }),
+                unlock_note: Some(
+                    "Unlocked with v0.1.2. v0.1.3 is installed. This update changes how games are converted."
+                        .into(),
+                ),
                 language,
                 accent,
             };
             self.game_panel.show(shell, &ctx, &events, &mut data);
         }
         self.uninstall.show(shell, &ctx, &events, language, accent);
+        {
+            let plan = sample_plan(matches!(self.page, ScreenPage::RecommendedWarning));
+            let data = RecommendedData {
+                title: name,
+                plan: &plan,
+                language,
+                accent,
+            };
+            self.recommended.show(shell, &ctx, &events, &data);
+        }
+        {
+            let view = if matches!(self.page, ScreenPage::WhatsNewLoading) {
+                NotesView::Loading
+            } else {
+                NotesView::Ready(&self.notes)
+            };
+            let data = WhatsNewData {
+                tag: "0.1.3",
+                view,
+                language,
+            };
+            self.whats_new.show(shell, &ctx, &events, &data);
+        }
         {
             let mut data = ControlsData {
                 title: name,
@@ -515,7 +647,7 @@ impl ScreenGallery {
     fn open_page(&mut self, shell: &mut Shell, ctx: &Context) {
         match self.page {
             ScreenPage::Settings(n) => self.settings.open_at(n, n == 0),
-            ScreenPage::GameSettings => self.game_panel.open_row(1),
+            ScreenPage::GameSettings => self.game_panel.open_row(3),
             ScreenPage::Confirm => self.uninstall.open(),
             ScreenPage::Controls => self.controls.open(),
             ScreenPage::ControlsCapture => {
@@ -526,6 +658,16 @@ impl ScreenGallery {
             ScreenPage::Trophies => self.trophies.open_at(1),
             ScreenPage::Library => self.library.open(1),
             ScreenPage::ControlsEnd => self.controls.open_row(30),
+            ScreenPage::Toolkit(_) => self.settings.open_at(4, true),
+            ScreenPage::Recommended | ScreenPage::RecommendedWarning => {
+                let plan = sample_plan(matches!(self.page, ScreenPage::RecommendedWarning));
+                self.recommended.open(&plan, shell.language);
+            }
+            ScreenPage::WhatsNew => {
+                self.whats_new
+                    .open_expanded(&self.notes.notes, shell.language, 2);
+            }
+            ScreenPage::WhatsNewLoading => self.whats_new.open(),
             ScreenPage::Log | ScreenPage::Report => self.log.open(),
             ScreenPage::Start => self.start.open_at(ctx.clock()),
             ScreenPage::Banner | ScreenPage::Unlocking => {}

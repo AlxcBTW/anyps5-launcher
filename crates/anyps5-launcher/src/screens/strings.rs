@@ -84,6 +84,79 @@ pub enum Extra {
     LinkUnlock,
     /// Toast: `%@` = the game name.
     LinkUnlocked,
+    /// Settings row: which toolkit to follow.
+    ChannelTitle,
+    ChannelStable,
+    ChannelPinned,
+    ChannelLocal,
+    ChannelStableDetail,
+    ChannelPinnedDetail,
+    ChannelLocalDetail,
+    /// Settings row: the release a pinned channel stays on.
+    PinnedVersion,
+    /// Settings row and panel title.
+    WhatsNew,
+    /// Detail of Check Now: `%@` = the time.
+    LastCheckedOn,
+    /// Detail of the toolkit row.
+    FitNewer,
+    /// Detail of the toolkit row.
+    FitOlder,
+    /// Toast: `%@` = the release.
+    ToolkitAvailable,
+    /// Value of a turned-off feature: `%@` = the first release that has it.
+    NeedsToolkit,
+    /// Value of a turned-off feature: `%@` = the last release without it.
+    NeedsNewerThan,
+    /// Header of the notes: release, date.
+    NotesHeader,
+    /// `%@` = how many.
+    ChangesCount,
+    ChangeOne,
+    NotesHighlights,
+    NotesOther,
+    NotesEverything,
+    NotesLoading,
+    NotesUnavailable,
+    /// Button: the release page on GitHub.
+    NotesOpenRelease,
+    /// Game sheet: `%@` = the version it was unlocked with, then the installed one.
+    UnlockedWith,
+    ConversionChanged,
+    UnlockOptional,
+    UnlockEarlierBuild,
+    /// Game sheet row and panel subtitle.
+    RecTitle,
+    /// Detail of the row: the game does not start without it.
+    RecNeeded,
+    /// Detail of the row when there is only a warning.
+    RecWorthALook,
+    /// The one button of the panel.
+    RecApply,
+    /// Value before a setting is changed.
+    RecDefault,
+    RecOn,
+    RecOff,
+    /// Setting name.
+    RecPlayGo,
+    RecPlayGoInstalled,
+    RecPlayGoAbsent,
+    /// Setting name.
+    RecImageBase,
+    /// Setting name.
+    RecModuleFolder,
+    /// Setting name.
+    RecExecutable,
+    /// Setting name.
+    RecTextureCache,
+    /// Setting name.
+    RecShaderCache,
+    /// Hint under the changes.
+    RecUnlockHint,
+    /// Toast.
+    RecApplied,
+    /// Toast.
+    RecAppliedUnlock,
 }
 
 impl Extra {
@@ -163,6 +236,52 @@ impl Extra {
             Extra::LinkOutside => "%@ is outside your games folder. Move it there to add it.",
             Extra::LinkUnlock => "Select Unlock to prepare %@.",
             Extra::LinkUnlocked => "%@ is already unlocked.",
+            Extra::ChannelTitle => "Channel",
+            Extra::ChannelStable => "Stable",
+            Extra::ChannelPinned => "Pinned",
+            Extra::ChannelLocal => "Local Build",
+            Extra::ChannelStableDetail => "Follows the newest release.",
+            Extra::ChannelPinnedDetail => "Stays on one release. No update is offered.",
+            Extra::ChannelLocalDetail => "Uses a folder you built or picked. No update is offered.",
+            Extra::PinnedVersion => "Version",
+            Extra::WhatsNew => "What's New",
+            Extra::LastCheckedOn => "Last checked %@",
+            Extra::FitNewer => "Newer than this launcher was tested with. It should still work.",
+            Extra::FitOlder => "An older toolkit: some features are turned off.",
+            Extra::ToolkitAvailable => "Toolkit %@ is available",
+            Extra::NeedsToolkit => "Needs toolkit %@",
+            Extra::NeedsNewerThan => "Needs a build newer than %@",
+            Extra::NotesHeader => "%@, released %@",
+            Extra::ChangesCount => "%@ changes",
+            Extra::ChangeOne => "1 change",
+            Extra::NotesHighlights => "Highlights",
+            Extra::NotesOther => "Other areas",
+            Extra::NotesEverything => "Everything",
+            Extra::NotesLoading => "Loading the notes…",
+            Extra::NotesUnavailable => "The notes could not be loaded.",
+            Extra::NotesOpenRelease => "Open on GitHub",
+            Extra::UnlockedWith => "Unlocked with %@. %@ is installed.",
+            Extra::ConversionChanged => "This update changes how games are converted.",
+            Extra::UnlockOptional => "Unlocking again is optional.",
+            Extra::UnlockEarlierBuild => "Unlocked with an earlier build of this toolkit.",
+            Extra::RecTitle => "Recommended for this game",
+            Extra::RecNeeded => "Needed to start",
+            Extra::RecWorthALook => "Worth a look",
+            Extra::RecApply => "Apply",
+            Extra::RecDefault => "Default",
+            Extra::RecOn => "On",
+            Extra::RecOff => "Off",
+            Extra::RecPlayGo => "Missing PlayGo data",
+            Extra::RecPlayGoInstalled => "Report as installed",
+            Extra::RecPlayGoAbsent => "Report as absent",
+            Extra::RecImageBase => "Image base",
+            Extra::RecModuleFolder => "Module folder",
+            Extra::RecExecutable => "Executable",
+            Extra::RecTextureCache => "Texture cache",
+            Extra::RecShaderCache => "Shader cache",
+            Extra::RecUnlockHint => "Unlock the game again to use this.",
+            Extra::RecApplied => "Applied",
+            Extra::RecAppliedUnlock => "Saved. Unlock the game again to use it.",
         }
     }
 
@@ -236,6 +355,58 @@ impl Extra {
             Extra::LinkOutside => "%@ oyun klasörünün dışında. Eklemek için oraya taşı.",
             Extra::LinkUnlock => "%@ oyununu hazırlamak için Kilidi Aç'ı seç.",
             Extra::LinkUnlocked => "%@ zaten açık.",
+            Extra::ChannelTitle => "Kanal",
+            Extra::ChannelStable => "Kararlı",
+            Extra::ChannelPinned => "Sabit",
+            Extra::ChannelLocal => "Yerel yapı",
+            Extra::ChannelStableDetail => "En yeni sürümü izler.",
+            Extra::ChannelPinnedDetail => "Tek bir sürümde kalır. Güncelleme önerilmez.",
+            Extra::ChannelLocalDetail => {
+                "Kendi yaptığın ya da seçtiğin klasörü kullanır. Güncelleme önerilmez."
+            }
+            Extra::PinnedVersion => "Sürüm",
+            Extra::WhatsNew => "Yenilikler",
+            Extra::LastCheckedOn => "Son denetleme: %@",
+            Extra::FitNewer => {
+                "Bu başlatıcının denendiğinden daha yeni. Yine de çalışması beklenir."
+            }
+            Extra::FitOlder => "Eski bir araç seti: bazı özellikler kapalı.",
+            Extra::ToolkitAvailable => "Araç seti %@ indirilebilir",
+            Extra::NeedsToolkit => "Araç seti %@ gerekir",
+            Extra::NeedsNewerThan => "%@ sürümünden yeni bir yapı gerekir",
+            Extra::NotesHeader => "%@, yayın tarihi %@",
+            Extra::ChangesCount => "%@ değişiklik",
+            Extra::ChangeOne => "1 değişiklik",
+            Extra::NotesHighlights => "Öne çıkanlar",
+            Extra::NotesOther => "Diğer alanlar",
+            Extra::NotesEverything => "Tümü",
+            Extra::NotesLoading => "Notlar yükleniyor…",
+            Extra::NotesUnavailable => "Notlar yüklenemedi.",
+            Extra::NotesOpenRelease => "GitHub'da aç",
+            Extra::UnlockedWith => "%@ ile açıldı. %@ kurulu.",
+            Extra::ConversionChanged => {
+                "Bu güncelleme oyunların dönüştürülme şeklini değiştiriyor."
+            }
+            Extra::UnlockOptional => "Yeniden açmak isteğe bağlı.",
+            Extra::UnlockEarlierBuild => "Bu araç setinin önceki bir yapısıyla açıldı.",
+            Extra::RecTitle => "Bu oyun için önerilenler",
+            Extra::RecNeeded => "Başlamak için gerekli",
+            Extra::RecWorthALook => "Göz atmaya değer",
+            Extra::RecApply => "Uygula",
+            Extra::RecDefault => "Varsayılan",
+            Extra::RecOn => "Açık",
+            Extra::RecOff => "Kapalı",
+            Extra::RecPlayGo => "Eksik PlayGo verisi",
+            Extra::RecPlayGoInstalled => "Kurulu say",
+            Extra::RecPlayGoAbsent => "Yok say",
+            Extra::RecImageBase => "Yükleme adresi",
+            Extra::RecModuleFolder => "Modül klasörü",
+            Extra::RecExecutable => "Çalıştırılabilir dosya",
+            Extra::RecTextureCache => "Doku önbelleği",
+            Extra::RecShaderCache => "Gölgelendirici önbelleği",
+            Extra::RecUnlockHint => "Bunun geçerli olması için oyunun kilidini yeniden aç.",
+            Extra::RecApplied => "Uygulandı",
+            Extra::RecAppliedUnlock => "Kaydedildi. Kullanmak için oyunun kilidini yeniden aç.",
         }
     }
 
@@ -250,7 +421,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 52] = [
+    pub const ALL: [Extra; 98] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -303,6 +474,52 @@ impl Extra {
         Extra::LinkOutside,
         Extra::LinkUnlock,
         Extra::LinkUnlocked,
+        Extra::ChannelTitle,
+        Extra::ChannelStable,
+        Extra::ChannelPinned,
+        Extra::ChannelLocal,
+        Extra::ChannelStableDetail,
+        Extra::ChannelPinnedDetail,
+        Extra::ChannelLocalDetail,
+        Extra::PinnedVersion,
+        Extra::WhatsNew,
+        Extra::LastCheckedOn,
+        Extra::FitNewer,
+        Extra::FitOlder,
+        Extra::ToolkitAvailable,
+        Extra::NeedsToolkit,
+        Extra::NeedsNewerThan,
+        Extra::NotesHeader,
+        Extra::ChangesCount,
+        Extra::ChangeOne,
+        Extra::NotesHighlights,
+        Extra::NotesOther,
+        Extra::NotesEverything,
+        Extra::NotesLoading,
+        Extra::NotesUnavailable,
+        Extra::NotesOpenRelease,
+        Extra::UnlockedWith,
+        Extra::ConversionChanged,
+        Extra::UnlockOptional,
+        Extra::UnlockEarlierBuild,
+        Extra::RecTitle,
+        Extra::RecNeeded,
+        Extra::RecWorthALook,
+        Extra::RecApply,
+        Extra::RecDefault,
+        Extra::RecOn,
+        Extra::RecOff,
+        Extra::RecPlayGo,
+        Extra::RecPlayGoInstalled,
+        Extra::RecPlayGoAbsent,
+        Extra::RecImageBase,
+        Extra::RecModuleFolder,
+        Extra::RecExecutable,
+        Extra::RecTextureCache,
+        Extra::RecShaderCache,
+        Extra::RecUnlockHint,
+        Extra::RecApplied,
+        Extra::RecAppliedUnlock,
     ];
 }
 

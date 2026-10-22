@@ -24,6 +24,10 @@ pub enum Overlay {
     Controls,
     Trophies,
     Advanced,
+    /// What the catalogue recommends for the game (a side panel).
+    Recommended,
+    /// The notes of a toolkit release (a full-screen panel).
+    WhatsNew,
 }
 
 impl Overlay {
@@ -35,6 +39,7 @@ impl Overlay {
                 | Overlay::ConfirmUninstall
                 | Overlay::Controls
                 | Overlay::Advanced
+                | Overlay::Recommended
         )
     }
 

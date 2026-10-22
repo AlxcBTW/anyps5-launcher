@@ -8,12 +8,13 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use anyps5_core::compat::{self, Feature, Fit};
 use anyps5_core::diagnosis::Diagnosis;
 use anyps5_core::hostcpu::{CpuConversion, HostCpu};
 use anyps5_core::launch::{LaunchEvent, LaunchRequest, Launcher, RunHandle, WindowPrefs};
 use anyps5_core::paths::{self, AppPaths, GameId};
 use anyps5_core::settings::{self, EnvContext, Preferences};
-use anyps5_core::toolkit::{Toolkit, adopt_folder};
+use anyps5_core::toolkit::{Toolkit, ToolkitChoice, adopt_folder};
 use anyps5_core::unlock::{self, UnlockError, UnlockEvent, UnlockQueue, UnlockRequest};
 
 use crate::app::model::ui_language;
@@ -114,12 +115,38 @@ impl CorePipeline {
 
     /// Looks for the toolkit again (after a download or a changed folder).
     pub fn locate_toolkit(&mut self, prefs: &Preferences) {
+        let pinned = prefs
+            .toolkit_pinned
+            .clone()
+            .map(|tag| ToolkitChoice::Release { tag });
         self.toolkit = match &prefs.toolkit {
             Some(folder) => adopt_folder(folder)
                 .ok()
                 .or_else(|| Toolkit::locate(&self.paths, None)),
-            None => Toolkit::locate(&self.paths, None),
+            None => Toolkit::locate(&self.paths, pinned.as_ref()),
         };
+        if let Some(toolkit) = &self.toolkit {
+            match compat::fit(toolkit.version()) {
+                Fit::Newer => tracing::info!(
+                    "toolkit {} is newer than this launcher was tested with (v{}); using it as is",
+                    toolkit.version(),
+                    compat::TESTED_UP_TO
+                ),
+                Fit::Older => tracing::warn!(
+                    "toolkit {} is older than v{}; features it lacks are turned off",
+                    toolkit.version(),
+                    compat::TESTED_UP_TO
+                ),
+                Fit::Tested | Fit::Local => {}
+            }
+        }
+    }
+
+    /// Whether the toolkit in use has `feature`; true when there is none (nothing to degrade).
+    fn supports(&self, feature: Feature) -> bool {
+        self.toolkit
+            .as_ref()
+            .is_none_or(|t| compat::supports(feature, t.version()))
     }
 
     fn push(&self, event: PipelineEvent) {
@@ -143,6 +170,7 @@ impl CorePipeline {
             settings::CpuConversion::Intel => CpuConversion::Intel,
         };
         request.to_intel = HostCpu::detect().wants_intel_conversion(mode);
+        request.relink_flags = prefs.game_settings(&game.id).relink;
         if !self.queue.enqueue(request) {
             tracing::debug!("{} is already queued", game.name);
         }
@@ -160,7 +188,10 @@ impl CorePipeline {
         let written = settings
             .write_input_file(&input_file, self.toolkit.as_ref().and_then(|t| t.tag()))
             .is_ok();
-        let screenshots = prefs.screenshots_dir(&self.paths);
+        // F12 screenshots exist only in builds newer than v0.1.3; older toolkits ignore the folder.
+        let screenshots = self
+            .supports(Feature::Screenshots)
+            .then(|| prefs.screenshots_dir(&self.paths));
         let shader_cache = self.paths.shader_cache_dir(&game.title_id);
         let launcher_language = match prefs.language {
             settings::Language::Turkish => 19,
@@ -169,7 +200,7 @@ impl CorePipeline {
         let env = settings.environment(&EnvContext {
             launcher_language,
             input_file: written.then_some(input_file),
-            screenshots: Some(screenshots.clone()),
+            screenshots: screenshots.clone(),
             fonts: prefs.fonts_folder.clone(),
             shader_cache: Some(shader_cache.clone()),
         });
@@ -180,7 +211,7 @@ impl CorePipeline {
             self.paths.log_file(&game.title_id),
         );
         request.env = env;
-        request.create_dirs = vec![screenshots, shader_cache];
+        request.create_dirs = screenshots.into_iter().chain([shader_cache]).collect();
         request.window = WindowPrefs {
             fullscreen: settings.fullscreen,
             size_percent: settings.window_size_clamped(),
@@ -282,6 +313,10 @@ impl Pipeline for CorePipeline {
     }
 
     fn patches_dir(&self) -> Option<std::path::PathBuf> {
-        self.toolkit.as_ref().map(|t| t.patches().to_path_buf())
+        // Patches (and the resolutions they offer) need v0.1.3.
+        self.toolkit
+            .as_ref()
+            .filter(|t| compat::supports(Feature::Patches, t.version()))
+            .map(|t| t.patches().to_path_buf())
     }
 }
