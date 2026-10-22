@@ -672,6 +672,12 @@ The launcher keeps the port's structure but trims what read as noise next to the
   regular weight. The game sheet groups display, play, maintenance and
   removal with a double gap. The removal confirmation opens on Cancel and the destructive row
   stays dark red when focused. Full-screen overlays share a 90 dp margin.
+- **Crisp edges.** Scaled buttons snap to physical pixels and use one whole-dp radius for shadow,
+  fill and stroke. Hairlines, glass strokes and the side panel edge are one physical pixel wide
+  (`1 / ppp`), and the glass shader shares the stroke's pixel-aligned rect and radius. Text sizes
+  quantise to whole physical pixels, not 0.25 dp. Chevrons are drawn lines (1.75 dp), not the thin
+  font caret; the cross glyph is 1.8 dp against 1.5 dp for the others, the triangle sits 0.12 r
+  lower. The indeterminate band follows the capsule's rounded ends.
 
 ## 4. Materials and blur on the GPU
 
