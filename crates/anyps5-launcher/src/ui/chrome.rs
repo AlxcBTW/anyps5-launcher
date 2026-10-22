@@ -310,12 +310,16 @@ pub enum RowControl<'a> {
         can_decrement: bool,
         can_increment: bool,
     },
-    /// Trailing chevron.
+    /// Trailing chevron: the row opens a picker or a panel.
     Action,
-    /// Static text (15 medium, 0.7), or only the title in white 0.62 without a value.
+    /// No control: the row runs at once.
+    Command,
+    /// Static text (15 medium, 0.7); without a value the title is a note: a dim paragraph.
     Info {
         value: Option<&'a str>,
     },
+    /// A section caption over the rows that follow.
+    Caption,
     /// Right-aligned text field, 200 wide, edits live.
     Text {
         value: &'a mut String,
@@ -356,7 +360,9 @@ pub struct RowOutput {
     pub text_changed: bool,
 }
 
-const CHEVRON_OPACITY: f32 = 0.85;
+/// Chevrons rest quiet on a card and come up on the focused row.
+const CHEVRON_OPACITY: f32 = 0.45;
+const CHEVRON_OPACITY_FOCUS: f32 = 0.85;
 const CHEVRON_OPACITY_END: f32 = 0.25;
 
 impl<'a> PanelRow<'a> {
@@ -403,13 +409,45 @@ impl<'a> PanelRow<'a> {
     }
 
     fn focusable(&self) -> bool {
-        !matches!(self.control, RowControl::Info { .. })
+        !matches!(self.control, RowControl::Info { .. } | RowControl::Caption)
+    }
+
+    /// Notes and captions: bare text on the panel, no card, as high as their text needs.
+    fn show_text_block(self, ui: &mut Ui) -> RowOutput {
+        let painter = ui.painter().clone();
+        let caption = matches!(self.control, RowControl::Caption);
+        let width = ui.available_width();
+        let inner = width - 2.0 * size::ROW_PADDING_X;
+        let (style, alpha, space) = if caption {
+            (ty::SECTION_CAPTION, 0.55, (14.0, 6.0))
+        } else {
+            (ty::NOTE, 0.5, (4.0, 4.0))
+        };
+        let ink = fade(Color32::WHITE, alpha);
+        let galley = text::layout(&painter, style, self.title, ink, inner);
+        let height = space.0 + galley.size().y + space.1;
+        let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+        response.widget_info(|| self.widget_info());
+        if ui.is_rect_visible(rect) {
+            painter.galley(
+                pos2(rect.min.x + size::ROW_PADDING_X, rect.min.y + space.0),
+                galley,
+                ink,
+            );
+        }
+        RowOutput {
+            response,
+            step: None,
+            toggled: false,
+            text_changed: false,
+        }
     }
 
     /// The row as one accessibility node: a switch for toggles, a label for static rows, a button
     /// (with its current value) for everything else.
     fn widget_info(&self) -> WidgetInfo {
         match &self.control {
+            RowControl::Caption => WidgetInfo::labeled(Role::Label, true, self.title),
             RowControl::Info { value } => {
                 let name = match value {
                     Some(v) => format!("{}: {v}", self.title),
@@ -442,7 +480,7 @@ impl<'a> PanelRow<'a> {
                 });
                 info
             }
-            RowControl::Action | RowControl::Text { .. } => {
+            RowControl::Action | RowControl::Command | RowControl::Text { .. } => {
                 WidgetInfo::labeled(Role::Button, true, self.title)
             }
         }
@@ -452,6 +490,12 @@ impl<'a> PanelRow<'a> {
     pub fn show(mut self, ui: &mut Ui) -> RowOutput {
         let painter = ui.painter().clone();
         let ctx = ui.ctx().clone();
+        if matches!(
+            self.control,
+            RowControl::Caption | RowControl::Info { value: None }
+        ) {
+            return self.show_text_block(ui);
+        }
         let focusable = self.focusable();
         let width = ui.available_width();
         let pad = size::ROW_PADDING_X;
@@ -619,6 +663,7 @@ impl<'a> PanelRow<'a> {
             RowControl::Stepper { .. } => chevron * 2.0 + size::STEPPER_VALUE_WIDTH + 24.0,
             RowControl::Toggle { .. } => size::SWITCH.0,
             RowControl::Action => 14.0,
+            RowControl::Caption | RowControl::Command => 0.0,
             // A long value must not squeeze the title column: at most 40 % of the row.
             RowControl::Info { value } => value.map_or(0.0, |v| {
                 text::width(painter, ty::ROW_INFO, v).min(row_width * 0.4)
@@ -701,7 +746,7 @@ impl<'a> PanelRow<'a> {
             } else if hover {
                 1.0
             } else {
-                CHEVRON_OPACITY
+                lerp(CHEVRON_OPACITY, CHEVRON_OPACITY_FOCUS, t)
             };
             painter.text(
                 at.center(),
@@ -824,6 +869,7 @@ impl<'a> PanelRow<'a> {
                     fade(fg, 0.6),
                 );
             }
+            RowControl::Caption | RowControl::Command => {}
             RowControl::Info { value } => {
                 if let Some(value) = value {
                     text::paint(

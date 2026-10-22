@@ -382,9 +382,6 @@ pub mod color {
     pub fn surface_focused() -> Color32 {
         Color32::WHITE
     }
-    pub fn surface_trophy_row_focused() -> Color32 {
-        white(0.13)
-    }
     pub fn selected_category() -> Color32 {
         white(0.12)
     }
@@ -497,7 +494,7 @@ pub mod size {
     pub const TILE_SMALL: f32 = 118.0;
     pub const TILE_LARGE: f32 = 176.0;
     pub const TILE_GAP: f32 = 16.0;
-    pub const TILE_LABEL_COLUMN: f32 = 0.0;
+    pub const TILE_LABEL_COLUMN: f32 = 10.0;
     pub const LIBRARY_TILE: f32 = 196.0;
     pub const SPLASH_TILE: f32 = 200.0;
     pub const ONBOARDING_TILE: f32 = 84.0;
@@ -528,8 +525,8 @@ pub mod size {
     pub const ROW_ICON: f32 = 17.0;
     pub const CHEVRON_BOX: f32 = 26.0;
     pub const CHEVRON_GLYPH: f32 = 13.0;
-    pub const CHOICE_VALUE_WIDTH: (f32, f32) = (120.0, 190.0);
-    pub const STEPPER_VALUE_WIDTH: f32 = 70.0;
+    pub const CHOICE_VALUE_WIDTH: (f32, f32) = (100.0, 190.0);
+    pub const STEPPER_VALUE_WIDTH: f32 = 100.0;
     pub const TEXT_FIELD_WIDTH: f32 = 200.0;
     pub const SWITCH: (f32, f32) = (50.0, 28.0);
     pub const SWITCH_INSET: f32 = 3.0;
@@ -542,7 +539,7 @@ pub mod size {
     pub const THEME_CARD_WIDTH: f32 = 330.0;
     pub const THEME_CARD_PREVIEW: (f32, f32) = (330.0, 186.0);
     pub const PROGRESS_HEIGHT: f32 = 4.0;
-    pub const HERO_PROGRESS_WIDTH: f32 = 340.0;
+    pub const HERO_PROGRESS_WIDTH: f32 = 260.0;
     pub const TOAST_TOP: f32 = 28.0;
     pub const HINT_BAR_GAP: f32 = 28.0;
     pub const HINT_GAP: f32 = 8.0;
@@ -786,6 +783,9 @@ pub mod ty {
     pub const HINT_LABEL: TextStyle = TextStyle::new(15.0, Weight::Medium);
     pub const HINT_KEY: TextStyle = TextStyle::new(13.0, Weight::SemiBold);
     pub const DETAIL: TextStyle = TextStyle::new(13.0, Weight::Regular);
+    /// A section caption over a group of rows, and a note under them.
+    pub const SECTION_CAPTION: TextStyle = TextStyle::new(14.0, Weight::SemiBold);
+    pub const NOTE: TextStyle = TextStyle::new(14.0, Weight::Regular);
     pub const DETAIL_LARGE: TextStyle = TextStyle::new(14.0, Weight::Regular);
     pub const STATE_LABEL: TextStyle = TextStyle::new(14.0, Weight::Medium);
     pub const STATE_LABEL_SMALL: TextStyle = TextStyle::new(12.0, Weight::Medium);

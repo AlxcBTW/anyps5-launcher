@@ -191,7 +191,11 @@ fn draw(ui: &mut Ui, data: &LibraryData<'_>, focus: usize, clicked: &mut Option<
     crate::screens::right_aligned_hints(ui, header, language);
 
     // The grid.
-    let list = Rect::from_min_max(pos2(area.min.x, header.max.y + 26.0), area.max);
+    // The first column stands on the title's edge; the padding is room for the focus ring.
+    let list = Rect::from_min_max(
+        pos2(area.min.x - GRID_PADDING, header.max.y + 26.0),
+        pos2(area.max.x + GRID_PADDING, area.max.y),
+    );
     let mut child = ui.new_child(UiBuilder::new().max_rect(list));
     let id = child.make_persistent_id("library-scroll");
     let focus_row = focus / COLUMNS;
@@ -233,7 +237,7 @@ fn draw(ui: &mut Ui, data: &LibraryData<'_>, focus: usize, clicked: &mut Option<
         }
         for (i, entry) in data.entries.iter().enumerate() {
             let (row, col) = (i / COLUMNS, i % COLUMNS);
-            let x = area.min.x + GRID_PADDING + col as f32 * (tile + COLUMN_GAP);
+            let x = area.min.x + col as f32 * (tile + COLUMN_GAP);
             let y = top + row as f32 * (cell_h + ROW_GAP);
             let cell = Rect::from_min_size(pos2(x, y), vec2(tile, cell_h));
             let focused = i == focus;

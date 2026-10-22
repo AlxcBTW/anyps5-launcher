@@ -672,6 +672,21 @@ The launcher keeps the port's structure but trims what read as noise next to the
   regular weight. The game sheet groups display, play, maintenance and
   removal with a double gap. The removal confirmation opens on Cancel and the destructive row
   stays dark red when focused. Full-screen overlays share a 90 dp margin.
+- **Panel rows, quieter.** Chevrons and steppers rest at 0.45 and come up on the focused row;
+  choice and stepper values share a 100 dp minimum so their chevrons line up down a panel. Only
+  rows that open a picker or a panel keep the trailing chevron; commands (rescan, remove, reset,
+  log) have none. Section captions (14 dp semibold, white 0.55) and notes (14 dp regular, white
+  0.5) are bare text on the panel, as high as their text, not 58 dp rows. The settings rows start
+  level with the first category, and the trophy rows and library grid stand on the title edge. The
+  focused trophy is the white card (3 dp grow, dark ink, darker grade tones), not a ring.
+- **Home polish.** Two soft scrims sit under the home UI so white text reads on bright artwork:
+  black 0.30 fading out over the top 150 dp, and black 0.46 in the hero's bottom-left corner
+  (72 % of the width, half the height at most 480 dp), both fading to nothing on every side. The
+  selected tile keeps 10 dp more air before the next one (`TILE_LABEL_COLUMN = 10`). While a game
+  unlocks, the step is named once, in the state line above the title; the hero shows only a 260 dp
+  bar and its percentage on the buttons' centre line. The scanning icon breathes in opacity only.
+  The launch splash's explanation wraps at 460 dp, so it never ends on a lone word. The onboarding
+  theme names share one baseline under the resting cards; focus grows the card, not the label.
 
 ## 4. Materials and blur on the GPU
 
