@@ -4,7 +4,7 @@
 //! ```text
 //! anyps5-launcher --gallery=settings|settings1..6|game-settings|confirm|controls|controls-capture|
 //!                           controls-end|advanced|trophies|banner|start|unlocking|log|report|library|
-//!                           toolkit|toolkit-update|toolkit-pinned|toolkit-local|
+//!                           about-update|behavior-links|toolkit|toolkit-update|toolkit-pinned|toolkit-local|
 //!                           recommended|recommended-warning|whats-new|whats-new-loading
 //!                 [--screenshot=out.png] [--size=WxH] [--tr]
 //! ```
@@ -79,6 +79,10 @@ pub enum ScreenPage {
     Library,
     /// The Toolkit category, in its rows: stable, an update waiting, pinned, a local build.
     Toolkit(ToolkitLook),
+    /// The About page with a downloaded launcher update waiting ("Restart Now").
+    AboutUpdate,
+    /// Behavior with the AnyPS5 links registered to this launcher.
+    BehaviourLinks,
     Recommended,
     RecommendedWarning,
     WhatsNew,
@@ -110,6 +114,8 @@ pub fn parse(name: &str) -> Option<ScreenPage> {
         "log" => ScreenPage::Log,
         "report" => ScreenPage::Report,
         "library" => ScreenPage::Library,
+        "about-update" => ScreenPage::AboutUpdate,
+        "behavior-links" => ScreenPage::BehaviourLinks,
         "toolkit" => ScreenPage::Toolkit(ToolkitLook::Stable),
         "toolkit-update" => ScreenPage::Toolkit(ToolkitLook::Update),
         "toolkit-pinned" => ScreenPage::Toolkit(ToolkitLook::Pinned),
@@ -514,9 +520,17 @@ impl ScreenGallery {
             toolkit_version: Some(&self.toolkit_version),
             update: self.update.clone(),
             recent: &recent,
-            launcher: LauncherUpdate::None,
+            launcher: if matches!(self.page, ScreenPage::AboutUpdate) {
+                LauncherUpdate::Ready("0.1.3".into())
+            } else {
+                LauncherUpdate::None
+            },
             default_screenshots: std::path::Path::new("C:\\Users\\mira\\Pictures\\AnyPS5"),
-            links: anyps5_core::linkreg::Handler::Absent,
+            links: if matches!(self.page, ScreenPage::BehaviourLinks) {
+                anyps5_core::linkreg::Handler::ThisExe
+            } else {
+                anyps5_core::linkreg::Handler::Absent
+            },
         };
         let icon = Some(self.tile(1));
         self.settings
@@ -658,7 +672,18 @@ impl ScreenGallery {
             ScreenPage::Trophies => self.trophies.open_at(1),
             ScreenPage::Library => self.library.open(1),
             ScreenPage::ControlsEnd => self.controls.open_row(30),
-            ScreenPage::Toolkit(_) => self.settings.open_at(4, true),
+            ScreenPage::Toolkit(look) => {
+                self.settings.open_at(4, true);
+                // The update page lands on the install row.
+                if look == ToolkitLook::Update {
+                    self.settings.focus_row(3);
+                }
+            }
+            ScreenPage::AboutUpdate => {
+                self.settings.open_at(6, true);
+                self.settings.focus_row(2);
+            }
+            ScreenPage::BehaviourLinks => self.settings.open_at(3, true),
             ScreenPage::Recommended | ScreenPage::RecommendedWarning => {
                 let plan = sample_plan(matches!(self.page, ScreenPage::RecommendedWarning));
                 self.recommended.open(&plan, shell.language);

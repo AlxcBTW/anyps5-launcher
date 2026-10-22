@@ -90,8 +90,9 @@ const MAX_ARGUMENTS: usize = 8;
 const MESSAGE_BYTES: usize = 8 * (anyps5_core::links::MAX_LEN + 1) + 64;
 const ANSWER: &[u8] = b"ok";
 
-/// Added by a restart after a self-update: the old launcher's process ID. The new one waits for it
-/// to end before it joins, so it does not hand itself over to the launcher that is closing.
+/// Added by a restart (after a self-update, or the retry on Vulkan): the old launcher's process ID.
+/// The new one waits for it to end before it joins, so it does not hand itself over to the
+/// launcher that is closing.
 pub const AFTER_UPDATE: &str = "--after-update=";
 
 /// Removes `--after-update=<pid>` from `args` and waits, up to ten seconds, for that process.

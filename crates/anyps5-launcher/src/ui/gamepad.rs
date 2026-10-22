@@ -117,7 +117,10 @@ fn poll(ctx: &egui::Context, tx: &Sender<PadMessage>) {
                 send(PadMessage::Direction(now));
             }
         }
-        thread::sleep(Duration::from_millis(8));
+        // 8 ms keeps a pad responsive; with none connected there is nothing to poll for, and a
+        // plug-in is noticed within a tenth of a second.
+        let idle = gilrs.gamepads().next().is_none();
+        thread::sleep(Duration::from_millis(if idle { 100 } else { 8 }));
     }
 }
 

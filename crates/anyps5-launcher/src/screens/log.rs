@@ -1,12 +1,13 @@
-//! The log view, the diagnosis presentation and "Make a Report" (docs/DESIGN.md 5.12 and 5.13).
+//! The log view, the diagnosis presentation and "Report a Problem" (docs/DESIGN.md 5.12 and 5.13).
 //!
 //! * [`LogView`]: a full-screen overlay with the game's log in a selectable monospaced box that
-//!   starts at the bottom, the diagnosis sentence above it, and the buttons "Make a Report" and
+//!   starts at the bottom, the diagnosis sentence above it, and the buttons "Report a Problem" and
 //!   "Close". Back and select close it.
 //! * [`diagnosis_summary`]: the pipeline's `Diagnosis` as a sentence in the launcher's language.
 //! * [`save_report_with_dialog`]: the report text goes through a native save dialog.
 //! * [`ReviewData`]: the same view shows the text of a report to AnyPS5 before the browser opens
-//!   on the issue form (docs/DESIGN.md 5.19); its buttons are "Open GitHub" and "Cancel".
+//!   on the issue form (docs/DESIGN.md 5.19); its buttons are "Open GitHub", "Save Report" and
+//!   "Cancel".
 
 use std::path::{Path, PathBuf};
 
@@ -123,8 +124,10 @@ pub fn diagnosis_line(ui: &mut Ui, diagnosis: &Diagnosis, language: Language) ->
 pub enum LogAction {
     /// Back, select or the Close button.
     Close,
-    /// The "Make a Report" button.
+    /// The "Report a Problem" button: build the report and review it.
     MakeReport,
+    /// "Save Report" of the review: write the report as a file.
+    SaveReport,
     /// "Open GitHub" of the review: copy what is to be pasted and open the form.
     OpenReport,
 }
@@ -220,7 +223,10 @@ impl LogView {
                     self.close();
                     actions.push(LogAction::Close);
                 }
-                Some(action @ (LogAction::MakeReport | LogAction::OpenReport)) => {
+                Some(
+                    action
+                    @ (LogAction::MakeReport | LogAction::SaveReport | LogAction::OpenReport),
+                ) => {
                     shell.play(Cue::Select);
                     actions.push(action);
                 }
@@ -249,7 +255,7 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
     let header_h = 54.0;
     let header = Rect::from_min_size(pos2(area.min.x, y), vec2(area.width(), header_h));
     {
-        let max = (area.width() - 520.0).max(200.0);
+        let max = (area.width() - 640.0).max(200.0);
         let shown = text::middle_truncate(&painter, ty::LOG_TITLE, &title, max);
         text::paint(
             &painter,
@@ -265,8 +271,8 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
             .max_rect(header)
             .layout(Layout::right_to_left(egui::Align::Center)),
     );
-    buttons.spacing_mut().item_spacing.x = 14.0;
-    // Right to left: the main button first, then the other to its left.
+    buttons.spacing_mut().item_spacing.x = 12.0;
+    // Right to left: the main button first, then the others to its left.
     if data.review.is_some() {
         if ConsoleButton::new(Share::ReportOpen.text(language))
             .icon(Icon::EXPORT)
@@ -275,6 +281,13 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
             .clicked()
         {
             *clicked = Some(LogAction::OpenReport);
+        }
+        if ConsoleButton::new(Extra::SaveReport.text(language))
+            .icon(Icon::FILE_TEXT)
+            .show(&mut buttons)
+            .clicked()
+        {
+            *clicked = Some(LogAction::SaveReport);
         }
         if ConsoleButton::new(language.text(Key::Cancel))
             .icon(Icon::X)
@@ -293,7 +306,7 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
     }
     if data.review.is_none()
         && data.game_name.is_some()
-        && ConsoleButton::new(language.text(Key::MakeReport))
+        && ConsoleButton::new(Share::Report.text(language))
             .icon(Icon::STETHOSCOPE)
             .show(&mut buttons)
             .clicked()

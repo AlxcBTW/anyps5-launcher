@@ -469,7 +469,6 @@ impl PanelHost {
                 self.prepare_log(model, game);
                 model.switch_overlay(Overlay::Log);
             }
-            GameSettingsAction::MakeReport => self.make_report(model, game),
             GameSettingsAction::ReportToUpstream => self.prepare_upstream(model, game),
             GameSettingsAction::ClearShaderCache => {
                 let cache = model.paths.game_cache_dir(&game.title_id);
@@ -882,6 +881,11 @@ impl PanelHost {
                 }
                 LogAction::MakeReport => {
                     if let Some(game) = &game {
+                        self.prepare_upstream(cx.model, game);
+                    }
+                }
+                LogAction::SaveReport => {
+                    if let Some(game) = &game {
                         self.make_report(cx.model, game);
                     }
                 }
@@ -1000,10 +1004,14 @@ impl PanelHost {
                     self.game_inputs.insert(game, Some(input));
                 }
                 Work::Upstream(prepared) => {
-                    // Only while the player is still in the game's settings.
-                    if model.overlay == Some(Overlay::GameSettings) {
-                        self.upstream = Some(prepared);
-                        model.switch_overlay(Overlay::Log);
+                    // Only while the player is still in the game's settings or its log.
+                    match model.overlay {
+                        Some(Overlay::GameSettings) => {
+                            self.upstream = Some(prepared);
+                            model.switch_overlay(Overlay::Log);
+                        }
+                        Some(Overlay::Log) => self.upstream = Some(prepared),
+                        _ => {}
                     }
                 }
                 Work::Community { title_id, layouts } => {

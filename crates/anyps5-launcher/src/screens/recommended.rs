@@ -123,15 +123,26 @@ pub fn build_rows(plan: &Plan, language: Language) -> Vec<Row> {
     let mut rows = Vec::new();
     let mut changes: Vec<&Change> = plan.changes.iter().collect();
     changes.sort_by_key(|c| c.kind != Kind::Required);
+    // Each reason hangs under its line; the pairs are set apart by a double gap.
     for change in changes {
         let (label, from, to) = describe(change, language);
-        rows.push(Row::info("change", label, Some(format!("{from} → {to}"))));
-        rows.push(Row::info("why", change.why.clone(), None));
+        let row = Row::info("change", label, Some(format!("{from} → {to}")));
+        rows.push(if rows.is_empty() {
+            row
+        } else {
+            row.group_start()
+        });
+        rows.push(Row::info("why", change.why.clone(), None).attached());
     }
     for caution in &plan.cautions {
         let (label, value) = describe_caution(caution, language);
-        rows.push(Row::info("caution", label, Some(value)));
-        rows.push(Row::info("why", caution.why.clone(), None));
+        let row = Row::info("caution", label, Some(value));
+        rows.push(if rows.is_empty() {
+            row
+        } else {
+            row.group_start()
+        });
+        rows.push(Row::info("why", caution.why.clone(), None).attached());
     }
     if plan.needs_unlock() {
         rows.push(Row::info(
@@ -141,9 +152,17 @@ pub fn build_rows(plan: &Plan, language: Language) -> Vec<Row> {
         ));
     }
     if plan.changes.is_empty() {
-        rows.push(Row::command("close", language.text(Key::Close)).icon(Icon::X));
+        rows.push(
+            Row::command("close", language.text(Key::Close))
+                .icon(Icon::X)
+                .group_start(),
+        );
     } else {
-        rows.push(Row::command("apply", Extra::RecApply.text(language)).icon(Icon::CHECK));
+        rows.push(
+            Row::command("apply", Extra::RecApply.text(language))
+                .icon(Icon::CHECK)
+                .group_start(),
+        );
     }
     rows
 }
@@ -275,7 +294,7 @@ mod tests {
         let rows = build_rows(&plan, Language::English);
         let ids: Vec<_> = rows.iter().map(|r| r.id).collect();
         assert_eq!(ids, ["change", "why", "change", "why", "apply"]);
-        assert_eq!(rows[0].title, "Missing PlayGo data");
+        assert_eq!(rows[0].title, "Missing PlayGo Data");
         assert_eq!(
             rows[0].control,
             rows::Control::Info(Some("Default → Report as installed".into()))
@@ -297,7 +316,7 @@ mod tests {
         let rows = build_rows(&plan, Language::English);
         let ids: Vec<_> = rows.iter().map(|r| r.id).collect();
         assert_eq!(ids, ["caution", "why", "close"]);
-        assert_eq!(rows[0].title, "Texture cache");
+        assert_eq!(rows[0].title, "Texture Cache");
         assert_eq!(
             rows[0].control,
             rows::Control::Info(Some("3072 MiB".into()))

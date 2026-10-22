@@ -344,6 +344,8 @@ pub struct PanelRow<'a> {
     /// A controller face glyph painted before the title (`✕ Cross`).
     pub pad_glyph: Option<components::PadGlyph>,
     pub force: Option<Force>,
+    /// A note directly under the row above: it keeps no air over its text.
+    pub attached: bool,
     /// Language of the accessible names of the chevrons.
     pub language: Language,
 }
@@ -376,8 +378,13 @@ impl<'a> PanelRow<'a> {
             destructive: false,
             pad_glyph: None,
             force: None,
+            attached: false,
             language: Language::English,
         }
+    }
+    pub fn attached(mut self, attached: bool) -> Self {
+        self.attached = attached;
+        self
     }
     pub fn pad_glyph(mut self, glyph: components::PadGlyph) -> Self {
         self.pad_glyph = Some(glyph);
@@ -421,7 +428,7 @@ impl<'a> PanelRow<'a> {
         let (style, alpha, space) = if caption {
             (ty::SECTION_CAPTION, 0.55, (14.0, 6.0))
         } else {
-            (ty::NOTE, 0.5, (4.0, 4.0))
+            (ty::NOTE, 0.5, (if self.attached { 0.0 } else { 4.0 }, 4.0))
         };
         let ink = fade(Color32::WHITE, alpha);
         let galley = text::layout(&painter, style, self.title, ink, inner);
