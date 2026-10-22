@@ -1580,3 +1580,31 @@ Decisions made while implementing:
 - **Keyboard repeat** of select/back/options is suppressed (a held Enter must not re-fire); held arrows repeat at the OS rate.
 - **Row padding**: panel rows keep 10 dp above and below their text even when the title wraps (the original has none).
 - The gamepad thread only translates events; the 0.38 s / 0.085 s repeat runs on the UI clock (`input::Repeater`).
+
+---
+
+## 14. Implemented panels (crate `anyps5-launcher`, module `screens`)
+
+One module per panel; each has a state struct and a `show(...)` that takes the `Shell`, the egui context and the frame's
+`InputEvent`s and returns the actions for the host (the home screen). Previews: `--gallery=settings|settings1..6|game-settings|confirm|
+controls|controls-capture|advanced|trophies|banner|start|unlocking|log|library` over invented data and generated artwork.
+
+| Module | Screen | Notes |
+|---|---|---|
+| `settings` | 5.7 app settings | Categories: Appearance, Library, Language, Behaviour, **Toolkit** (new), Advanced, About |
+| `game_settings` | 5.9 "..." panel, uninstall confirm | `GameSettings` of the core edited in place |
+| `controls` | 5.9 controls panel | key capture by physical key (egui `physical_key`), modifiers capture as Left Shift/Ctrl/Alt/GUI |
+| `advanced` | 5.9 advanced panel | export/import through native dialogs, `SharedSettings` of the core |
+| `trophies`, `banner` | 5.11, 5.14 | banner timeline is a plain state machine; `BannerHost` shows it in its own viewport (9.4) |
+| `start`, `unlock`, `log` | 5.5, 5.4, 5.12/5.13 | steps and diagnosis are the pipeline's `Step` and `Diagnosis` |
+| `library` | 5.10 grid | host supplies icon, overlay and state line per game |
+
+Deviations (all Windows additions, the original stays the reference):
+
+- **Toolkit category** in the settings: installed version, update status, "check for updates" switch (`checkForUpdates`), check now,
+  install or update, use a toolkit folder, CPU conversion (`cpuConversion`). Texts in `screens/strings.rs` (EN/TR).
+- The **video background** choice is hidden (picture only, DESIGN 3.5); a stored video choice stays visible.
+- Controller face glyphs in the controls rows are painted shapes (`PanelRow::pad_glyph`), not font glyphs.
+- Row detail lines wrap at words (the first foundation version broke inside words).
+- A trophy row's focus has the ring only; the glow of the foundation would show through the translucent row.
+- Keypad keys arrive as their top-row twins (egui reports one key for both).

@@ -340,6 +340,8 @@ pub struct PanelRow<'a> {
     pub control: RowControl<'a>,
     pub focused: bool,
     pub destructive: bool,
+    /// A controller face glyph painted before the title (`✕ Cross`).
+    pub pad_glyph: Option<components::PadGlyph>,
     pub force: Option<Force>,
     /// Language of the accessible names of the chevrons.
     pub language: Language,
@@ -369,9 +371,18 @@ impl<'a> PanelRow<'a> {
             control,
             focused: false,
             destructive: false,
+            pad_glyph: None,
             force: None,
             language: Language::English,
         }
+    }
+    pub fn pad_glyph(mut self, glyph: components::PadGlyph) -> Self {
+        self.pad_glyph = Some(glyph);
+        self
+    }
+    pub fn force(mut self, force: Option<Force>) -> Self {
+        self.force = force;
+        self
     }
     pub fn language(mut self, language: Language) -> Self {
         self.language = language;
@@ -455,7 +466,10 @@ impl<'a> PanelRow<'a> {
         } else {
             0.0
         };
-        let text_width = (width - 2.0 * pad - icon_block - value_width - 12.0).max(40.0);
+        // `✕ Cross`: a painted controller glyph in front of the title.
+        let glyph_block = if self.pad_glyph.is_some() { 24.0 } else { 0.0 };
+        let text_width =
+            (width - 2.0 * pad - icon_block - glyph_block - value_width - 12.0).max(40.0);
         let title_style = ty::ROW_TITLE;
         let title_galley = {
             let shrink = {
@@ -487,7 +501,8 @@ impl<'a> PanelRow<'a> {
                 text_width,
             );
             job.wrap.max_rows = 2;
-            job.wrap.break_anywhere = true;
+            // Words wrap whole (the original); only a single long word, such as a path, breaks.
+            job.wrap.break_anywhere = false;
             job.sections[0].format.line_height = Some(ty::DETAIL.line_height());
             painter.layout_job(job)
         });
@@ -557,6 +572,16 @@ impl<'a> PanelRow<'a> {
             dim(0.62)
         };
         let title_h = title_galley.size().y;
+        if let Some(glyph) = self.pad_glyph {
+            let first_line = title_galley.rows.first().map_or(title_h, |r| r.height());
+            glyph.paint(
+                &painter,
+                pos2(x + 8.0, top + first_line * 0.5),
+                16.0,
+                title_color,
+            );
+            x += glyph_block;
+        }
         painter.galley(pos2(x, top), title_galley, title_color);
         if let Some(detail) = detail_galley {
             painter.galley(pos2(x, top + title_h + 3.0), detail, dim(0.55));
@@ -813,7 +838,15 @@ impl<'a> PanelRow<'a> {
                         .max_rect(field)
                         .layout(Layout::right_to_left(Align::Center)),
                 );
-                let response = child.add(edit);
+                // A keyboard or pad "select" on the row asks for the caret (see `screens::rows`).
+                let edit_id = row_id.with("text-edit");
+                let want_focus = ctx
+                    .data_mut(|d| d.remove_temp::<bool>(Id::unique("panel-text-focus")))
+                    .unwrap_or(false);
+                if want_focus {
+                    ctx.memory_mut(|m| m.request_focus(edit_id));
+                }
+                let response = child.add(edit.id(edit_id));
                 out.text_changed = response.changed();
             }
             RowControl::Keys {
@@ -952,15 +985,17 @@ pub fn side_panel<R>(
             child.add_space(title_h + 8.0);
             if let Some(subtitle) = subtitle {
                 let top = child.cursor().min.y;
-                let rect = text::paint(
+                // Wraps (the confirmation sentence is long, and longer in Turkish).
+                let galley = text::layout(
                     &painter,
-                    pos2(inner.min.x, top),
-                    Align2::LEFT_TOP,
                     theme::TextStyle::new(15.0, theme::Weight::Regular),
                     subtitle,
                     color::text_detail(),
+                    inner.width(),
                 );
-                child.add_space(rect.height() + 8.0);
+                let height = galley.size().y;
+                painter.galley(pos2(inner.min.x, top), galley, color::text_detail());
+                child.add_space(height + 8.0);
             }
             child.add_space(18.0);
             let content = child.available_rect_before_wrap();

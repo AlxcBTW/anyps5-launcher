@@ -1,0 +1,656 @@
+//! The game's settings side panel (the "..." menu, docs/DESIGN.md 5.9) and the uninstall
+//! confirmation that shares its frame. Values live in the core's [`GameSettings`]; the panel edits
+//! them in place, reports `changed` so the host saves, and returns [`GameSettingsAction`]s for
+//! everything that is not a value (open the controls, reveal the folder, ...).
+
+use anyps5_core::settings::{ConsoleLanguage, GameSettings, Overlay};
+use egui::{Color32, Context};
+
+use crate::screens::rows::{self, Change, Row, RowId};
+use crate::screens::side::{self, Output, SideState, SideView};
+use crate::ui::Shell;
+use crate::ui::i18n::{Key, Language};
+use crate::ui::icons::Icon;
+use crate::ui::input::InputEvent;
+
+/// Windowed size range of the stepper (percent of the display).
+pub const WINDOW_SIZE: (i32, i32) = (40, 100);
+pub const WINDOW_SIZE_STEP: i32 = 5;
+
+/// What the host has to do after a frame of the panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GameSettingsAction {
+    /// The panel is closing (back, options, a click on the scrim).
+    Close,
+    OpenControls,
+    OpenTrophies,
+    OpenAdvanced,
+    /// Unlock the game again; the panel closes itself.
+    Reinstall,
+    ShowInExplorer,
+    OpenLog,
+    MakeReport,
+    ClearShaderCache,
+    /// Open the confirmation ([`UninstallPanel`]).
+    AskUninstall,
+}
+
+/// The unlocked trophies of the selected game, for the detail line of the trophies row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TrophyProgress {
+    pub unlocked: usize,
+    pub total: usize,
+    pub percent: u32,
+}
+
+impl From<&anyps5_core::trophies::TrophySet> for TrophyProgress {
+    fn from(set: &anyps5_core::trophies::TrophySet) -> Self {
+        Self {
+            unlocked: set.unlocked_count(),
+            total: set.trophies.len(),
+            percent: set.percent(),
+        }
+    }
+}
+
+/// The game the panel is about, borrowed for one frame.
+pub struct GameSettingsData<'a> {
+    /// The panel title.
+    pub title: &'a str,
+    pub settings: &'a mut GameSettings,
+    /// Resolutions the title's patch offers; empty hides the row.
+    pub resolutions: &'a [String],
+    pub trophies: Option<TrophyProgress>,
+    /// The game is unlocked (reinstall and uninstall are offered).
+    pub installed: bool,
+    pub language: Language,
+    pub accent: Color32,
+}
+
+/// The game settings panel.
+#[derive(Default)]
+pub struct GameSettingsPanel {
+    side: SideState,
+}
+
+impl GameSettingsPanel {
+    /// Opens on the first row.
+    pub fn open(&mut self) {
+        self.side.open_at(0);
+    }
+
+    /// Opens on a row (previews).
+    pub fn open_row(&mut self, row: usize) {
+        self.side.open_at(row);
+    }
+
+    /// Opens on the row with this id (coming back from controls or advanced).
+    pub fn open_on(&mut self, data: &GameSettingsData<'_>, id: RowId) {
+        let rows = build_rows(data);
+        self.side.open_at(rows::position(&rows, id).unwrap_or(0));
+    }
+
+    pub fn close(&mut self) {
+        self.side.close();
+    }
+
+    /// Hands the frame to another panel of the family without a slide.
+    pub fn dismiss(&mut self) {
+        self.side.dismiss();
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.side.is_open()
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.side.is_active()
+    }
+
+    /// Handles the frame's commands, draws the panel and returns what the host must do. Call every
+    /// frame; it draws nothing while the panel is closed.
+    pub fn show(
+        &mut self,
+        shell: &mut Shell,
+        ctx: &Context,
+        events: &[InputEvent],
+        data: &mut GameSettingsData<'_>,
+    ) -> Output<GameSettingsAction> {
+        let mut out = Output::default();
+        if !self.side.is_active() {
+            return out;
+        }
+        if self.side.is_open() {
+            let rows = build_rows(data);
+            let driven = rows::drive(shell, &mut self.side.nav, &rows, &side::commands(events));
+            for change in &driven.changes {
+                self.apply(data, change, &mut out);
+            }
+            if driven.close {
+                self.side.close();
+                out.actions.push(GameSettingsAction::Close);
+            }
+        }
+        let mut rows = build_rows(data);
+        let language = data.language;
+        let title = data.title;
+        let subtitle = language.text(Key::GameSettings);
+        let view = SideView {
+            title,
+            subtitle: Some(subtitle),
+            list_id: "game-settings-rows",
+            nav: &self.side.nav,
+            accent: data.accent,
+            language,
+            force: None,
+        };
+        match side::draw(ctx, self.side.is_open(), &view, &mut rows) {
+            Some(drawn) if self.side.is_open() => {
+                let (changes, _) =
+                    rows::apply_mouse(shell, &mut self.side.nav, &rows, drawn.events);
+                for change in &changes {
+                    self.apply(data, change, &mut out);
+                }
+                if drawn.scrim_clicked {
+                    shell.play(crate::ui::sound::Cue::Back);
+                    self.side.close();
+                    out.actions.push(GameSettingsAction::Close);
+                }
+            }
+            Some(_) => {}
+            None => self.side.finished(),
+        }
+        out
+    }
+
+    fn apply(
+        &mut self,
+        data: &mut GameSettingsData<'_>,
+        change: &Change,
+        out: &mut Output<GameSettingsAction>,
+    ) {
+        if apply_change(data.settings, change, data.resolutions) {
+            out.changed = true;
+        }
+        let action = match change.row() {
+            "controls" => Some(GameSettingsAction::OpenControls),
+            "trophies" => Some(GameSettingsAction::OpenTrophies),
+            "advanced" => Some(GameSettingsAction::OpenAdvanced),
+            "reinstall" => Some(GameSettingsAction::Reinstall),
+            "finder" => Some(GameSettingsAction::ShowInExplorer),
+            "log" => Some(GameSettingsAction::OpenLog),
+            "report" => Some(GameSettingsAction::MakeReport),
+            "cache" => Some(GameSettingsAction::ClearShaderCache),
+            "uninstall" => Some(GameSettingsAction::AskUninstall),
+            _ => None,
+        };
+        if let (Change::Run { .. }, Some(action)) = (change, action) {
+            if action == GameSettingsAction::Reinstall {
+                self.side.close();
+            }
+            out.actions.push(action);
+        }
+    }
+}
+
+/// The rows of the panel for this game, in the order of section 5.9.
+pub fn build_rows(data: &GameSettingsData<'_>) -> Vec<Row> {
+    let t = |key: Key| data.language.text(key).to_owned();
+    let s = &*data.settings;
+    let mut rows = Vec::new();
+    if !data.resolutions.is_empty() {
+        let mut options = vec![t(Key::ResolutionDefault)];
+        options.extend(data.resolutions.iter().cloned());
+        let selected = s
+            .resolution
+            .as_ref()
+            .and_then(|r| data.resolutions.iter().position(|c| c == r))
+            .map_or(0, |i| i + 1);
+        rows.push(
+            Row::choice("resolution", t(Key::Resolution), options, selected)
+                .icon(Icon::FRAME_CORNERS),
+        );
+    }
+    rows.push(
+        Row::choice(
+            "display",
+            t(Key::Display),
+            vec![t(Key::Windowed), t(Key::Fullscreen)],
+            usize::from(s.fullscreen),
+        )
+        .icon(Icon::APP_WINDOW),
+    );
+    if !s.fullscreen {
+        let value = s.window_size as i32;
+        rows.push(
+            Row::stepper(
+                "size",
+                t(Key::WindowSize),
+                value,
+                WINDOW_SIZE,
+                WINDOW_SIZE_STEP,
+                format!("{value}%"),
+            )
+            .icon(Icon::ARROWS_OUT_SIMPLE),
+        );
+    }
+    rows.push(Row::toggle("vsync", t(Key::Vsync), s.vsync).icon(Icon::WAVE_SINE));
+    rows.push(Row::action("controls", t(Key::Controls)).icon(Icon::KEYBOARD));
+    if let Some(p) = data.trophies {
+        rows.push(
+            Row::action("trophies", t(Key::Trophies))
+                .detail(format!("{}/{} · {}%", p.unlocked, p.total, p.percent))
+                .icon(Icon::TROPHY),
+        );
+    }
+    rows.push(
+        Row::action("advanced", t(Key::Advanced))
+            .detail(t(Key::AdvancedDetail))
+            .icon(Icon::SLIDERS),
+    );
+    rows.push(
+        Row::choice(
+            "overlay",
+            t(Key::Overlay),
+            vec![
+                t(Key::OverlayOff),
+                t(Key::OverlayTopLeft),
+                t(Key::OverlayTopRight),
+                t(Key::OverlayBottomLeft),
+                t(Key::OverlayBottomRight),
+            ],
+            Overlay::ALL
+                .iter()
+                .position(|o| *o == s.overlay)
+                .unwrap_or(0),
+        )
+        .icon(Icon::GAUGE),
+    );
+    let mut languages = vec![t(Key::FollowLauncher)];
+    languages.extend(
+        ConsoleLanguage::ALL
+            .iter()
+            .map(|(_, name)| (*name).to_owned()),
+    );
+    let selected = s
+        .language
+        .and_then(|n| {
+            ConsoleLanguage::ALL
+                .iter()
+                .position(|(number, _)| *number == n)
+        })
+        .map_or(0, |i| i + 1);
+    rows.push(
+        Row::choice("language", t(Key::GameLanguage), languages, selected).icon(Icon::TRANSLATE),
+    );
+    if data.installed {
+        rows.push(Row::action("reinstall", t(Key::Reinstall)).icon(Icon::ARROWS_CLOCKWISE));
+    }
+    rows.push(Row::action("finder", t(Key::ShowInFinder)).icon(Icon::FOLDER));
+    rows.push(Row::action("log", t(Key::OpenLog)).icon(Icon::FILE_TEXT));
+    rows.push(
+        Row::action("report", t(Key::MakeReport))
+            .detail(t(Key::MakeReportDetail))
+            .icon(Icon::STETHOSCOPE),
+    );
+    rows.push(Row::action("cache", t(Key::ClearShaderCache)).icon(Icon::SPARKLE));
+    if data.installed {
+        rows.push(
+            Row::action("uninstall", t(Key::Uninstall))
+                .icon(Icon::TRASH)
+                .destructive(),
+        );
+    }
+    rows
+}
+
+/// Writes one change into the settings. Returns whether anything changed.
+pub fn apply_change(settings: &mut GameSettings, change: &Change, resolutions: &[String]) -> bool {
+    let before = settings.clone();
+    match change {
+        Change::Choice {
+            row: "resolution",
+            index,
+        } => {
+            settings.resolution = index
+                .checked_sub(1)
+                .and_then(|i| resolutions.get(i))
+                .cloned();
+        }
+        Change::Choice {
+            row: "display",
+            index,
+        } => settings.fullscreen = *index == 1,
+        Change::Stepper { row: "size", value } => {
+            settings.window_size = (*value).clamp(WINDOW_SIZE.0, WINDOW_SIZE.1) as u32;
+        }
+        Change::Toggle { row: "vsync", on } => settings.vsync = *on,
+        Change::Choice {
+            row: "overlay",
+            index,
+        } => {
+            settings.overlay = Overlay::ALL.get(*index).copied().unwrap_or(Overlay::Off);
+        }
+        Change::Choice {
+            row: "language",
+            index,
+        } => {
+            settings.language = index
+                .checked_sub(1)
+                .and_then(|i| ConsoleLanguage::ALL.get(i))
+                .map(|(number, _)| *number);
+        }
+        _ => {}
+    }
+    *settings != before
+}
+
+// ---------------------------------------------------------------------------------------------
+// Uninstall confirmation
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UninstallAction {
+    Confirm,
+    Cancel,
+}
+
+/// "Uninstall" / "Cancel" in the side panel frame.
+#[derive(Default)]
+pub struct UninstallPanel {
+    side: SideState,
+}
+
+impl UninstallPanel {
+    /// Opens on the destructive row, as the original does.
+    pub fn open(&mut self) {
+        self.side.open_at(0);
+    }
+
+    pub fn close(&mut self) {
+        self.side.close();
+    }
+
+    pub fn dismiss(&mut self) {
+        self.side.dismiss();
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.side.is_active()
+    }
+
+    fn handle(&mut self, change: &Change, actions: &mut Vec<UninstallAction>) {
+        if let Change::Run { row } = change {
+            self.side.close();
+            actions.push(if *row == "uninstall" {
+                UninstallAction::Confirm
+            } else {
+                UninstallAction::Cancel
+            });
+        }
+    }
+
+    pub fn show(
+        &mut self,
+        shell: &mut Shell,
+        ctx: &Context,
+        events: &[InputEvent],
+        language: Language,
+        accent: Color32,
+    ) -> Vec<UninstallAction> {
+        let mut actions = Vec::new();
+        if !self.side.is_active() {
+            return actions;
+        }
+        let build = || {
+            vec![
+                Row::action("uninstall", language.text(Key::Uninstall))
+                    .icon(Icon::TRASH)
+                    .destructive(),
+                Row::action("cancel", language.text(Key::Cancel)),
+            ]
+        };
+        if self.side.is_open() {
+            let rows = build();
+            let driven = rows::drive(shell, &mut self.side.nav, &rows, &side::commands(events));
+            for change in &driven.changes {
+                self.handle(change, &mut actions);
+            }
+            if driven.close {
+                self.side.close();
+                actions.push(UninstallAction::Cancel);
+            }
+        }
+        let mut rows = build();
+        let view = SideView {
+            title: language.text(Key::Uninstall),
+            subtitle: Some(language.text(Key::UninstallConfirm)),
+            list_id: "uninstall-rows",
+            nav: &self.side.nav,
+            accent,
+            language,
+            force: None,
+        };
+        match side::draw(ctx, self.side.is_open(), &view, &mut rows) {
+            Some(drawn) if self.side.is_open() => {
+                let (changes, _) =
+                    rows::apply_mouse(shell, &mut self.side.nav, &rows, drawn.events);
+                for change in &changes {
+                    self.handle(change, &mut actions);
+                }
+                if drawn.scrim_clicked {
+                    self.side.close();
+                    actions.push(UninstallAction::Cancel);
+                }
+            }
+            Some(_) => {}
+            None => self.side.finished(),
+        }
+        actions
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn data(settings: &mut GameSettings) -> GameSettingsData<'_> {
+        GameSettingsData {
+            title: "Test Game",
+            settings,
+            resolutions: &[],
+            trophies: None,
+            installed: true,
+            language: Language::English,
+            accent: Color32::WHITE,
+        }
+    }
+
+    fn ids(rows: &[Row]) -> Vec<&'static str> {
+        rows.iter().map(|r| r.id).collect()
+    }
+
+    #[test]
+    fn rows_follow_the_order_and_conditions_of_5_9() {
+        let mut s = GameSettings::default();
+        let rows = build_rows(&data(&mut s));
+        assert_eq!(
+            ids(&rows),
+            [
+                "display",
+                "size",
+                "vsync",
+                "controls",
+                "advanced",
+                "overlay",
+                "language",
+                "reinstall",
+                "finder",
+                "log",
+                "report",
+                "cache",
+                "uninstall"
+            ],
+            "no resolution row without a patch, no trophies row without a list"
+        );
+    }
+
+    #[test]
+    fn conditional_rows_appear_and_disappear() {
+        let mut s = GameSettings::default();
+        let mut d = data(&mut s);
+        let resolutions = vec!["1920x1080".to_owned(), "2560x1440".to_owned()];
+        d.resolutions = &resolutions;
+        d.trophies = Some(TrophyProgress {
+            unlocked: 8,
+            total: 34,
+            percent: 8,
+        });
+        d.installed = false;
+        let rows = build_rows(&d);
+        assert_eq!(rows[0].id, "resolution");
+        let trophies = rows.iter().find(|r| r.id == "trophies").unwrap();
+        assert_eq!(trophies.detail.as_deref(), Some("8/34 · 8%"));
+        assert!(
+            rows.iter()
+                .all(|r| r.id != "reinstall" && r.id != "uninstall")
+        );
+        d.settings.fullscreen = true;
+        assert!(
+            build_rows(&d).iter().all(|r| r.id != "size"),
+            "no size when fullscreen"
+        );
+    }
+
+    #[test]
+    fn values_land_in_the_settings() {
+        let mut s = GameSettings::default();
+        let res = vec!["1920x1080".to_owned()];
+        assert!(apply_change(
+            &mut s,
+            &Change::Choice {
+                row: "display",
+                index: 1
+            },
+            &res
+        ));
+        assert!(s.fullscreen);
+        assert!(apply_change(
+            &mut s,
+            &Change::Stepper {
+                row: "size",
+                value: 55
+            },
+            &res
+        ));
+        assert_eq!(s.window_size, 55);
+        assert!(apply_change(
+            &mut s,
+            &Change::Toggle {
+                row: "vsync",
+                on: false
+            },
+            &res
+        ));
+        assert!(!s.vsync);
+        assert!(apply_change(
+            &mut s,
+            &Change::Choice {
+                row: "overlay",
+                index: 2
+            },
+            &res
+        ));
+        assert_eq!(s.overlay, Overlay::TopRight);
+        assert!(apply_change(
+            &mut s,
+            &Change::Choice {
+                row: "language",
+                index: 4
+            },
+            &res
+        ));
+        assert_eq!(s.language, Some(4), "Deutsch is console language 4");
+        assert!(apply_change(
+            &mut s,
+            &Change::Choice {
+                row: "language",
+                index: 0
+            },
+            &res
+        ));
+        assert_eq!(s.language, None, "follow the launcher");
+        assert!(apply_change(
+            &mut s,
+            &Change::Choice {
+                row: "resolution",
+                index: 1
+            },
+            &res
+        ));
+        assert_eq!(s.resolution.as_deref(), Some("1920x1080"));
+        assert!(apply_change(
+            &mut s,
+            &Change::Choice {
+                row: "resolution",
+                index: 0
+            },
+            &res
+        ));
+        assert_eq!(s.resolution, None);
+        assert!(
+            !apply_change(
+                &mut s,
+                &Change::Choice {
+                    row: "display",
+                    index: 1
+                },
+                &res
+            ) || s.fullscreen
+        );
+        assert!(
+            !apply_change(&mut s, &Change::Run { row: "log" }, &res),
+            "actions change no value"
+        );
+    }
+
+    #[test]
+    fn the_overlay_choice_lists_the_five_corners_in_core_order() {
+        let mut s = GameSettings::default();
+        let rows = build_rows(&data(&mut s));
+        let overlay = rows.iter().find(|r| r.id == "overlay").unwrap();
+        let rows::Control::Choice { options, .. } = &overlay.control else {
+            panic!("overlay is a choice");
+        };
+        assert_eq!(options.len(), Overlay::ALL.len());
+    }
+
+    #[test]
+    fn the_language_choice_lists_follow_plus_eighteen() {
+        let mut s = GameSettings::default();
+        let rows = build_rows(&data(&mut s));
+        let language = rows.iter().find(|r| r.id == "language").unwrap();
+        let rows::Control::Choice { options, selected } = &language.control else {
+            panic!("language is a choice");
+        };
+        assert_eq!(options.len(), 19);
+        assert_eq!(*selected, 0);
+    }
+
+    #[test]
+    fn every_key_the_rows_use_exists_in_both_languages() {
+        let mut s = GameSettings::default();
+        for language in Language::ALL {
+            let mut d = data(&mut s);
+            d.language = language;
+            d.trophies = Some(TrophyProgress {
+                unlocked: 1,
+                total: 2,
+                percent: 50,
+            });
+            for row in build_rows(&d) {
+                assert!(!row.title.is_empty());
+            }
+        }
+    }
+}

@@ -1,0 +1,715 @@
+//! Gallery pages of the panels: every panel and state rendered over a made-up home screen so it can
+//! be screenshotted and compared with the original (`docs/DESIGN.md` screenshot table).
+//!
+//! ```text
+//! anyps5-launcher --gallery=settings|settings1..6|game-settings|confirm|controls|controls-capture|
+//!                           advanced|trophies|banner|start|unlocking|log|library
+//!                 [--screenshot=out.png] [--size=WxH] [--tr]
+//! ```
+//!
+//! All data is invented (names, trophies, artwork are generated); nothing of a real game is used.
+//! Every page shows exactly one focused element and puts glass over artwork, never over the bare
+//! theme.
+
+use anyps5_core::controls::PadAction;
+use anyps5_core::library::{ExecutableKind, Game};
+use anyps5_core::paths::GameId;
+use anyps5_core::settings::{GameSettings, Preferences};
+use anyps5_core::trophies::{Grade, Trophy, TrophySet};
+use egui::{
+    Align2, Color32, ColorImage, Context, Rect, TextureHandle, TextureOptions, Ui, UiBuilder, pos2,
+    vec2,
+};
+
+use crate::screens::advanced::{AdvancedData, AdvancedPanel};
+use crate::screens::banner::{self, BannerLook, BannerTrophy};
+use crate::screens::controls::{ControlsData, ControlsPanel};
+use crate::screens::game_settings::{
+    GameSettingsData, GameSettingsPanel, TrophyProgress, UninstallPanel,
+};
+use crate::screens::library::{LibraryData, LibraryEntry, LibraryGrid, StateText};
+use crate::screens::log::{LogData, LogView};
+use crate::screens::settings::{SettingsEnv, SettingsPanel, UpdateState, apply_preferences};
+use crate::screens::start::{StartData, StartScreen};
+use crate::screens::trophies::{IconCache, TrophyData, TrophyListPanel};
+use crate::screens::unlock::{UnlockProgress, UnlockStep, hero_progress};
+use crate::ui::Shell;
+use crate::ui::anim::AnimExt;
+use crate::ui::artwork::paint_artwork;
+use crate::ui::chrome::{Fact, TileImage, TileOverlay, TileStyle, facts_line, paint_tile};
+use crate::ui::components::ConsoleButton;
+use crate::ui::i18n::Key;
+use crate::ui::icons::Icon;
+use crate::ui::input::InputEvent;
+use crate::ui::text;
+use crate::ui::theme::{color, size, ty, white};
+
+/// The page to show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScreenPage {
+    /// Settings on a category (0 = Appearance, in its rows; the others at the category level).
+    Settings(usize),
+    GameSettings,
+    Confirm,
+    Controls,
+    ControlsCapture,
+    Advanced,
+    Trophies,
+    Banner,
+    Start,
+    Unlocking,
+    Log,
+    Library,
+}
+
+/// The page named on the command line.
+pub fn parse(name: &str) -> Option<ScreenPage> {
+    Some(match name {
+        "settings" => ScreenPage::Settings(0),
+        "game-settings" => ScreenPage::GameSettings,
+        "confirm" => ScreenPage::Confirm,
+        "controls" => ScreenPage::Controls,
+        "controls-capture" => ScreenPage::ControlsCapture,
+        "advanced" => ScreenPage::Advanced,
+        "trophies" => ScreenPage::Trophies,
+        "banner" => ScreenPage::Banner,
+        "start" => ScreenPage::Start,
+        "unlocking" => ScreenPage::Unlocking,
+        "log" => ScreenPage::Log,
+        "library" => ScreenPage::Library,
+        other => {
+            let n: usize = other.strip_prefix("settings")?.parse().ok()?;
+            (n < crate::screens::settings::Category::ALL.len())
+                .then_some(ScreenPage::Settings(n))?
+        }
+    })
+}
+
+/// Names of the invented games.
+const NAMES: [&str; 9] = [
+    "Starlight Harbor",
+    "Ember Drift",
+    "Paper Moon",
+    "Tidebreaker",
+    "Neon Orchard",
+    "Hollow Reef",
+    "Cinder Run",
+    "Glasswing",
+    "Salt & Lantern",
+];
+
+/// A generated cover: diagonal bands and a big disc in a hue of its own.
+fn cover_image(seed: usize, w: usize, h: usize) -> ColorImage {
+    let hue = (seed as f32 * 0.137 + 0.05).fract();
+    let tint = |t: f32, k: f32| {
+        let (r, g, b) = hsv(hue + 0.08 * t, 0.55 + 0.25 * k, 0.25 + 0.65 * k);
+        [r, g, b, 255]
+    };
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for y in 0..h {
+        for x in 0..w {
+            let (fx, fy) = (x as f32 / w as f32, y as f32 / h as f32);
+            let band = ((fx * 3.0 + fy * 2.0 + seed as f32 * 0.4).sin() * 0.5 + 0.5) * 0.45;
+            let d = ((fx - 0.62).powi(2) + (fy - 0.42).powi(2)).sqrt();
+            let disc = (1.0 - (d / (0.24 + 0.02 * seed as f32 % 0.1)).clamp(0.0, 1.0)).powf(0.6);
+            let k = (0.2 + band + disc * 0.5).clamp(0.0, 1.0);
+            let vignette = 1.0 - 0.5 * ((fx - 0.5).powi(2) + (fy - 0.5).powi(2));
+            let mut px = tint(fy, k);
+            for c in &mut px[..3] {
+                *c = (f32::from(*c) * vignette) as u8;
+            }
+            rgba.extend_from_slice(&px);
+        }
+    }
+    ColorImage::from_rgba_unmultiplied([w, h], &rgba)
+}
+
+fn hsv(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+    let h = h.rem_euclid(1.0) * 6.0;
+    let (i, f) = (h.floor() as i32, h.fract());
+    let (p, q, t) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
+    let (r, g, b) = match i {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    };
+    ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
+}
+
+/// A small PNG for a trophy icon.
+fn trophy_png(seed: usize) -> Vec<u8> {
+    let image = cover_image(seed + 3, 96, 96);
+    let mut rgba = Vec::new();
+    for p in &image.pixels {
+        rgba.extend_from_slice(&p.to_array());
+    }
+    let img = image::RgbaImage::from_raw(96, 96, rgba).expect("size matches");
+    let mut bytes = Vec::new();
+    img.write_to(
+        &mut std::io::Cursor::new(&mut bytes),
+        image::ImageFormat::Png,
+    )
+    .expect("png encodes");
+    bytes
+}
+
+fn fake_game(index: usize) -> Game {
+    let title_id = format!("PPSA{:05}", 90000 + index);
+    Game {
+        id: GameId::from_key(format!("c:/games/{}", NAMES[index].to_lowercase())),
+        folder: format!("C:\\Games\\{}", NAMES[index]).into(),
+        title_id,
+        name: NAMES[index].to_owned(),
+        names: Default::default(),
+        version: "01.000.010".into(),
+        content_id: None,
+        icon: None,
+        background: None,
+        music: None,
+        executable: ExecutableKind::Elf,
+        size: None,
+        unlocked_with: Some("0.1.3-abc".into()),
+    }
+}
+
+fn fake_trophies() -> TrophySet {
+    type Spec = (
+        &'static str,
+        &'static str,
+        Grade,
+        bool,
+        Option<i64>,
+        Option<(u64, u64)>,
+    );
+    let spec: [Spec; 8] = [
+        (
+            "Lantern Keeper",
+            "Earn every other trophy",
+            Grade::Platinum,
+            false,
+            None,
+            None,
+        ),
+        (
+            "First Light",
+            "Light your first lantern",
+            Grade::Bronze,
+            false,
+            Some(1_792_271_640_000_000),
+            None,
+        ),
+        (
+            "Harbor Master",
+            "Dock at every harbor",
+            Grade::Silver,
+            false,
+            None,
+            Some((23, 51)),
+        ),
+        (
+            "Salt in the Wind",
+            "Sail through a storm",
+            Grade::Bronze,
+            false,
+            Some(1_792_274_520_000_000),
+            None,
+        ),
+        (
+            "Moonlit Tide",
+            "Finish the night voyage",
+            Grade::Gold,
+            false,
+            None,
+            None,
+        ),
+        (
+            "Quiet Passage",
+            "Cross the reef unseen",
+            Grade::Silver,
+            false,
+            None,
+            Some((3, 6)),
+        ),
+        (
+            "The Glass Wing",
+            "Find what was lost",
+            Grade::Gold,
+            true,
+            None,
+            None,
+        ),
+        (
+            "Anchored",
+            "Claim your first ship",
+            Grade::Bronze,
+            false,
+            Some(1_792_347_180_000_000),
+            None,
+        ),
+    ];
+    TrophySet {
+        title: "Starlight Harbor".into(),
+        icon: Some(trophy_png(0)),
+        trophies: spec
+            .iter()
+            .enumerate()
+            .map(
+                |(i, (name, detail, grade, hidden, unlocked, progress))| Trophy {
+                    service_label: 0,
+                    number: i as u32,
+                    grade: *grade,
+                    hidden: *hidden,
+                    name: (*name).to_owned(),
+                    detail: (*detail).to_owned(),
+                    icon: Some(trophy_png(i + 1)),
+                    unlocked: *unlocked,
+                    progress: *progress,
+                },
+            )
+            .collect(),
+    }
+}
+
+/// The panels with their invented data.
+pub struct ScreenGallery {
+    page: ScreenPage,
+    covers: Vec<TextureHandle>,
+    hero: Option<TextureHandle>,
+    prefs: Preferences,
+    game_settings: GameSettings,
+    games: Vec<Game>,
+    set: TrophySet,
+    settings: SettingsPanel,
+    game_panel: GameSettingsPanel,
+    uninstall: UninstallPanel,
+    controls: ControlsPanel,
+    advanced: AdvancedPanel,
+    trophies: TrophyListPanel,
+    library: LibraryGrid,
+    log: LogView,
+    start: StartScreen,
+    banner_icons: IconCache,
+    opened: bool,
+}
+
+impl ScreenGallery {
+    pub fn new(page: ScreenPage) -> Self {
+        let mut prefs = Preferences::first_run();
+        prefs.onboarded = true;
+        prefs.profile_name = "Mira".into();
+        prefs.games_folder = Some("D:\\Games".into());
+        Self {
+            page,
+            covers: Vec::new(),
+            hero: None,
+            prefs,
+            game_settings: GameSettings::default(),
+            games: (0..NAMES.len()).map(fake_game).collect(),
+            set: fake_trophies(),
+            settings: SettingsPanel::default(),
+            game_panel: GameSettingsPanel::default(),
+            uninstall: UninstallPanel::default(),
+            controls: ControlsPanel::default(),
+            advanced: AdvancedPanel::default(),
+            trophies: TrophyListPanel::default(),
+            library: LibraryGrid::default(),
+            log: LogView::default(),
+            start: StartScreen::default(),
+            banner_icons: IconCache::default(),
+            opened: false,
+        }
+    }
+
+    fn ensure_art(&mut self, ctx: &Context) {
+        if self.covers.is_empty() {
+            self.covers = (0..NAMES.len())
+                .map(|i| {
+                    ctx.load_texture(
+                        format!("cover-{i}"),
+                        cover_image(i, 192, 192),
+                        TextureOptions::LINEAR,
+                    )
+                })
+                .collect();
+            self.hero =
+                Some(ctx.load_texture("hero", cover_image(1, 640, 360), TextureOptions::LINEAR));
+        }
+    }
+
+    fn tile(&self, i: usize) -> TileImage {
+        TileImage {
+            texture: self.covers[i].id(),
+            aspect: 1.0,
+        }
+    }
+
+    /// Draws the made-up home screen and then the panel of the page.
+    pub fn ui(&mut self, shell: &mut Shell, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        self.ensure_art(&ctx);
+        if !self.opened {
+            self.opened = true;
+            apply_preferences(shell, &ctx, &self.prefs);
+            self.open_page(shell, &ctx);
+        }
+        let language = shell.language;
+        let accent = shell.accent_color();
+        let events: Vec<InputEvent> = Vec::new();
+        let name = NAMES[1];
+        if matches!(self.page, ScreenPage::Banner) {
+            self.draw_game_frame(ui);
+        } else {
+            self.draw_home(ui, shell, matches!(self.page, ScreenPage::Unlocking));
+        }
+        let entries: Vec<LibraryEntry> = (0..NAMES.len())
+            .map(|i| LibraryEntry {
+                name: NAMES[i].to_owned(),
+                icon: Some(self.tile(i)),
+                overlay: if i == 5 {
+                    TileOverlay::Running
+                } else {
+                    TileOverlay::None
+                },
+                state: if i == 5 {
+                    StateText {
+                        icon: Icon::PLAY_CIRCLE,
+                        text: language.text(Key::Running).into(),
+                        tint: accent,
+                    }
+                } else {
+                    StateText {
+                        icon: Icon::CHECK_CIRCLE,
+                        text: language.text(Key::Ready).into(),
+                        tint: white(0.75),
+                    }
+                },
+            })
+            .collect();
+        let resolutions: Vec<String> = Vec::new();
+        let progress = TrophyProgress::from(&self.set);
+        let env = SettingsEnv {
+            games_found: self.games.len(),
+            app_version: "0.1.0",
+            toolkit_version: Some("0.1.3-4f2a9c"),
+            update: UpdateState::UpToDate,
+            default_screenshots: std::path::Path::new("C:\\Users\\mira\\Pictures\\AnyPS5"),
+        };
+        let icon = Some(self.tile(1));
+        self.settings
+            .show(shell, &ctx, &events, &mut self.prefs, &env);
+        {
+            let mut data = GameSettingsData {
+                title: name,
+                settings: &mut self.game_settings,
+                resolutions: &resolutions,
+                trophies: Some(progress),
+                installed: true,
+                language,
+                accent,
+            };
+            self.game_panel.show(shell, &ctx, &events, &mut data);
+        }
+        self.uninstall.show(shell, &ctx, &events, language, accent);
+        {
+            let mut data = ControlsData {
+                title: name,
+                settings: &mut self.game_settings,
+                language,
+                accent,
+            };
+            self.controls.show(shell, &ctx, &events, &mut data);
+        }
+        {
+            let game = &self.games[1];
+            let mut data = AdvancedData {
+                game,
+                settings: &mut self.game_settings,
+                resolutions: &resolutions,
+                language,
+                accent,
+            };
+            self.advanced.show(shell, &ctx, &events, &mut data);
+        }
+        self.trophies.show(
+            shell,
+            &ctx,
+            &events,
+            &TrophyData {
+                game_key: "gallery",
+                game_name: name,
+                set: &self.set,
+                language,
+                accent,
+            },
+        );
+        self.library.show(
+            shell,
+            &ctx,
+            &events,
+            &LibraryData {
+                entries: &entries,
+                language,
+                accent,
+            },
+        );
+        let diagnosis =
+            anyps5_core::diagnosis::Diagnosis::Crashed("0xC0000005 (ACCESS_VIOLATION)".into());
+        self.log.show(
+            shell,
+            &ctx,
+            &events,
+            &LogData {
+                game_name: Some(name),
+                diagnosis: Some(&diagnosis),
+                text: SAMPLE_LOG,
+                language,
+            },
+        );
+        self.start.show(
+            shell,
+            &ctx,
+            &events,
+            &StartData {
+                game_name: name,
+                icon,
+                language,
+                accent,
+                reduced_motion: false,
+            },
+        );
+        if matches!(self.page, ScreenPage::Banner) {
+            self.draw_banner(ui, language);
+        }
+    }
+
+    fn open_page(&mut self, shell: &mut Shell, ctx: &Context) {
+        match self.page {
+            ScreenPage::Settings(n) => self.settings.open_at(n, n == 0),
+            ScreenPage::GameSettings => self.game_panel.open_row(1),
+            ScreenPage::Confirm => self.uninstall.open(),
+            ScreenPage::Controls => self.controls.open(),
+            ScreenPage::ControlsCapture => {
+                self.controls.open_row(3);
+                self.controls.begin_capture(shell, PadAction::Square);
+            }
+            ScreenPage::Advanced => self.advanced.open_row(4),
+            ScreenPage::Trophies => self.trophies.open_at(1),
+            ScreenPage::Library => self.library.open(1),
+            ScreenPage::Log => self.log.open(),
+            ScreenPage::Start => self.start.open_at(ctx.clock()),
+            ScreenPage::Banner | ScreenPage::Unlocking => {}
+        }
+    }
+
+    /// The home screen under the panels: artwork with scrims, the tile row, the title, buttons and
+    /// the facts, at the positions of the original (section 5.3). One tile carries the focus ring
+    /// only on the pages where the home is the subject.
+    fn draw_home(&self, ui: &mut Ui, shell: &Shell, unlocking: bool) {
+        let ctx = ui.ctx().clone();
+        let painter = ui.painter().clone();
+        let screen = ui.max_rect();
+        let language = shell.language;
+        let accent = shell.accent_color();
+        if let Some(hero) = &self.hero {
+            paint_artwork(
+                &painter,
+                screen,
+                hero.id(),
+                16.0 / 9.0,
+                ctx.clock(),
+                true,
+                1.0,
+            );
+        }
+        text::paint(
+            &painter,
+            pos2(64.0, 34.0),
+            Align2::LEFT_TOP,
+            ty::TOP_BAR_TITLE,
+            language.text(Key::Games),
+            Color32::WHITE,
+        );
+        // The tile row: the selected game large, a label column, then small tiles.
+        let selected = Rect::from_min_size(pos2(64.0, 112.0), vec2(176.0, 176.0));
+        let mut style = TileStyle::new(accent);
+        style.image = Some(self.tile(1));
+        style.overlay = if unlocking {
+            TileOverlay::Installing(0.39)
+        } else {
+            TileOverlay::None
+        };
+        paint_tile(&painter, selected, &style);
+        text::paint(
+            &painter,
+            pos2(262.4, 168.0),
+            Align2::LEFT_TOP,
+            ty::TILE_NAME,
+            NAMES[1],
+            Color32::WHITE,
+        );
+        let state = if unlocking {
+            language.text(Key::StepRelink)
+        } else {
+            language.text(Key::Ready)
+        };
+        painter.text(
+            pos2(262.4, 204.0),
+            Align2::LEFT_CENTER,
+            if unlocking {
+                Icon::ARROW_CIRCLE_DOWN.glyph()
+            } else {
+                Icon::CHECK_CIRCLE.glyph()
+            },
+            Icon::CHECK_CIRCLE.font(14.0, true),
+            if unlocking {
+                accent
+            } else {
+                color::state_neutral()
+            },
+        );
+        text::paint(
+            &painter,
+            pos2(282.0, 204.0),
+            Align2::LEFT_CENTER,
+            ty::STATE_LABEL,
+            state,
+            if unlocking {
+                accent
+            } else {
+                color::state_neutral()
+            },
+        );
+        for (n, x) in [556.0, 690.0, 824.0, 958.0].into_iter().enumerate() {
+            let r = Rect::from_min_size(pos2(x, 122.44), vec2(118.0, 118.0));
+            let mut s = TileStyle::new(accent);
+            s.image = Some(self.tile(n + 2));
+            paint_tile(&painter, r, &s);
+        }
+        // Title, buttons, facts.
+        text::paint(
+            &painter,
+            pos2(72.0, 560.0),
+            Align2::LEFT_TOP,
+            ty::HERO_TITLE,
+            NAMES[1],
+            Color32::WHITE,
+        );
+        let mut buttons = ui.new_child(
+            UiBuilder::new().max_rect(Rect::from_min_size(pos2(72.0, 651.0), vec2(900.0, 54.0))),
+        );
+        buttons.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 16.0;
+            ConsoleButton::new(if unlocking {
+                language.text(Key::Cancel)
+            } else {
+                language.text(Key::Play)
+            })
+            .icon(if unlocking { Icon::X } else { Icon::PLAY })
+            .icon_fill(!unlocking)
+            .prominent(true)
+            .min_width(size::PLAY_MIN_WIDTH)
+            .show(ui);
+            ConsoleButton::new("3/8")
+                .icon(Icon::TROPHY)
+                .icon_fill(true)
+                .show(ui);
+            ConsoleButton::icon_only(Icon::DOTS_THREE, language.text(Key::Options)).show(ui);
+            if unlocking {
+                ui.add_space(10.0);
+                hero_progress(
+                    ui,
+                    &UnlockProgress::new(UnlockStep::Relink, 0.55),
+                    language,
+                    accent,
+                );
+            }
+        });
+        let mut facts = ui.new_child(
+            UiBuilder::new().max_rect(Rect::from_min_size(pos2(72.0, 727.0), vec2(1000.0, 96.0))),
+        );
+        let status = if unlocking {
+            language.text(Key::StepRelink)
+        } else {
+            language.text(Key::Ready)
+        };
+        facts_line(
+            &mut facts,
+            &[
+                Fact {
+                    icon: Icon::CIRCLE_DASHED,
+                    title: language.text(Key::Status),
+                    value: status,
+                    value_color: None,
+                },
+                Fact {
+                    icon: Icon::HARD_DRIVE,
+                    title: language.text(Key::Size),
+                    value: "8.39 GB",
+                    value_color: None,
+                },
+                Fact {
+                    icon: Icon::HASH,
+                    title: language.text(Key::TitleID),
+                    value: "PPSA90001",
+                    value_color: None,
+                },
+                Fact {
+                    icon: Icon::TAG,
+                    title: language.text(Key::Version),
+                    value: "01.000.010",
+                    value_color: None,
+                },
+            ],
+            language,
+        );
+    }
+
+    /// A stand-in game window for the banner page.
+    fn draw_game_frame(&self, ui: &mut Ui) {
+        let screen = ui.max_rect();
+        if let Some(hero) = &self.hero {
+            ui.painter().image(
+                hero.id(),
+                screen,
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+    }
+
+    fn draw_banner(&mut self, ui: &mut Ui, language: crate::ui::i18n::Language) {
+        let ctx = ui.ctx().clone();
+        let t = &self.set.trophies[1];
+        let trophy = BannerTrophy::from_core(t);
+        let texture = self
+            .banner_icons
+            .get(&ctx, "banner/gallery", trophy.icon.as_deref(), true);
+        let window = Rect::from_min_size(
+            pos2(ui.max_rect().center().x - banner::WINDOW.0 * 0.5, 0.0),
+            vec2(banner::WINDOW.0, banner::WINDOW.1),
+        );
+        banner::paint_card(
+            ui,
+            window,
+            1.0,
+            &trophy,
+            BannerLook::SETTLED,
+            texture,
+            language,
+        );
+    }
+}
+
+const SAMPLE_LOG: &str = "[anyps5-launcher] start 2026-10-22T09:30:00Z PPSA90001
+[engine] loading modules (58)
+[engine] module libSceGnmDriver.prx ok
+[engine] module libSceAudioOut.prx ok
+[engine] vulkan device: Generic GPU, 8 GB
+[engine] shader cache: 412 pipelines
+[engine] first frame presented
+[engine] sceNpTrophy2: 8 trophies registered
+[engine] unhandled exception 0xC0000005 at 0x00007FF6A1B2C3D4
+The game crashed (0xC0000005 (ACCESS_VIOLATION)).";

@@ -43,6 +43,8 @@ pub enum Page {
     Artwork,
     Themes,
     Background(Theme),
+    /// A panel of the launcher (`screens::gallery`).
+    Screen(crate::screens::gallery::ScreenPage),
 }
 
 /// Parsed command line of the gallery.
@@ -77,7 +79,9 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Option<Options> {
                 "bg0" | "cosmic" => Page::Background(Theme::Cosmic),
                 "bg1" | "aurora" => Page::Background(Theme::Aurora),
                 "bg2" | "sunset" => Page::Background(Theme::Sunset),
-                _ => Page::Components,
+                other => {
+                    crate::screens::gallery::parse(other).map_or(Page::Components, Page::Screen)
+                }
             };
         } else if let Some(path) = arg.strip_prefix("--screenshot=") {
             options.screenshot = Some(PathBuf::from(path));
@@ -118,6 +122,7 @@ struct Gallery {
     frames: u32,
     shot_requested: bool,
     sample_art: Option<TextureHandle>,
+    screens: Option<crate::screens::gallery::ScreenGallery>,
 }
 
 impl Gallery {
@@ -126,6 +131,7 @@ impl Gallery {
             Page::Background(theme) => theme,
             _ => Theme::Cosmic,
         };
+        let page = options.page;
         let mut shell = Shell::headless(cc, theme);
         shell.language = options.language;
         let clock =
@@ -138,6 +144,10 @@ impl Gallery {
             frames: 0,
             shot_requested: false,
             sample_art: None,
+            screens: match page {
+                Page::Screen(page) => Some(crate::screens::gallery::ScreenGallery::new(page)),
+                _ => None,
+            },
         }
     }
 
@@ -180,6 +190,11 @@ impl eframe::App for Gallery {
         self.shell.paint_backdrop(&ctx, &painter, screen);
         match self.options.page {
             Page::Background(_) => {}
+            Page::Screen(_) => {
+                if let Some(screens) = self.screens.as_mut() {
+                    screens.ui(&mut self.shell, ui);
+                }
+            }
             Page::Themes => themes_page(&ctx, ui, &self.shell, self.options.time),
             Page::Components => components_page(ui, &self.shell),
             Page::Panels => {
