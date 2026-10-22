@@ -18,9 +18,9 @@ use anyps5_core::controls::{PadAction, Preset};
 use anyps5_core::library::{ExecutableKind, Game};
 use anyps5_core::notes::ReleaseNotes;
 use anyps5_core::paths::GameId;
-use anyps5_core::report::{ReportInput, SystemInfo};
 use anyps5_core::recommended::{Caution, Change, Kind, Plan, Setting};
 use anyps5_core::releases::Published;
+use anyps5_core::report::{ReportInput, SystemInfo};
 use anyps5_core::settings::{GameSettings, Preferences};
 use anyps5_core::trophies::{Grade, Trophy, TrophySet};
 use egui::{
