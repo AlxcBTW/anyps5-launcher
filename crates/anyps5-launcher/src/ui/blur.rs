@@ -222,6 +222,16 @@ impl BlurChain {
         sigma_texels: f32,
     ) {
         if self.down_bind.is_none() || rebind_source {
+            // One source texel in uv units, for the box filter; fixed for the chain's size.
+            let step = [
+                1.0 / self.source_size.0 as f32,
+                1.0 / self.source_size.1 as f32,
+            ];
+            queue.write_buffer(
+                &self.down_uniform,
+                0,
+                bytemuck::bytes_of(&BlurUniforms::new(step, &[])),
+            );
             self.down_bind = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("blur down bind"),
                 layout: &pipelines.layout,
@@ -257,16 +267,6 @@ impl BlurChain {
                 bytemuck::bytes_of(&BlurUniforms::new([0.0, 1.0 / h], &taps)),
             );
         }
-        // One source texel in uv units, for the box filter.
-        let step = [
-            1.0 / self.source_size.0 as f32,
-            1.0 / self.source_size.1 as f32,
-        ];
-        queue.write_buffer(
-            &self.down_uniform,
-            0,
-            bytemuck::bytes_of(&BlurUniforms::new(step, &[])),
-        );
         let Some(down_bind) = self.down_bind.as_ref() else {
             return;
         };

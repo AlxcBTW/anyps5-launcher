@@ -593,7 +593,7 @@ impl LauncherApp {
                 );
                 keep.push(id);
             }
-            if alpha > 0.003 && !reduced {
+            if alpha > 0.003 && !reduced && !self.shell.backdrop.paused {
                 ctx.request_repaint_after(Duration::from_millis(16));
             }
         }
