@@ -86,7 +86,7 @@ pub enum Effect {
         game: GameId,
         again: bool,
     },
-    /// "Hide the launcher while a game runs".
+    /// "Hide Launcher While Playing".
     MinimizeWindow,
     RestoreWindow,
     /// The toolkit changed on disk or in the preferences: the pipeline looks for it again.

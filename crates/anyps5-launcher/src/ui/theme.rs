@@ -517,6 +517,8 @@ pub mod size {
     pub const INFO_CARD_GAP: f32 = 14.0;
     pub const SIDE_PANEL_WIDTH: f32 = 560.0;
     pub const SIDE_PANEL_PADDING: f32 = 36.0;
+    /// Inset of row lists inside their panel (room for the focused row to grow).
+    pub const LIST_INSET: f32 = 6.0;
     pub const SETTINGS_CATEGORY_WIDTH: f32 = 330.0;
     pub const SETTINGS_CATEGORY_ROW: f32 = 52.0;
     pub const ROW_MIN_HEIGHT: f32 = 58.0;
@@ -526,7 +528,7 @@ pub mod size {
     pub const ROW_ICON: f32 = 17.0;
     pub const CHEVRON_BOX: f32 = 26.0;
     pub const CHEVRON_GLYPH: f32 = 13.0;
-    pub const CHOICE_VALUE_WIDTH: (f32, f32) = (190.0, 190.0);
+    pub const CHOICE_VALUE_WIDTH: (f32, f32) = (120.0, 190.0);
     pub const STEPPER_VALUE_WIDTH: f32 = 70.0;
     pub const TEXT_FIELD_WIDTH: f32 = 200.0;
     pub const SWITCH: (f32, f32) = (50.0, 28.0);

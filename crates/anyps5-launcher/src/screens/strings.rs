@@ -41,28 +41,32 @@ pub enum Extra {
     /// Settings row: the home screen music toggle.
     HomeMusic,
     HomeMusicDetail,
+    /// The log box before the game wrote anything.
+    EmptyLog,
+    /// The button of the removal confirmation (its title already says what is removed).
+    Remove,
 }
 
 impl Extra {
     pub const fn english(self) -> &'static str {
         match self {
             Extra::Toolkit => "Toolkit",
-            Extra::UpdateCheck => "Check for updates",
+            Extra::UpdateCheck => "Check for Updates",
             Extra::UpdateCheckDetail => {
                 "Looks for a newer toolkit when the launcher starts. Only the version number is requested."
             }
-            Extra::CheckNow => "Check now",
+            Extra::CheckNow => "Check Now",
             Extra::Checking => "Checking…",
             Extra::UpToDate => "Up to date",
             Extra::UpdateAvailable => "Update available: %@",
             Extra::CheckFailed => "Could not check",
-            Extra::LastChecked => "Last checked",
+            Extra::LastChecked => "Last Checked",
             Extra::NeverChecked => "Never",
             Extra::ToolkitMissing => "Not installed",
-            Extra::ToolkitInstall => "Download the toolkit",
-            Extra::ToolkitInstallUpdate => "Install the update",
-            Extra::ToolkitChooseFolder => "Use a toolkit folder",
-            Extra::CpuConversion => "CPU conversion",
+            Extra::ToolkitInstall => "Download the Toolkit",
+            Extra::ToolkitInstallUpdate => "Install the Update",
+            Extra::ToolkitChooseFolder => "Use a Toolkit Folder",
+            Extra::CpuConversion => "CPU Conversion",
             Extra::CpuConversionDetail => {
                 "How games are prepared for your processor. Automatic suits most PCs."
             }
@@ -70,7 +74,7 @@ impl Extra {
             Extra::CpuNone => "None",
             Extra::CpuIntel => "Intel",
             Extra::DiagnosisHostCpu => "This CPU lacks %@, which the game needs.",
-            Extra::SaveReport => "Save report",
+            Extra::SaveReport => "Save Report",
             Extra::ToolkitDownloading => "Downloading the toolkit…",
             Extra::ToolkitReady => "Toolkit %@ is ready",
             Extra::ToolkitFailed => {
@@ -80,6 +84,8 @@ impl Extra {
             Extra::HomeMusicDetail => {
                 "Plays quiet ambient music on the home screen. It fades out while a game runs."
             }
+            Extra::EmptyLog => "No log yet. Play the game once and it appears here.",
+            Extra::Remove => "Remove",
             Extra::ToolkitFolderInvalid => {
                 "This folder is not a toolkit. Pick the folder that holds relinker.exe and libs."
             }
@@ -120,6 +126,8 @@ impl Extra {
             Extra::HomeMusicDetail => {
                 "Ana ekranda sakin bir ortam müziği çalar. Oyun çalışırken susar."
             }
+            Extra::EmptyLog => "Henüz günlük yok. Oyunu bir kez oynadığında burada görünür.",
+            Extra::Remove => "Kaldır",
             Extra::ToolkitFolderInvalid => {
                 "Bu klasör bir araç seti değil. relinker.exe ve libs içeren klasörü seç."
             }
@@ -137,7 +145,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 27] = [
+    pub const ALL: [Extra; 29] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -165,6 +173,8 @@ impl Extra {
         Extra::ToolkitFolderInvalid,
         Extra::HomeMusic,
         Extra::HomeMusicDetail,
+        Extra::EmptyLog,
+        Extra::Remove,
     ];
 }
 

@@ -400,6 +400,9 @@ fn key_caps(sources: &[String], language: Language) -> Vec<KeyCapSpec> {
 // The scrolling list
 // ---------------------------------------------------------------------------------------------
 
+/// Rows fade out over this distance at a clipped edge of a list that scrolls.
+const LIST_FADE: f32 = 28.0;
+
 /// Draws `rows` in a scroll area that fills the available space and follows the focused row with
 /// the focus spring. Returns what the mouse did.
 pub fn list(
@@ -421,9 +424,14 @@ pub fn list(
     if let Some(offset) = scroll_to {
         area = area.vertical_scroll_offset(offset);
     }
+    // A list taller than its panel fades rows out over the last 28 dp at a clipped edge instead
+    // of cutting them hard. Whether it overflows is known from the last frame.
+    let overflow_id = id.with("overflows");
+    let overflows: bool = ctx.data(|d| d.get_temp(overflow_id)).unwrap_or(false);
+    let clip = ui.clip_rect().intersect(ui.max_rect());
     let output = area.show(ui, |ui| {
         egui::Frame::NONE
-            .inner_margin(Margin::symmetric(6, 6))
+            .inner_margin(Margin::same(size::LIST_INSET as i8))
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = size::ROW_GAP;
                 let origin = ui.cursor().min.y;
@@ -433,11 +441,26 @@ pub fn list(
                     }
                     let focused = options.focus == Some(index);
                     let force = options.force.and_then(|(i, f)| (i == index).then_some(f));
-                    let out = show_row(ui, row, index, focused, force, options, &mut events);
+                    let top = ui.cursor().min.y;
+                    let centre = top + size::ROW_MIN_HEIGHT * 0.5;
+                    let fade = if overflows {
+                        let edge = (centre - clip.min.y).min(clip.max.y - centre);
+                        (edge / LIST_FADE).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    };
+                    let out = ui
+                        .scope(|ui| {
+                            ui.multiply_opacity(fade);
+                            show_row(ui, row, index, focused, force, options, &mut events)
+                        })
+                        .inner;
                     geometry.push((out.rect.min.y - origin, out.rect.height()));
                 }
             });
     });
+    let overflowing = output.content_size.y > output.inner_rect.height() + 1.0;
+    ctx.data_mut(|d| d.insert_temp(overflow_id, overflowing));
     follow.end(
         &ctx,
         geometry,

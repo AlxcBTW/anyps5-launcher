@@ -39,6 +39,9 @@ const windows = {
     "Kilidi açılan oyunlar oyun klasörünün içindeki .AnyPS5 klasöründe saklanır.",
   ],
   showInFinder: ["Show in Explorer", "Dosya Gezgini'nde Göster"],
+  // One capitalization (title case) and one spelling (US) for row labels (DESIGN.md 3.7).
+  behaviour: ["Behavior", "Davranış"],
+  hideWhilePlaying: ["Hide Launcher While Playing", "Oyun açılınca launcher'ı gizle"],
   noToolkit: [
     "This copy has no conversion tools. Use the installer from the release.",
     "Bu kopyada dönüştürme araçları yok. Release'deki kurulum dosyasını kullan.",

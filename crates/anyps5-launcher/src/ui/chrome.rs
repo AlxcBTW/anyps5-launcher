@@ -458,13 +458,18 @@ impl<'a> PanelRow<'a> {
 
         // Value width decides how much room the text column has.
         let value_width = self.value_width(&painter, width);
-        let icon_block = if self.icon.is_some() {
+        // A pad glyph without an icon stands in the icon column, so every title starts on one edge.
+        let icon_block = if self.icon.is_some() || self.pad_glyph.is_some() {
             size::ROW_ICON_BOX + 14.0
         } else {
             0.0
         };
-        // `✕ Cross`: a painted controller glyph in front of the title.
-        let glyph_block = if self.pad_glyph.is_some() { 24.0 } else { 0.0 };
+        // `✕ Cross` with an icon as well: the glyph goes between icon and title.
+        let glyph_block = if self.pad_glyph.is_some() && self.icon.is_some() {
+            24.0
+        } else {
+            0.0
+        };
         let text_width =
             (width - 2.0 * pad - icon_block - glyph_block - value_width - 12.0).max(40.0);
         let title_style = ty::ROW_TITLE;
@@ -560,6 +565,14 @@ impl<'a> PanelRow<'a> {
                 tint,
             );
             x += icon_block;
+        } else if let Some(glyph) = self.pad_glyph {
+            glyph.paint(
+                &painter,
+                pos2(x + size::ROW_ICON_BOX * 0.5, rect.center().y),
+                16.0,
+                dim(0.85),
+            );
+            x += icon_block;
         }
         let top = rect.center().y - text_height * 0.5;
         let title_color = if destructive {
@@ -571,7 +584,7 @@ impl<'a> PanelRow<'a> {
             dim(0.62)
         };
         let title_h = title_galley.size().y;
-        if let Some(glyph) = self.pad_glyph {
+        if let (Some(glyph), Some(_)) = (self.pad_glyph, self.icon) {
             let first_line = title_galley.rows.first().map_or(title_h, |r| r.height());
             glyph.paint(
                 &painter,
@@ -980,7 +993,9 @@ pub fn side_panel<R>(
             child.add_space(0.0);
             let title_h = title_galley.size().y;
             let top = child.cursor().min.y;
-            painter.galley(pos2(inner.min.x, top), title_galley, Color32::WHITE);
+            // Title and subtitle start on the edge of the row cards below them.
+            let edge = inner.min.x + size::LIST_INSET;
+            painter.galley(pos2(edge, top), title_galley, Color32::WHITE);
             child.add_space(title_h + 8.0);
             if let Some(subtitle) = subtitle {
                 let top = child.cursor().min.y;
@@ -993,7 +1008,7 @@ pub fn side_panel<R>(
                     inner.width(),
                 );
                 let height = galley.size().y;
-                painter.galley(pos2(inner.min.x, top), galley, color::text_detail());
+                painter.galley(pos2(edge, top), galley, color::text_detail());
                 child.add_space(height + 8.0);
             }
             child.add_space(18.0);

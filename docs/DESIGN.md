@@ -669,7 +669,7 @@ The launcher keeps the port's structure but trims what read as noise next to the
   rings grow their radius with their outset, so they stay concentric. Button hairlines drop to
   white 0.07; the primary button rests at white 0.26 so it does not read as disabled.
 - **Panels.** Rows grow a fixed 3 dp when focused (no proportional scale). Choice values are
-  regular weight in a fixed 190 dp column. The game sheet groups display, play, maintenance and
+  regular weight. The game sheet groups display, play, maintenance and
   removal with a double gap. The removal confirmation opens on Cancel and the destructive row
   stays dark red when focused. Full-screen overlays share a 90 dp margin.
 
@@ -835,7 +835,7 @@ Layout: full-window overlay (blurred backdrop + black 0.55); centred column, gap
 breathing glow (animation 26); game name (34 light, centred, 2 lines); a 380-wide block (gap 14): row `starting` (16 medium, white
 0.88) and the elapsed `m:ss` (16 semibold tabular, counting from 0:00, tick 1 s), the indeterminate sweep (accent), and
 `startingText` (14, white 0.6, centred, wraps). At the bottom, 40 above the edge, a hint `esc / ○` "Cancel". After the window shows,
-the splash leaves (overlay spring), the launcher optionally hides ("Hide the launcher while a game runs"). (S-starting.)
+the splash leaves (overlay spring), the launcher optionally hides ("Hide Launcher While Playing"). (S-starting.)
 
 ### 5.6 Toast
 
@@ -1550,7 +1550,7 @@ sizes use decimal units (1 GB = 10^9 bytes) with the language's decimal separato
 | `VK_ERROR_DEVICE_LOST` etc. | unchanged (Vulkan on Windows) |
 | NSWorkspace launch, process watch, `CGWindowList` first-window check | spawn the game process and wait on its handle; poll `EnumWindows` for a visible top-level window of that process larger than 200 x 150 (every 400 ms, 240 s timeout); bring it forward with `SetForegroundWindow` (the original "yields activation") |
 | Esc on splash: `forceTerminate` | `TerminateProcess` (on the game's job object) |
-| "Hide the launcher while a game runs" (`orderOut`) | minimise the launcher window and restore on exit. The original's caveat (a hidden app's banner never shows) does not apply, the banner is its own window |
+| "Hide Launcher While Playing" (`orderOut`) | minimise the launcher window and restore on exit. The original's caveat (a hidden app's banner never shows) does not apply, the banner is its own window |
 | Notch / menu-bar safe area for the banner | top of the primary monitor's work area, no inset |
 | Trackpad scroll phases | wheel/touchpad scroll deltas (6.2) |
 | Controller discovery (`GCController`) | `gilrs` events; no wireless discovery step |
@@ -1572,6 +1572,8 @@ the APFS-clone sentence. Strings that mention the Mac are replaced (keys unchang
 | `aboutText` | AnyPS5 runs PS5 games natively on Windows. | AnyPS5, PS5 oyunlarını Windows'ta yerel olarak çalıştırır. |
 | `installedSize` | Unlocked games are kept in the .AnyPS5 folder inside your games folder. | Kilidi açılan oyunlar oyun klasörünün içindeki .AnyPS5 klasöründe saklanır. |
 | `showInFinder` | Show in Explorer | Dosya Gezgini'nde Göster |
+| `behaviour` | Behavior | Davranış |
+| `hideWhilePlaying` | Hide Launcher While Playing | Oyun açılınca launcher'ı gizle |
 | `noToolkit` | This copy has no conversion tools. Use the installer from the release. | Bu kopyada dönüştürme araçları yok. Release'deki kurulum dosyasını kullan. |
 
 If the Windows "unlock" does something other than converting, keep the five step *slots* and weights (5.4) and only rename the texts.

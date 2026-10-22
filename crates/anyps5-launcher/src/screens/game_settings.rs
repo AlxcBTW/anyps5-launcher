@@ -8,6 +8,7 @@ use egui::{Color32, Context};
 
 use crate::screens::rows::{self, Change, Row, RowId};
 use crate::screens::side::{self, Output, SideState, SideView};
+use crate::screens::strings::Extra;
 use crate::ui::Shell;
 use crate::ui::i18n::{Key, Language};
 use crate::ui::icons::Icon;
@@ -413,7 +414,7 @@ impl UninstallPanel {
         }
         let build = || {
             vec![
-                Row::action("uninstall", language.text(Key::Uninstall))
+                Row::action("uninstall", Extra::Remove.text(language))
                     .icon(Icon::TRASH)
                     .destructive(),
                 Row::action("cancel", language.text(Key::Cancel)).icon(Icon::X),

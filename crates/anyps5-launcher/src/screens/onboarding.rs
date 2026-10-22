@@ -228,7 +228,8 @@ fn theme_step(
     for (index, theme) in Theme::ALL.iter().enumerate() {
         let focused = on_step && choice == index;
         let t = ctx.focus_t(("onboarding-theme", index), focused);
-        let factor = lerp(0.97, 1.04, t);
+        // Unfocused cards keep their size, so they share the left edge with the title.
+        let factor = lerp(1.0, 1.03, t);
         let column = scale_rect(
             Rect::from_min_size(
                 pos2(origin.x + index as f32 * (width + 26.0), y),

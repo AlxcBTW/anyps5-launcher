@@ -355,12 +355,8 @@ pub fn build_categories(
     // About
     let about = vec![
         Row::info("text", t(Key::AboutText), None),
+        // The toolkit version lives on the Toolkit page only.
         Row::info("version", t(Key::Version), Some(env.app_version.to_owned())),
-        Row::info(
-            "toolkitVersion",
-            t(Key::ToolkitVersion),
-            Some(env.toolkit_version.unwrap_or("—").to_owned()),
-        ),
         Row::action("quit", t(Key::Quit))
             .icon(Icon::POWER)
             .destructive(),
