@@ -265,7 +265,7 @@ fn gpu_adapters() -> Vec<(String, String)> {
 
 /// The user-mode driver version DXGI reports (`a.b.c.d`); for NVIDIA also the number on the
 /// driver's download page, the last five digits of `c.d` (31.0.15.5222 is 552.22).
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn driver_version(raw: i64, vendor: u32) -> String {
     if raw <= 0 {
         return String::new();
