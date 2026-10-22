@@ -418,6 +418,9 @@ pub struct Preferences {
     pub reduced_motion: bool,
     #[serde(default = "yes")]
     pub sounds: bool,
+    /// Home screen music.
+    #[serde(default = "yes")]
+    pub music: bool,
     #[serde(default)]
     pub hide_while_playing: bool,
     #[serde(default = "default_profile_name")]
@@ -464,6 +467,7 @@ impl Default for Preferences {
             game_artwork: true,
             reduced_motion: false,
             sounds: true,
+            music: true,
             hide_while_playing: false,
             profile_name: default_profile_name(),
             games_folder: None,
@@ -917,7 +921,7 @@ mod tests {
         let prefs = Preferences::load(&paths);
         assert!(prefs.onboarded);
         assert_eq!(prefs.theme, Theme::Sunset);
-        assert!(prefs.sounds && prefs.game_artwork && prefs.check_for_updates);
+        assert!(prefs.sounds && prefs.music && prefs.game_artwork && prefs.check_for_updates);
         assert_eq!(prefs.profile_name, "Player");
         assert_eq!(prefs.toolkit_repository, "boykopovar/AnyPS5");
         assert!(!prefs.games["c:/g"].vsync);

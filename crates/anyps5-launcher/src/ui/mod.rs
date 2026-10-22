@@ -12,7 +12,7 @@
 //! | [`components`], [`chrome`] | buttons, switch, progress, hints, tile, rows, panels, toast |
 //! | [`text`] | text layout with line height, tracking, truncation, tabular figures |
 //! | [`icons`] | Phosphor glyphs |
-//! | [`sound`] | the four synthesised cues |
+//! | [`sound`] | the five synthesised cues and the home music |
 //! | [`i18n`] | 212 keys in English and Turkish |
 //! | [`input`], [`focus`], [`gamepad`] | commands, wheel, gamepad, home and panel focus models |
 //!
@@ -97,8 +97,7 @@ impl Shell {
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             background::init(render_state);
         }
-        let mut sounds = Sounds::new();
-        sounds.enabled = false;
+        let sounds = Sounds::silent();
         Self {
             input: Input::new(None),
             sounds,
@@ -164,8 +163,7 @@ impl Shell {
     /// A shell without GPU, gamepad or sound for tests that drive whole frames.
     pub fn for_test(ctx: &Context, theme: Theme) -> Self {
         theme::install(ctx);
-        let mut sounds = Sounds::new();
-        sounds.enabled = false;
+        let sounds = Sounds::silent();
         Self {
             input: Input::new(None),
             sounds,

@@ -803,13 +803,13 @@ category's rows (5.8).
 | Appearance (`appearance`) | brush | `theme` choice (Cosmic/Aurora/Sunset), `accent` choice (six), `backdrop` choice (`backgroundTheme` / `backgroundImage` / `backgroundVideo`; picking image/video opens a file dialog when no file is set or the kind changed), `file` action `chooseFile` (only when backdrop is not theme; detail = file name), `artwork` toggle `gameArtwork`, `motion` choice (`motionFull` / `motionReduced`) |
 | Library (`storage`) | 2x2 grid | `folder` action `folder` (detail = path or an em dash; opens the folder dialog), `rescan` action `rescan` (detail `gamesFound` with count; sound `select`), info `installedSize` |
 | Language (`language`) | globe | `language` choice (Türkçe, English; shown in their own language) |
-| Behaviour (`behaviour`) | sliders | `name` text field `profileName` (live edit), `sounds` toggle, `hide` toggle `hideWhilePlaying` (+ platform row, see 9) |
+| Behaviour (`behaviour`) | sliders | `name` text field `profileName` (live edit), `sounds` toggle, `music` toggle (Home Screen Music, 7.3), `hide` toggle `hideWhilePlaying` (+ platform row, see 9) |
 | Advanced (`advanced`) | wrench+screwdriver | `screenshots` action `screenshotsFolder` (detail = path, `~` abbreviated), `showScreenshots` action, `fonts` action `fontsFolder` (detail = path or `fontsNone`), `fontsReset` action (only when a fonts folder is set), info `fontsHint` |
 | About (`about`) | info circle | info `aboutText`, info `version` (app version), info `toolkitVersion`, (platform row), `quit` action `quit` (destructive) |
 
 Settings are persisted per user (`Preferences`): `onboarded`, `language` (system default: Turkish if the OS UI language starts with
 `tr`, else English), `theme` (Cosmic), `accent` (nil = theme default), `backdrop` (theme), `backdropFile`, `gameArtwork` (true),
-`reducedMotion` (false), `sounds` (true), `hideWhilePlaying` (false), `profileName` (first word of the user's full name, fallback
+`reducedMotion` (false), `sounds` (true), `music` (true), `hideWhilePlaying` (false), `profileName` (first word of the user's full name, fallback
 "Player"), `gamesFolder`, `screenshotsFolder` (nil = `Pictures/AnyPS5`), `fontsFolder`, per-game settings, `lastPlayed`.
 Every change saves immediately and re-applies language, motion and sound flags.
 
@@ -1020,7 +1020,7 @@ empty. Mouse: tapping a language card selects and confirms; tapping a theme card
 | `chevron.left/right`, `minus`, `plus` | `caret-left/right`, `minus`, `plus` |
 | `stethoscope`, `doc.text`, `doc.badge.checkmark` | `stethoscope`, `file-text`, `file-text` (no `file-check` in Phosphor) |
 | category glyphs: `paintbrush`, `square.grid.2x2`, `globe`, `slider.horizontal.3`, `wrench.and.screwdriver`, `info.circle` | `paint-brush`, `squares-four`, `globe`, `sliders-horizontal`, `wrench`, `info` |
-| row glyphs: `paintpalette`, `circle.lefthalf.filled`, `photo.on.rectangle`, `photo`, `wind`, `person.crop.circle`, `speaker.wave.2`, `eye.slash`, `power` | `palette`, `circle-half`, `images`, `image`, `wind`, `user-circle`, `speaker-high`, `eye-slash`, `power` |
+| row glyphs: `paintpalette`, `circle.lefthalf.filled`, `photo.on.rectangle`, `photo`, `wind`, `person.crop.circle`, `speaker.wave.2`, `eye.slash`, `power` (+ Home Screen Music, 7.3) | `palette`, `circle-half`, `images`, `image`, `wind`, `user-circle`, `speaker-high`, `eye-slash`, `power` (+ `music-notes`) |
 | game-settings glyphs: `rectangle.on.rectangle`, `macwindow`, `arrow.up.left.and.arrow.down.right`, `waveform.path`, `keyboard`, `slider.horizontal.below.rectangle`, `speedometer`, `character.bubble`, `sparkles`, `trash` | `rectangle`/`frame-corners`, `app-window`, `arrows-out-simple`, `wave-sine`, `keyboard`, `sliders`, `gauge`, `translate`, `sparkle`, `trash` |
 | advanced glyphs: `l.joystick`, `r.joystick`, `computermouse`, `arrow.up.and.down`, `chart.line.uptrend.xyaxis`, `scope`, `timer`, `tortoise`, `l2.rectangle.roundedtop`, `square.stack.3d.up`, `square.and.arrow.up/down`, `arrow.counterclockwise` | `game-controller` (stick), `mouse`, `arrows-down-up`, `chart-line-up`, `crosshair`, `timer`, `person-simple-walk` (or any slow glyph), `trigger`/`rectangle`, `stack`, `export`/`download-simple`, `arrow-counter-clockwise` |
 | controls: `circle.grid.cross`, `l.rectangle.roundedbottom`, `l.joystick.press.down`, `line.3.horizontal`, `hand.point.up.left`, `dpad` | `game-controller`, `rectangle`, `circle`, `list`, `hand-pointing`, `arrows-out-cardinal` |
@@ -1163,6 +1163,43 @@ Trophy icons are PNGs inside the packages (`icon0_<lang>.png`, falling back to `
 trophies are drawn desaturated at 0.45 opacity (do it in a shader or by pre-converting to greyscale at load).
 Upload thumbnails as egui textures with `TextureOptions::LINEAR`; pic0 is large: downscale on a worker thread (`image` crate) before
 upload; keep at most the current and previous artwork textures.
+
+### 7.3 Soft cues and home music (deviation from 7.1)
+
+The launcher replaces the four sine cues of 7.1 with five softer ones and adds home screen music. Both are still synthesised at
+run time: nothing is bundled and nothing is sampled. Their character follows the PS5 system sounds as measured from recordings
+(register, partials, attack, decay, level, harmony); no recording is used or shipped.
+
+**Engine** (`ui::sound`). The first cue or the music opens the default output on a `sound` thread, which renders every cue once at
+the device rate (stereo, normalised to its peak) and hands rodio one endless source. Cues and music changes travel over a channel,
+so the UI thread never waits. Up to 8 cues play at once; another one fades the oldest out over 5 ms. A soft limiter above 0.9
+guards the sum. With sounds and music off the device is never opened; tests and the gallery use a silent engine.
+
+**Cues** (`ui::sound::cues`). Every tone is a few sine partials under one envelope (raised-cosine attack, then an exponential
+decay with time constant τ), followed by a one-pole lowpass and a Freeverb send.
+
+| Cue | Notes (relative level) | Partials (ratio, level) | Attack / τ | Peak | Send / RT60 |
+|---|---|---|---|---|---|
+| `move` | F4 | 1; 2 at 0.8; 1.5 at 0.09 | 12 / 38 ms | -22 dBFS | 0.10 / 0.7 s |
+| `select` | C5, G5 (0.7) 12 ms later | 1; 2 at 0.45; 3 at 0.08 | 10 / 120 ms | -13 dBFS | 0.15 / 0.9 s |
+| `back` | A3, E4 (0.7) | as `select` | 10 / 90 ms | -15 dBFS | 0.12 / 0.8 s |
+| `error` | A3, B♭3 (0.9) | 1; 2 at 0.25 | 12 / 90 ms | -15 dBFS | 0.06 / 0.8 s |
+| `unlocked` | F4 C5 G5 C6 (1, 0.85, 0.7, 0.55), 15 ms apart, each as two voices 5 cents apart | 1; 2 at 0.25 | 25 / 250 ms | -9 dBFS | 0.20 / 1.2 s |
+
+`unlocked` adds a faint glitter: six sines between 3.15 and 7.88 kHz at 0.12, gone within about 0.1 s. `error` is new and plays
+with every warning toast (`Model::toast` with `Icon::WARNING`); the other cues keep the events listed in 7.1.
+
+**Music** (`ui::sound::music`). Generated while it plays, so it never loops audibly. Eight chords in F minor and its neighbours,
+8 s each, crossfading with a 3.5 s attack and a 4.5 s release on equal-power curves: F sus4, F minor add 9, A♭ maj7, G♭ maj7,
+F sus4 (higher), F add 9, D♭ maj9, G♭ add 9 (voicings in `CHORDS`). Each pad note is two PolyBLEP sawtooths 7 cents apart, panned
+75/25, through two one-pole lowpasses whose cutoff breathes between 520 and 880 Hz over 25 s. A drone (F1 sine plus 0.3 of F2)
+runs under two rounds of the chords; the third round goes without it and 3 dB quieter. Every 1.4 to 3.6 s a soft note (sine plus
+0.2 octave, 10 ms attack, τ 0.9 s) from the current chord, between F4 and C6, floats above, panned up to ±0.45. Freeverb RT60 5 s,
+damping 0.6. The level sits around -28 dBFS RMS, well under the cues.
+
+**Mixing.** The music fades in over 2 s and out over 0.8 s (gain = position²) and dips under every cue: `move` 1.5 dB for 0.12 s,
+`select`, `back` and `error` 3 dB for 0.25 s, `unlocked` 6 dB for 1.2 s (15 ms down, 400 ms back up). It plays only while the
+`music` preference (Home Screen Music, on by default) is on, no game is starting or running, and the launcher window has focus.
 
 ### 6.5 Key binding names (controls panel)
 
@@ -1563,7 +1600,7 @@ The shared UI layer of this specification. Screens use these modules and nothing
 | `components` | `ConsoleButton`, `IconButton`, `Switch`, `ProgressLine`, `IndeterminateLine`, hint bar, key caps, `PadGlyph`, focus glow and ring |
 | `chrome` | `paint_tile` (5.1), `info_card` / `facts_line` (5.3), `PanelRow` with all kinds (5.8), `side_panel` (5.9), `fullscreen_panel`, `toast` (5.6), `language_card`, `onboarding_dots` |
 | `text`, `icons` | line height, tracking, middle truncation, tabular figures; Phosphor constants (5.16) |
-| `sound` | section 7.1, rendered once, four voices, lazy device |
+| `sound` | section 7.3 (replaces 7.1): five cues rendered once, home music generated live, one mixer on its own thread, lazy device |
 | `i18n` | section 8: 212 keys, `Language::text/format`, `byte_text`, Windows replacements of 9.3 applied |
 | `input`, `focus`, `gamepad` | section 6: `Command`, `Input::poll`, `HomeFocus::navigate`, `PanelNav::command` |
 | `gallery` | hidden `--gallery[=components|panels|themes|bg0|bg1|bg2] [--screenshot=out.png] [--size=WxH] [--time=T]` |

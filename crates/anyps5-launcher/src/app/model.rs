@@ -302,7 +302,11 @@ impl Model {
         self.now = now;
     }
 
+    /// Shows a toast; a warning also plays the error cue.
     pub fn toast(&mut self, text: impl Into<String>, icon: Icon) {
+        if icon == Icon::WARNING {
+            self.sound(Cue::Error);
+        }
         self.toast_counter += 1;
         self.toast = Some(Toast {
             id: self.toast_counter,
