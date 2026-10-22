@@ -1,0 +1,9 @@
+[package]
+name = "fake-relinker"
+description = "Test helper: stands in for relinker.exe and for a game process. Never shipped."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false

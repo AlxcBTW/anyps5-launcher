@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/anyps5-core", "crates/anyps5-launcher"]
+members = ["crates/anyps5-core", "crates/anyps5-launcher", "crates/fake-relinker"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,6 +21,12 @@ serde_json = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+regex = "1"
+sha2 = "0.10"
+time = { version = "0.3", features = ["formatting", "macros", "local-offset"] }
+ureq = "3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+windows = "0.62"
 tempfile = "3"
 
 [profile.release]
