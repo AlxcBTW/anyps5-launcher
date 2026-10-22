@@ -7,17 +7,22 @@
 //! from every other action. Esc cancels. Modifier keys count when pressed.
 //!
 //! Layout (docs/DESIGN.md 5.17): a choice above the keys swaps the whole layout at once, the
-//! launcher's, a mouse-and-keyboard one, or the PC keys the game's own files name. Rows of a game
-//! whose files name its actions show them under the button ("Jump").
+//! launcher's, a mouse-and-keyboard one, the PC keys the game's own files name, or one the
+//! community shares for the title (docs/DESIGN.md 5.18). Rows of a game whose files name its
+//! actions show them under the button ("Jump"). Export and import move a layout as a file in the
+//! form of upstream's `INPUT_MAPPING.md`.
 
+use anyps5_core::community::CommunityLayout;
 use anyps5_core::controls::{Changes, Controls, PadAction, Preset};
 use anyps5_core::gamefiles::{GameAction, GameInput, game_layout};
 use anyps5_core::settings::GameSettings;
 use egui::{Color32, Context, Key as EKey};
 
 use crate::screens::rows::{self, Change, Row};
+use crate::screens::share_strings::Share;
 use crate::screens::side::{self, Output, SideState, SideView};
 use crate::screens::strings::Extra;
+use crate::screens::{ToastRequest, dialogs};
 use crate::ui::Shell;
 use crate::ui::components::PadGlyph;
 use crate::ui::i18n::{Arg, Key, Language};
@@ -26,22 +31,27 @@ use crate::ui::input::InputEvent;
 use crate::ui::sound::Cue;
 
 /// What the host has to do after a frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ControlsAction {
     /// Back or options: the panel is gone; open the game settings on the `controls` row.
     Back,
     /// The scrim was clicked: everything closes.
     Close,
+    /// Something to tell the player (a layout was saved, imported or refused).
+    Toast(ToastRequest),
 }
 
 /// The game, borrowed for one frame.
 pub struct ControlsData<'a> {
     pub title: &'a str,
+    pub title_id: &'a str,
     pub settings: &'a mut GameSettings,
     pub language: Language,
     pub accent: Color32,
     /// What the game's files say about its controls; `None` while they are being read.
     pub game_input: Option<&'a GameInput>,
+    /// The layouts the community shares for the title; none offline.
+    pub community: &'a [CommunityLayout],
 }
 
 /// State of the controls panel.
@@ -113,6 +123,7 @@ impl ControlsPanel {
             data.language,
             self.capturing,
             data.game_input,
+            data.community,
         );
         let view = SideView {
             title: data.title,
@@ -177,7 +188,13 @@ impl ControlsPanel {
                 }
                 (InputEvent::Command(_), Some(_)) => {}
                 (InputEvent::Command(command), None) => {
-                    let rows = build_rows(data.settings, data.language, None, data.game_input);
+                    let rows = build_rows(
+                        data.settings,
+                        data.language,
+                        None,
+                        data.game_input,
+                        data.community,
+                    );
                     let driven = rows::drive(shell, &mut self.side.nav, &rows, &[*command]);
                     for change in &driven.changes {
                         self.apply(shell, data, change, out);
@@ -214,17 +231,120 @@ impl ControlsPanel {
                 row: "layout",
                 index,
             } => {
-                let next = match layouts(data.game_input).get(*index) {
+                let next = match layouts(data.game_input, data.community).get(*index) {
                     Some(Layout::Preset(preset)) => preset.changes(),
                     Some(Layout::Game(actions)) => game_layout(actions, &Changes::new()).0,
+                    Some(Layout::Community(layout)) => {
+                        // A layout with tuning lines brings its sticks and mouse along.
+                        if let Some(tuning) = layout.tuning {
+                            data.settings.tuning = Some(tuning);
+                        }
+                        layout.changes.clone()
+                    }
                     None => return,
                 };
                 data.settings.controls = (!next.is_empty()).then_some(next);
                 out.changed = true;
             }
+            Change::Run { row: "export" } => self.export(shell, data, out),
+            Change::Run { row: "import" } => self.import(shell, data, out),
             _ => {}
         }
     }
+}
+
+impl ControlsPanel {
+    /// Saves the layout and the tuning as a file in the form of `INPUT_MAPPING.md`.
+    fn export(
+        &mut self,
+        shell: &mut Shell,
+        data: &ControlsData<'_>,
+        out: &mut Output<ControlsAction>,
+    ) {
+        let language = data.language;
+        let changes = data.settings.controls.clone().unwrap_or_default();
+        let tuning = data.settings.tuning.unwrap_or_default();
+        let label = if data.title_id.is_empty() {
+            data.title.to_owned()
+        } else {
+            format!("{} ({})", data.title, data.title_id)
+        };
+        let Some(path) = dialogs::save_file(
+            shell,
+            Share::LayoutExport.text(language),
+            &format!("{} layout.ini", data.title),
+            ("Layout", &["ini"]),
+            None,
+        ) else {
+            return;
+        };
+        let toast = match std::fs::write(&path, Controls::export(&changes, &tuning, &label)) {
+            Ok(()) => ToastRequest::new(Icon::FILE_TEXT, Share::LayoutExported.text(language)),
+            Err(_) => ToastRequest::warning(Share::LayoutNotSaved.text(language)),
+        };
+        out.actions.push(ControlsAction::Toast(toast));
+    }
+
+    /// Reads a layout file and makes it the game's layout. A file the engine would refuse is
+    /// refused with the line.
+    fn import(
+        &mut self,
+        shell: &mut Shell,
+        data: &mut ControlsData<'_>,
+        out: &mut Output<ControlsAction>,
+    ) {
+        let language = data.language;
+        let Some(path) = dialogs::pick_file(
+            shell,
+            Share::LayoutImport.text(language),
+            ("Layout", &["ini", "txt"]),
+            None,
+        ) else {
+            return;
+        };
+        let toast = match read_layout(&path) {
+            Ok(parsed) => {
+                let partly = parsed
+                    .changes
+                    .keys()
+                    .any(|name| anyps5_core::controls::EXTRA_ACTIONS.contains(&name.as_str()));
+                if let Some(tuning) = parsed.tuning {
+                    data.settings.tuning = Some(tuning);
+                }
+                data.settings.controls = (!parsed.changes.is_empty()).then_some(parsed.changes);
+                out.changed = true;
+                let text = if partly {
+                    Share::LayoutImportedPartly
+                } else {
+                    Share::LayoutImported
+                };
+                ToastRequest::new(Icon::FILE_TEXT, text.text(language))
+            }
+            Err(reason) => ToastRequest::warning(
+                Share::LayoutImportFailed.format(language, &[Arg::Str(&reason)]),
+            ),
+        };
+        out.actions.push(ControlsAction::Toast(toast));
+    }
+}
+
+/// Layout files are a few hundred bytes; a larger one is not a layout.
+const LAYOUT_FILE_LIMIT: u64 = 64 * 1024;
+
+/// The layout in a file, or why it cannot be used (English, as the line it names).
+fn read_layout(path: &std::path::Path) -> Result<anyps5_core::controls::ParsedLayout, String> {
+    let unreadable = || Share::LayoutUnreadable.english().to_owned();
+    let size = std::fs::metadata(path).map_err(|_| unreadable())?.len();
+    if size > LAYOUT_FILE_LIMIT {
+        return Err(unreadable());
+    }
+    let bytes = std::fs::read(path).map_err(|_| unreadable())?;
+    let text = String::from_utf8(bytes).map_err(|_| unreadable())?;
+    Controls::parse(&text).map_err(|error| {
+        let mut reason = error.to_string();
+        reason[..1].make_ascii_uppercase();
+        format!("{reason}.")
+    })
 }
 
 /// A layout the layout row offers.
@@ -232,17 +352,20 @@ enum Layout<'a> {
     Preset(Preset),
     /// The PC keys the game's files name.
     Game(&'a [GameAction]),
+    /// One the community shares for the title.
+    Community(&'a CommunityLayout),
 }
 
-/// The layouts in the order of the choice: the presets, then the game's own when its files name
-/// PC keys for at least one button.
-fn layouts(game: Option<&GameInput>) -> Vec<Layout<'_>> {
+/// The layouts in the order of the choice: the presets, the game's own when its files name PC
+/// keys for at least one button, then the community's.
+fn layouts<'a>(game: Option<&'a GameInput>, community: &'a [CommunityLayout]) -> Vec<Layout<'a>> {
     let mut layouts: Vec<Layout> = Preset::ALL.into_iter().map(Layout::Preset).collect();
     if let Some(actions) = game_actions(game)
         && game_layout(actions, &Changes::new()).1 > 0
     {
         layouts.push(Layout::Game(actions));
     }
+    layouts.extend(community.iter().map(Layout::Community));
     layouts
 }
 
@@ -255,23 +378,30 @@ fn game_actions(game: Option<&GameInput>) -> Option<&[GameAction]> {
 
 /// The layout row: the layout the changes are, or "Custom" (an extra, last option) after the
 /// user moved keys.
-fn layout_row(changes: &Changes, language: Language, game: Option<&GameInput>) -> Row {
-    let layouts = layouts(game);
+fn layout_row(
+    changes: &Changes,
+    language: Language,
+    game: Option<&GameInput>,
+    community: &[CommunityLayout],
+) -> Row {
+    let layouts = layouts(game, community);
     let mut options: Vec<String> = layouts
         .iter()
-        .map(|layout| {
-            match layout {
-                Layout::Preset(Preset::Classic) => Extra::LayoutLauncher,
-                Layout::Preset(Preset::MouseAndKeyboard) => Extra::LayoutMouse,
-                Layout::Game(_) => Extra::LayoutGame,
+        .map(|layout| match layout {
+            Layout::Preset(Preset::Classic) => Extra::LayoutLauncher.text(language).to_string(),
+            Layout::Preset(Preset::MouseAndKeyboard) => {
+                Extra::LayoutMouse.text(language).to_string()
             }
-            .text(language)
-            .to_string()
+            Layout::Game(_) => Extra::LayoutGame.text(language).to_string(),
+            Layout::Community(layout) => {
+                Share::LayoutCommunity.format(language, &[Arg::Str(&layout.name)])
+            }
         })
         .collect();
     let selected = layouts.iter().position(|layout| match layout {
         Layout::Preset(preset) => preset.changes() == *changes,
         Layout::Game(actions) => game_layout(actions, &Changes::new()).0 == *changes,
+        Layout::Community(layout) => layout.changes == *changes,
     });
     let selected = selected.unwrap_or_else(|| {
         options.push(Extra::LayoutCustom.text(language).to_string());
@@ -327,17 +457,18 @@ fn words(name: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The rows: the hint, the layout, one per pad action, reset.
+/// The rows: the hint, the layout, one per pad action, import, export, reset.
 pub fn build_rows(
     settings: &GameSettings,
     language: Language,
     capturing: Option<PadAction>,
     game: Option<&GameInput>,
+    community: &[CommunityLayout],
 ) -> Vec<Row> {
     let changes = settings.controls.clone().unwrap_or_default();
     let mut rows = vec![
         Row::info("hint", language.text(Key::ControlsHint), None),
-        layout_row(&changes, language, game),
+        layout_row(&changes, language, game, community),
     ];
     for (index, action) in PadAction::ALL.into_iter().enumerate() {
         let mut row = Row::keys(
@@ -360,7 +491,14 @@ pub fn build_rows(
         rows.push(row);
     }
     rows.push(
+        Row::command("import", Share::LayoutImport.text(language))
+            .icon(Icon::DOWNLOAD_SIMPLE)
+            .group_start(),
+    );
+    rows.push(Row::command("export", Share::LayoutExport.text(language)).icon(Icon::EXPORT));
+    rows.push(
         Row::command("reset", language.text(Key::ResetControls))
+            .group_start()
             .icon(Icon::ARROW_COUNTER_CLOCKWISE),
     );
     rows
@@ -610,11 +748,11 @@ mod tests {
     #[test]
     fn the_default_layout_shows_in_the_rows() {
         let settings = GameSettings::default();
-        let rows = build_rows(&settings, Language::English, None, None);
+        let rows = build_rows(&settings, Language::English, None, None, &[]);
         assert_eq!(
             rows.len(),
-            1 + 1 + 26 + 1,
-            "hint, layout, 26 actions, reset"
+            1 + 1 + 26 + 3,
+            "hint, layout, 26 actions, import, export, reset"
         );
         assert_eq!(rows[0].id, "hint");
         assert_eq!(rows[1].id, "layout");
@@ -634,7 +772,13 @@ mod tests {
         // Square has J and the left mouse button; give it K (Cross's key).
         let next = Controls::assign("KEY:K", PadAction::Square, &Default::default());
         settings.controls = Some(next);
-        let rows = build_rows(&settings, Language::English, Some(PadAction::Square), None);
+        let rows = build_rows(
+            &settings,
+            Language::English,
+            Some(PadAction::Square),
+            None,
+            &[],
+        );
         let square = rows.iter().find(|r| r.id == "Square").unwrap();
         let rows::Control::Keys { sources, capturing } = &square.control else {
             panic!("keys row");
@@ -672,6 +816,7 @@ mod tests {
             Language::English,
             None,
             Some(&input),
+            &[],
         );
         let detail = |id: &str| rows.iter().find(|r| r.id == id).unwrap().detail.clone();
         assert_eq!(detail("Cross").as_deref(), Some("Jump"));
@@ -691,7 +836,7 @@ mod tests {
             controls: Some(game_layout(game_actions(Some(&input)).unwrap(), &Changes::new()).0),
             ..Default::default()
         };
-        let rows = build_rows(&settings, Language::English, None, Some(&input));
+        let rows = build_rows(&settings, Language::English, None, Some(&input), &[]);
         let rows::Control::Choice { selected, .. } = &rows[1].control else {
             panic!("layout row");
         };
@@ -702,11 +847,76 @@ mod tests {
             settings.controls.as_ref().unwrap(),
         );
         settings.controls = Some(moved);
-        let rows = build_rows(&settings, Language::English, None, Some(&input));
+        let rows = build_rows(&settings, Language::English, None, Some(&input), &[]);
         let rows::Control::Choice { options, selected } = &rows[1].control else {
             panic!("layout row");
         };
         assert_eq!(options[*selected], "Custom");
+    }
+
+    #[test]
+    fn community_layouts_follow_the_presets_and_show_when_chosen() {
+        let shared = CommunityLayout {
+            name: "Mouse look".into(),
+            author: None,
+            description: None,
+            changes: Controls::assign("KEY:Z", PadAction::Circle, &Changes::new()),
+            tuning: None,
+        };
+        let community = [shared.clone()];
+        let mut settings = GameSettings::default();
+        let rows = build_rows(&settings, Language::English, None, None, &community);
+        let rows::Control::Choice { options, selected } = &rows[1].control else {
+            panic!("layout row");
+        };
+        assert_eq!(
+            options,
+            &["Launcher", "Mouse and Keyboard", "Community: Mouse look"]
+        );
+        assert_eq!(*selected, 0);
+        settings.controls = Some(shared.changes);
+        let rows = build_rows(&settings, Language::English, None, None, &community);
+        let rows::Control::Choice { selected, .. } = &rows[1].control else {
+            panic!("layout row");
+        };
+        assert_eq!(*selected, 2);
+        // Offline: nothing extra.
+        let rows = build_rows(&GameSettings::default(), Language::English, None, None, &[]);
+        let rows::Control::Choice { options, .. } = &rows[1].control else {
+            panic!("layout row");
+        };
+        assert_eq!(options.len(), 2);
+    }
+
+    #[test]
+    fn layout_files_are_read_with_the_line_of_the_first_mistake() {
+        let dir = std::env::temp_dir().join(format!("anyps5-layout-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.ini");
+        std::fs::write(
+            &file,
+            "Cross = KEY:F
+Jump = KEY:Space
+",
+        )
+        .unwrap();
+        assert_eq!(
+            read_layout(&file).unwrap_err(),
+            "Line 2: unknown action or setting \"Jump\"."
+        );
+        std::fs::write(
+            &file,
+            "Cross = KEY:F
+",
+        )
+        .unwrap();
+        assert_eq!(read_layout(&file).unwrap().changes["Cross"], ["KEY:F"]);
+        std::fs::write(&file, vec![0xff, 0xfe, 0x41]).unwrap();
+        assert_eq!(read_layout(&file).unwrap_err(), "The file cannot be read.");
+        std::fs::write(&file, vec![b'#'; 70_000]).unwrap();
+        assert_eq!(read_layout(&file).unwrap_err(), "The file cannot be read.");
+        assert!(read_layout(&dir.join("missing.ini")).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

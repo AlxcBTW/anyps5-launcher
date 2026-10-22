@@ -39,6 +39,7 @@ pub mod onboarding;
 pub mod rows;
 pub mod scroll;
 pub mod settings;
+pub mod share_strings;
 mod shared;
 pub mod side;
 pub mod start;

@@ -5,6 +5,8 @@
 //!   "Close". Back and select close it.
 //! * [`diagnosis_summary`]: the pipeline's `Diagnosis` as a sentence in the launcher's language.
 //! * [`save_report_with_dialog`]: the report text goes through a native save dialog.
+//! * [`ReviewData`]: the same view shows the text of a report to AnyPS5 before the browser opens
+//!   on the issue form (docs/DESIGN.md 5.19); its buttons are "Open GitHub" and "Cancel".
 
 use std::path::{Path, PathBuf};
 
@@ -16,6 +18,7 @@ use anyps5_core::diagnosis::Diagnosis;
 
 use crate::screens::ToastRequest;
 use crate::screens::dialogs;
+use crate::screens::share_strings::Share;
 use crate::screens::side::commands;
 use crate::screens::strings::Extra;
 use crate::ui::Shell;
@@ -121,6 +124,8 @@ pub enum LogAction {
     Close,
     /// The "Make a Report" button.
     MakeReport,
+    /// "Open GitHub" of the review: copy what is to be pasted and open the form.
+    OpenReport,
 }
 
 /// The log, borrowed for one frame.
@@ -130,6 +135,15 @@ pub struct LogData<'a> {
     /// The in-memory log, the failure message and the file's tail, as one text.
     pub text: &'a str,
     pub language: Language,
+    /// Set while the view shows a report to AnyPS5 instead of the log.
+    pub review: Option<ReviewData<'a>>,
+}
+
+/// What the review of a report adds to the view.
+#[derive(Clone, Copy)]
+pub struct ReviewData<'a> {
+    /// The sentence above the text: what happens next.
+    pub hint: &'a str,
 }
 
 /// The log overlay.
@@ -167,15 +181,25 @@ impl LogView {
         if !self.is_active() {
             return actions;
         }
-        // Back and select close it; everything else is swallowed by the host.
-        if self.open
-            && commands(events)
-                .iter()
-                .any(|c| matches!(c, Command::Back | Command::Select))
-        {
-            shell.play(Cue::Back);
-            self.close();
-            actions.push(LogAction::Close);
+        // Back closes it; so does select, except in the review, where it continues. Everything
+        // else is swallowed by the host.
+        if self.open {
+            for command in commands(events) {
+                match command {
+                    Command::Select if data.review.is_some() => {
+                        shell.play(Cue::Select);
+                        actions.push(LogAction::OpenReport);
+                        break;
+                    }
+                    Command::Back | Command::Select => {
+                        shell.play(Cue::Back);
+                        self.close();
+                        actions.push(LogAction::Close);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
         }
         let mut clicked = None;
         let drawn = fullscreen_panel(
@@ -195,9 +219,9 @@ impl LogView {
                     self.close();
                     actions.push(LogAction::Close);
                 }
-                Some(LogAction::MakeReport) => {
+                Some(action @ (LogAction::MakeReport | LogAction::OpenReport)) => {
                     shell.play(Cue::Select);
-                    actions.push(LogAction::MakeReport);
+                    actions.push(action);
                 }
                 None => {}
             }
@@ -213,9 +237,13 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
     let mut y = area.min.y;
 
     // Header: the title, then the two buttons on the right.
+    let heading = match data.review {
+        Some(_) => Share::Report.text(language),
+        None => language.text(Key::LogTitle),
+    };
     let title = match data.game_name {
-        Some(name) => format!("{} · {name}", language.text(Key::LogTitle)),
-        None => language.text(Key::LogTitle).to_owned(),
+        Some(name) => format!("{heading} · {name}"),
+        None => heading.to_owned(),
     };
     let header_h = 54.0;
     let header = Rect::from_min_size(pos2(area.min.x, y), vec2(area.width(), header_h));
@@ -237,8 +265,24 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
             .layout(Layout::right_to_left(egui::Align::Center)),
     );
     buttons.spacing_mut().item_spacing.x = 14.0;
-    // Right to left: Close first, then the report button to its left.
-    if ConsoleButton::new(language.text(Key::Close))
+    // Right to left: the main button first, then the other to its left.
+    if data.review.is_some() {
+        if ConsoleButton::new(Share::ReportOpen.text(language))
+            .icon(Icon::EXPORT)
+            .focused(true)
+            .show(&mut buttons)
+            .clicked()
+        {
+            *clicked = Some(LogAction::OpenReport);
+        }
+        if ConsoleButton::new(language.text(Key::Cancel))
+            .icon(Icon::X)
+            .show(&mut buttons)
+            .clicked()
+        {
+            *clicked = Some(LogAction::Close);
+        }
+    } else if ConsoleButton::new(language.text(Key::Close))
         .icon(Icon::X)
         .focused(true)
         .show(&mut buttons)
@@ -246,7 +290,8 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
     {
         *clicked = Some(LogAction::Close);
     }
-    if data.game_name.is_some()
+    if data.review.is_none()
+        && data.game_name.is_some()
         && ConsoleButton::new(language.text(Key::MakeReport))
             .icon(Icon::STETHOSCOPE)
             .show(&mut buttons)
@@ -256,8 +301,22 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
     }
     y += header_h + 18.0;
 
+    // The review's sentence: plain text, no box (it is no warning).
+    if let Some(review) = data.review {
+        let galley = text::layout(
+            &painter,
+            ty::DETAIL_LARGE,
+            review.hint,
+            white(0.7),
+            area.width().min(760.0),
+        );
+        let height = galley.size().y;
+        painter.galley(pos2(area.min.x, y), galley, white(0.7));
+        y += height + 18.0;
+    }
+
     // The diagnosis box.
-    if let Some(diagnosis) = data.diagnosis {
+    if let Some(diagnosis) = data.diagnosis.filter(|_| data.review.is_none()) {
         let sentence = diagnosis_summary(diagnosis, language);
         let inner_w = area.width() - 32.0 - 26.0;
         let galley = text::layout(
@@ -307,9 +366,13 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
     let body = data.text;
     let mut child = ui.new_child(UiBuilder::new().max_rect(inner));
     ScrollArea::vertical()
-        .id_salt("log-text")
+        .id_salt(if data.review.is_some() {
+            "review-text"
+        } else {
+            "log-text"
+        })
         .auto_shrink([false, false])
-        .stick_to_bottom(true)
+        .stick_to_bottom(data.review.is_none())
         .scroll_bar_visibility(
             egui::containers::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
         )
