@@ -275,7 +275,7 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
     // Right to left: the main button first, then the others to its left.
     if data.review.is_some() {
         if ConsoleButton::new(Share::ReportOpen.text(language))
-            .icon(Icon::EXPORT)
+            .icon(Icon::GITHUB_LOGO)
             .focused(true)
             .show(&mut buttons)
             .clicked()

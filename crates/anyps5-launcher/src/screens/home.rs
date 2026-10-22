@@ -229,17 +229,20 @@ fn top_bar(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<P
         (1u8, Icon::GEAR_SIX, language.text(Key::Settings)),
         (0u8, Icon::SQUARES_FOUR, language.text(Key::Library)),
     ];
+    // Right to left in one strip: a focused button makes room for itself, so the gap stays 12.
+    let strip = Rect::from_min_max(pos2(screen.min.x, top), pos2(x, top + size::ICON_BUTTON));
+    let mut row = ui.new_child(
+        UiBuilder::new()
+            .max_rect(strip)
+            .layout(Layout::right_to_left(Align::Center)),
+    );
+    row.spacing_mut().item_spacing.x = button_gap;
     for (index, icon, label) in buttons {
-        x -= size::ICON_BUTTON;
-        let rect = Rect::from_min_size(pos2(x, top), vec2(size::ICON_BUTTON, size::ICON_BUTTON));
         let focused = visible && cx.model.focus == HomeFocus::Top(index);
-        let response = place(ui, rect, |ui| {
-            IconButton::new(icon, label).focused(focused).show(ui)
-        });
+        let response = IconButton::new(icon, label).focused(focused).show(&mut row);
         if response.clicked() {
             presses.push(Press::Focus(HomeFocus::Top(index)));
         }
-        x -= button_gap;
     }
 }
 
@@ -544,7 +547,7 @@ fn paint_hero(
     let (primary_title, primary_icon, primary_fill) = primary_look(&state, language);
     let mut pressed = None;
     let after_buttons = place(ui, row, |ui| {
-        ui.spacing_mut().item_spacing.x = 16.0;
+        ui.spacing_mut().item_spacing.x = 12.0;
         let focused = |i: usize| visible && cx.model.focus == HomeFocus::Actions(i);
         let primary = ConsoleButton::new(primary_title)
             .icon(primary_icon)

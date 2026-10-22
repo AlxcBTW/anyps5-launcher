@@ -4,7 +4,7 @@
 //! ```text
 //! anyps5-launcher --gallery=settings|settings1..6|game-settings|confirm|controls|controls-capture|
 //!                           controls-end|advanced|trophies|banner|start|unlocking|log|report|library|
-//!                           about-update|behavior-links|toolkit|toolkit-update|toolkit-pinned|toolkit-local|
+//!                           about-update|behavior-links|toolkit|toolkit-update|toolkit-newer|toolkit-pinned|toolkit-local|
 //!                           recommended|recommended-warning|whats-new|whats-new-loading
 //!                 [--screenshot=out.png] [--size=WxH] [--tr]
 //! ```
@@ -93,6 +93,8 @@ pub enum ScreenPage {
 pub enum ToolkitLook {
     Stable,
     Update,
+    /// A toolkit newer than the launcher was tested with: its note hangs under the header.
+    Newer,
     Pinned,
     Local,
 }
@@ -118,6 +120,7 @@ pub fn parse(name: &str) -> Option<ScreenPage> {
         "behavior-links" => ScreenPage::BehaviourLinks,
         "toolkit" => ScreenPage::Toolkit(ToolkitLook::Stable),
         "toolkit-update" => ScreenPage::Toolkit(ToolkitLook::Update),
+        "toolkit-newer" => ScreenPage::Toolkit(ToolkitLook::Newer),
         "toolkit-pinned" => ScreenPage::Toolkit(ToolkitLook::Pinned),
         "toolkit-local" => ScreenPage::Toolkit(ToolkitLook::Local),
         "recommended" => ScreenPage::Recommended,
@@ -401,6 +404,7 @@ impl ScreenGallery {
             match look {
                 ToolkitLook::Stable => {}
                 ToolkitLook::Update => update = UpdateState::Available("0.1.4".into()),
+                ToolkitLook::Newer => toolkit_version = "0.1.9-c0ffee".into(),
                 ToolkitLook::Pinned => {
                     prefs.toolkit_pinned = Some("v0.1.2".into());
                     toolkit_version = "0.1.2-9d1e47".into();

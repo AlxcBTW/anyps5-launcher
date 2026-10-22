@@ -578,9 +578,12 @@ pub mod pad {
     pub const HERO_X: f32 = 64.0;
     pub const HINT_Y: f32 = 28.0;
     pub const ONBOARDING: (f32, f32) = (110.0, 80.0);
+    /// The top of a full-screen panel's header: the Windows caption buttons are 32 dp tall in the
+    /// corner, and the header keeps this much clear of them.
+    pub const PANEL_TOP: f32 = super::size::CAPTION_BUTTON.1 + 32.0;
     pub const SETTINGS: (f32, f32, f32) = (90.0, 70.0, 50.0); // horizontal, top, bottom
-    pub const LIBRARY: (f32, f32) = (90.0, 60.0);
-    pub const TROPHIES: (f32, f32) = (90.0, 56.0);
+    pub const LIBRARY: (f32, f32) = (90.0, PANEL_TOP);
+    pub const TROPHIES: (f32, f32) = (90.0, PANEL_TOP);
     pub const LOG: f32 = 90.0;
 }
 

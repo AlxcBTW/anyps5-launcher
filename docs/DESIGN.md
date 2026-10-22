@@ -722,8 +722,24 @@ The launcher keeps the port's structure but trims what read as noise next to the
   Now" no longer repeats "Update available" (the row above says it) and shows the last check;
   "What's New" uses the document glyph, not the menu one.
 - **Review pass.** Recommended titles are in title case like every row; its hint says what to do
-  after applying; the Apply or Close row has the double gap above it. Left as designed: the focused
-  row and button grow 3 dp (a primary next to a button looks 7 dp away), documented above.
+  after applying; the Apply or Close row has the double gap above it.
+- **Buttons keep their gap when focused.** A focused console or icon button grows a fixed 3 dp on
+  every side (`FOCUS_GROW`), and the layout reserves that room while it is focused, so the
+  neighbour moves aside by the same amount instead of the gap closing to 7 dp. Every row of
+  buttons is 12 dp apart (the hero's was 16, the notes header's 14, the onboarding's 18); the
+  top bar is one right-to-left strip so its two buttons do the same. Panel rows are a list, not
+  buttons: they keep the 3 dp grow over the 8 dp row gap.
+- **Commands read as commands.** "Check Now" is its title and icon alone, like "Install the
+  Update"; what the last check found hangs under it as a note (`Row::attached`). A detail line
+  under a command looked like the description of a status row.
+- **Caption corner.** Full-screen panels start their header at `pad::PANEL_TOP` (the 32 dp caption
+  buttons plus 32 dp), so a button row on the right never touches the window buttons (the notes
+  header sat 3 dp off them at 1280 x 720). Settings and the log were already lower.
+- **One GitHub button.** "Open on GitHub" in the notes and in the report review has the same
+  words and the same glyph (`github-logo`).
+- **A steady toolkit header.** The toolkit version row is one line always; the note about a toolkit
+  newer or older than the launcher was tested with is its own attached row below it, so the
+  title no longer moves up when it appears (gallery scene `toolkit-newer`).
 - **Gallery scenes** `about-update` (About with a staged update, focus on "Restart Now") and
   `behavior-links` (links registered here) cover the two states that had none.
 - **Start-up and idle** (docs below measured on the demo preview, release build, AMD 880M plus RTX

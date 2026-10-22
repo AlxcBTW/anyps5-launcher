@@ -11,7 +11,8 @@ stethoscope file-text paint-brush globe sliders-horizontal wrench info palette c
 user-circle speaker-high music-notes discord-logo eye-slash power rectangle frame-corners app-window arrows-out-simple wave-sine keyboard
 sliders gauge translate sparkle trash mouse arrows-down-up chart-line-up crosshair timer person-simple-walk
 export download-simple arrow-counter-clockwise circle list hand-pointing arrows-out-cardinal camera text-aa
-x-circle arrow-right check question folder-open folder-simple-dashed arrow-up arrow-down arrow-left link`.split(/\s+/);
+x-circle arrow-right check question folder-open folder-simple-dashed arrow-up arrow-down arrow-left link
+github-logo floppy-disk clock-counter-clockwise`.split(/\s+/);
 
 const BS = String.fromCharCode(92);
 const lines = [];

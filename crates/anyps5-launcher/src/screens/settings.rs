@@ -356,13 +356,22 @@ pub fn build_categories(
         || Extra::ToolkitMissing.text(language).to_owned(),
         str::to_owned,
     );
-    let mut toolkit_row = Row::info("toolkit", t(Key::ToolkitVersion), Some(toolkit_value));
+    // The header row is one line, always: a note under it would centre the title higher. The note
+    // about a toolkit this launcher was not tested with hangs under the row as its own.
+    let mut toolkit = vec![Row::info(
+        "toolkit",
+        t(Key::ToolkitVersion),
+        Some(toolkit_value),
+    )];
     match env.toolkit_version.map(compat::fit) {
-        Some(Fit::Newer) => toolkit_row = toolkit_row.detail(Extra::FitNewer.text(language)),
-        Some(Fit::Older) => toolkit_row = toolkit_row.detail(Extra::FitOlder.text(language)),
+        Some(Fit::Newer) => {
+            toolkit.push(Row::info("toolkitFit", Extra::FitNewer.text(language), None).attached());
+        }
+        Some(Fit::Older) => {
+            toolkit.push(Row::info("toolkitFit", Extra::FitOlder.text(language), None).attached());
+        }
         _ => {}
     }
-    let mut toolkit = vec![toolkit_row];
     toolkit.push(
         Row::choice(
             "channel",
@@ -460,11 +469,11 @@ pub fn build_categories(
             .icon(Icon::ARROWS_CLOCKWISE)
             .group_start(),
         );
+        // The command is its title alone; what the last check found hangs under it as a note.
         toolkit.push(
-            Row::command("checkNow", Extra::CheckNow.text(language))
-                .detail(status.unwrap_or(last_checked))
-                .icon(Icon::ARROW_CLOCKWISE),
+            Row::command("checkNow", Extra::CheckNow.text(language)).icon(Icon::ARROW_CLOCKWISE),
         );
+        toolkit.push(Row::info("checkStatus", status.unwrap_or(last_checked), None).attached());
     }
     toolkit.push(
         Row::choice(
