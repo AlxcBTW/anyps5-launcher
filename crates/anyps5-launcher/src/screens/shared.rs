@@ -1,8 +1,6 @@
 //! Helpers shared by the home screen, the onboarding and the host: the screen context, state
 //! labels, wrapped and centred text, gradients and the glass cards over the artwork.
 
-
-
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
 use egui::text::LayoutJob;
 use egui::{

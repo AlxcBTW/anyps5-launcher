@@ -1194,10 +1194,7 @@ mod tests {
             diagnosis: None,
         });
         assert!(m.starting.is_none() && m.running.is_none());
-        assert_eq!(
-            m.toast.as_ref().unwrap().text,
-            "The game could not start"
-        );
+        assert_eq!(m.toast.as_ref().unwrap().text, "The game could not start");
     }
 
     #[test]

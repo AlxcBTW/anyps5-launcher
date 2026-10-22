@@ -423,7 +423,11 @@ fn hero(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<Pres
             screen,
             &game,
             t,
-            (1.0 - t) * HERO_SWAP_OFFSET,
+            if ctx.reduced_motion() {
+                0.0
+            } else {
+                (1.0 - t) * HERO_SWAP_OFFSET
+            },
             true,
             presses,
         );
@@ -491,6 +495,19 @@ fn paint_hero(
         let style = text::scaled(ty::HERO_TITLE, 1.0 - 0.1 * step as f32);
         title = wrapped(&painter, style, &game.name, Color32::WHITE, width, 2);
     }
+    // A low window must not push a two-line title over the tile row.
+    let tiles_bottom =
+        screen.min.y + pad::HOME_TOP + size::ICON_BUTTON + 34.0 + size::TILE_LARGE + 24.0;
+    if geometry.title_bottom - title.size().y < tiles_bottom {
+        title = wrapped(
+            &painter,
+            ty::HERO_TITLE,
+            &game.name,
+            Color32::WHITE,
+            width,
+            1,
+        );
+    }
     let title_height = title.size().y;
     painter.galley(
         pos2(x, geometry.title_bottom - title_height),
@@ -521,6 +538,7 @@ fn paint_hero(
         }
         if let Some(text) = &trophy_text {
             let response = ConsoleButton::new(text)
+                .accessible_name(format!("{}, {}", language.text(Key::Trophies), text))
                 .icon(Icon::TROPHY)
                 .icon_fill(true)
                 .focused(focused(1))
@@ -811,15 +829,17 @@ fn empty_library(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut
         Color32::WHITE,
     );
     y += ty::EMPTY_TITLE.line_height() + 18.0;
-    text::paint(
+    let body_galley = crate::screens::wrapped_centered(
         &painter,
-        pos2(cx_mid, y),
-        Align2::CENTER_TOP,
         theme::TextStyle::new(17.0, Weight::Regular),
         body,
         white(0.65),
+        (screen.width() - 2.0 * pad::HOME_X).min(720.0),
+        3,
     );
-    y += rows[2] + 18.0;
+    let body_height = body_galley.size().y;
+    painter.galley(pos2(cx_mid, y), body_galley, white(0.65));
+    y += body_height.max(rows[2]) + 18.0;
     if let Some(folder) = folder {
         let shown = text::middle_truncate(
             &painter,
@@ -833,7 +853,7 @@ fn empty_library(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut
             Align2::CENTER_TOP,
             ty::DETAIL,
             &shown,
-            white(0.45),
+            white(0.6),
         );
         y += ty::DETAIL.line_height() + 18.0;
     }

@@ -68,7 +68,12 @@ pub fn show(ui: &mut Ui, cx: &mut ScreenCx<'_>) {
         }
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(screen));
         child.set_opacity((1.0 - d.abs()) * ui.painter().opacity());
-        let origin = pos2(left - STEP_SLIDE * d, content_top);
+        let slide = if cx.ctx.reduced_motion() {
+            0.0
+        } else {
+            STEP_SLIDE
+        };
+        let origin = pos2(left - slide * d, content_top);
         match index {
             0 => language_step(&mut child, cx, origin, language, &mut presses),
             1 => theme_step(&mut child, cx, origin, language, &mut presses),
@@ -417,7 +422,7 @@ fn folder_step(
         Align2::LEFT_TOP,
         ty::DETAIL,
         &shown,
-        white(0.5),
+        white(0.6),
     );
     y = card.max.y + 22.0;
 

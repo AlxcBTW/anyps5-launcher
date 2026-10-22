@@ -390,7 +390,6 @@ impl LauncherApp {
         self.start_screen.show(&mut self.shell, ctx, &[], &data);
     }
 
-
     fn paint_overlays(&mut self, ui: &mut Ui, ctx: &Context) {
         if let Some(open) = self.model.overlay
             && !self.overlays_shown.contains(&open)
