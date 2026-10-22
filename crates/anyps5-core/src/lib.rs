@@ -14,6 +14,7 @@ pub mod patches;
 pub mod paths;
 pub mod process;
 pub mod report;
+pub mod selfupdate;
 pub mod settings;
 pub mod toolkit;
 pub mod trophies;

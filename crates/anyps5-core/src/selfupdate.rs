@@ -1,0 +1,881 @@
+//! The launcher updating itself from its own GitHub releases.
+//!
+//! The flow has four steps and each is one call:
+//!
+//! 1. [`check`] asks GitHub for the latest release and returns it when it is newer than the running
+//!    version (semver, pre-releases included).
+//! 2. [`stage`] downloads the portable `AnyPS5-Launcher-<v>-x64.exe` into
+//!    `%LOCALAPPDATA%\AnyPS5\Updates`, verifies it against the release's `SHA256SUMS.txt` and
+//!    returns a [`Staged`] update. A missing or wrong checksum refuses the update and leaves
+//!    nothing behind. It also refuses early when the running exe's folder is not writable.
+//! 3. [`Staged::swap_in`] replaces the running exe. Windows cannot overwrite a running exe but can
+//!    rename it: the running exe moves to `<name>.old`, the new one takes its place, and a failed
+//!    second step moves the old one back. [`Staged::restart`] does that and starts the new exe.
+//! 4. [`cleanup`] at the next start deletes the `.old` files and stale downloads.
+//!
+//! [`pending`] finds an update staged by an earlier run (the player closed the launcher before the
+//! swap could happen, or it failed), so it is offered again without a second download.
+//!
+//! Nothing here keeps state: the host owns the threads and decides when to swap.
+
+use std::cmp::Ordering;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use crate::error::CancelToken;
+use crate::paths::AppPaths;
+use crate::toolkit::{self, Asset, ToolkitError};
+
+/// Where the releases live.
+pub const REPOSITORY: &str = "AlxcBTW/anyps5-launcher";
+
+const SUMS_NAME: &str = "SHA256SUMS.txt";
+const EXE_PREFIX: &str = "AnyPS5-Launcher-";
+const EXE_SUFFIX: &str = "-x64.exe";
+
+#[derive(Debug, thiserror::Error)]
+pub enum SelfUpdateError {
+    #[error("{0}")]
+    Network(String),
+    #[error("the release has no portable exe or no checksum list")]
+    NoRelease,
+    #[error("the release lists no checksum for {0}")]
+    NoChecksum(String),
+    #[error("the download does not match its checksum")]
+    Digest,
+    #[error("the download is not a Windows program")]
+    NotAnExecutable,
+    /// The folder of the running exe refuses new files (a read-only or protected location).
+    #[error("cannot write to {}", .0.display())]
+    NotWritable(PathBuf),
+    #[error("{0}")]
+    Io(#[from] io::Error),
+    #[error("cancelled")]
+    Cancelled,
+}
+
+impl From<ToolkitError> for SelfUpdateError {
+    fn from(error: ToolkitError) -> Self {
+        match error {
+            ToolkitError::NoRelease => SelfUpdateError::NoRelease,
+            ToolkitError::Digest => SelfUpdateError::Digest,
+            ToolkitError::Cancelled => SelfUpdateError::Cancelled,
+            ToolkitError::Io(error) => SelfUpdateError::Io(error),
+            other => SelfUpdateError::Network(other.to_string()),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Versions
+
+/// One dot-separated part of a pre-release tag (`rc`, `1`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Part {
+    Number(u64),
+    Text(String),
+}
+
+impl Ord for Part {
+    /// Numbers sort below text and compare as numbers; text compares as ASCII (semver 11.4).
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Part::Number(a), Part::Number(b)) => a.cmp(b),
+            (Part::Number(_), Part::Text(_)) => Ordering::Less,
+            (Part::Text(_), Part::Number(_)) => Ordering::Greater,
+            (Part::Text(a), Part::Text(b)) => a.cmp(b),
+        }
+    }
+}
+
+impl PartialOrd for Part {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// A semantic version: `major.minor.patch`, an optional `-pre.release` and ignored `+build`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Version {
+    core: [u64; 3],
+    pre: Vec<Part>,
+}
+
+impl Version {
+    /// Reads `0.2.0`, `v0.2.0` or `0.2.0-rc.1+abc`; `None` for anything else.
+    pub fn parse(text: &str) -> Option<Version> {
+        let text = text.trim();
+        let text = text.strip_prefix('v').unwrap_or(text);
+        let text = text.split_once('+').map_or(text, |(rest, _)| rest);
+        let (core, pre) = match text.split_once('-') {
+            Some((core, pre)) => (core, Some(pre)),
+            None => (text, None),
+        };
+        let mut numbers = core.split('.');
+        let mut next = || -> Option<u64> {
+            let part = numbers.next()?;
+            let plain = !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+            // No leading zeros, like semver.
+            (plain && (part == "0" || !part.starts_with('0')))
+                .then(|| part.parse().ok())
+                .flatten()
+        };
+        let core = [next()?, next()?, next()?];
+        if numbers.next().is_some() {
+            return None;
+        }
+        let pre = match pre {
+            None => Vec::new(),
+            Some(pre) => pre
+                .split('.')
+                .map(|part| {
+                    let valid = !part.is_empty()
+                        && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+                    if !valid {
+                        None
+                    } else if part.bytes().all(|b| b.is_ascii_digit()) {
+                        part.parse().ok().map(Part::Number)
+                    } else {
+                        Some(Part::Text(part.to_owned()))
+                    }
+                })
+                .collect::<Option<Vec<_>>>()?,
+        };
+        Some(Version { core, pre })
+    }
+
+    pub fn is_prerelease(&self) -> bool {
+        !self.pre.is_empty()
+    }
+}
+
+impl Ord for Version {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.core.cmp(&other.core).then_with(|| {
+            match (self.pre.is_empty(), other.pre.is_empty()) {
+                (true, true) => Ordering::Equal,
+                // A release is newer than its own pre-releases.
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
+                (false, false) => self.pre.cmp(&other.pre),
+            }
+        })
+    }
+}
+
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Whether `latest` is a newer version than `current`; garbage is never newer.
+pub fn is_newer(latest: &str, current: &str) -> bool {
+    match (Version::parse(latest), Version::parse(current)) {
+        (Some(latest), Some(current)) => latest > current,
+        _ => false,
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Releases
+
+/// A newer launcher release with the two files [`stage`] needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Release {
+    /// As published, with the leading `v`.
+    pub tag: String,
+    exe: Asset,
+    sums: Asset,
+}
+
+impl Release {
+    /// The version without the leading `v`: what the player reads.
+    pub fn version(&self) -> &str {
+        self.tag.trim_start_matches('v')
+    }
+}
+
+/// The name of the portable exe of a version.
+fn exe_name(version: &str) -> String {
+    format!("{EXE_PREFIX}{version}{EXE_SUFFIX}")
+}
+
+/// The version in a staged file's name.
+fn version_of_exe_name(name: &str) -> Option<&str> {
+    name.strip_prefix(EXE_PREFIX)?.strip_suffix(EXE_SUFFIX)
+}
+
+/// Reads the JSON of `releases/latest`: the release when its tag is newer than `current`, `None`
+/// when it is not (its files are then not looked at), an error when it is newer but lacks the
+/// portable exe or the checksum list.
+pub fn parse_latest(json: &str, current: &str) -> Result<Option<Release>, SelfUpdateError> {
+    let value: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| SelfUpdateError::Network(format!("bad release data: {e}")))?;
+    let text =
+        |v: &serde_json::Value, key: &str| v.get(key).and_then(|x| x.as_str()).map(str::to_owned);
+    let tag = text(&value, "tag_name").ok_or(SelfUpdateError::NoRelease)?;
+    if !is_newer(&tag, current) {
+        return Ok(None);
+    }
+    let assets = value
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .ok_or(SelfUpdateError::NoRelease)?;
+    let find = |name: &str| {
+        assets
+            .iter()
+            .find(|a| text(a, "name").as_deref() == Some(name))
+            .and_then(|a| {
+                Some(Asset {
+                    name: name.to_owned(),
+                    url: text(a, "browser_download_url")?,
+                    size: a.get("size").and_then(|s| s.as_u64()).unwrap_or(0),
+                    sha256: None,
+                })
+            })
+    };
+    let version = tag.trim_start_matches('v');
+    let exe = find(&exe_name(version)).ok_or(SelfUpdateError::NoRelease)?;
+    let sums = find(SUMS_NAME).ok_or(SelfUpdateError::NoRelease)?;
+    Ok(Some(Release { tag, exe, sums }))
+}
+
+/// Asks GitHub whether a release newer than `current` exists. Blocking: call from a worker thread.
+pub fn check(current: &str) -> Result<Option<Release>, SelfUpdateError> {
+    check_at(toolkit::API_BASE, REPOSITORY, current)
+}
+
+/// [`check`] against another API host and repository (tests).
+pub fn check_at(
+    api_base: &str,
+    repo: &str,
+    current: &str,
+) -> Result<Option<Release>, SelfUpdateError> {
+    parse_latest(&toolkit::latest_release_json(api_base, repo)?, current)
+}
+
+/// The SHA-256 (lower case hex) that a `SHA256SUMS.txt` lists for `file`. Lines look like
+/// `<hex> *<file>` (binary) or `<hex>  <file>` (text).
+pub fn checksum_for(sums: &str, file: &str) -> Option<String> {
+    sums.lines().find_map(|line| {
+        let (hash, name) = line.trim().split_once(char::is_whitespace)?;
+        let name = name.trim_start().trim_start_matches('*');
+        let valid = hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit());
+        (valid && name == file).then(|| hash.to_ascii_lowercase())
+    })
+}
+
+// ---------------------------------------------------------------------------------------------
+// Staging
+
+/// A downloaded, verified update waiting for the swap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Staged {
+    /// Without the leading `v`.
+    pub version: String,
+    pub path: PathBuf,
+}
+
+/// Where downloads wait: `%LOCALAPPDATA%\AnyPS5\Updates`.
+pub fn updates_dir(paths: &AppPaths) -> PathBuf {
+    paths.data.join("Updates")
+}
+
+/// Downloads `release` and verifies it, so the swap can be done at any time. `exe` is the running
+/// exe: when its folder cannot be written the update is refused before anything is downloaded.
+/// `progress` gets the share (0..=1) of the download. A file left by an earlier run that has the
+/// right size is reused (only verified files get their final name).
+pub fn stage(
+    release: &Release,
+    exe: &Path,
+    paths: &AppPaths,
+    progress: &mut dyn FnMut(f64),
+    cancel: &CancelToken,
+) -> Result<Staged, SelfUpdateError> {
+    ensure_writable(exe.parent().unwrap_or(Path::new(".")))?;
+    let dir = updates_dir(paths);
+    fs::create_dir_all(&dir)?;
+    let staged = Staged {
+        version: release.version().to_owned(),
+        path: dir.join(&release.exe.name),
+    };
+    let size = release.exe.size;
+    if let Ok(meta) = fs::metadata(&staged.path)
+        && meta.is_file()
+        && (size == 0 || meta.len() == size)
+    {
+        return Ok(staged);
+    }
+
+    let sums = toolkit::download_text(&release.sums.url)?;
+    let want = checksum_for(&sums, &release.exe.name)
+        .ok_or_else(|| SelfUpdateError::NoChecksum(release.exe.name.clone()))?;
+    let verified = Asset {
+        sha256: Some(want),
+        ..release.exe.clone()
+    };
+    let part = staged.path.with_extension("exe.part");
+    let result = toolkit::download_to(&toolkit::agent(None), &verified, &part, progress, cancel)
+        .map_err(SelfUpdateError::from)
+        .and_then(|()| check_executable(&part));
+    match result {
+        Ok(()) => {
+            fs::rename(&part, &staged.path)?;
+            Ok(staged)
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&part);
+            Err(error)
+        }
+    }
+}
+
+/// A Windows program starts with `MZ`: a cheap check against a saved error page.
+fn check_executable(path: &Path) -> Result<(), SelfUpdateError> {
+    let mut head = [0u8; 2];
+    io::Read::read_exact(&mut fs::File::open(path)?, &mut head)
+        .map_err(|_| SelfUpdateError::NotAnExecutable)?;
+    if &head == b"MZ" {
+        Ok(())
+    } else {
+        Err(SelfUpdateError::NotAnExecutable)
+    }
+}
+
+/// Whether an update can be installed over `exe`: its folder accepts new files.
+pub fn can_install(exe: &Path) -> bool {
+    ensure_writable(exe.parent().unwrap_or(Path::new("."))).is_ok()
+}
+
+/// Whether new files can be created in `dir`.
+fn ensure_writable(dir: &Path) -> Result<(), SelfUpdateError> {
+    let probe = dir.join(format!(".anyps5-write-test-{}", std::process::id()));
+    match fs::File::create(&probe) {
+        Ok(_) => {
+            let _ = fs::remove_file(&probe);
+            Ok(())
+        }
+        Err(_) => Err(SelfUpdateError::NotWritable(dir.to_path_buf())),
+    }
+}
+
+/// An update staged by an earlier run: the newest staged exe that is newer than `current`.
+pub fn pending(paths: &AppPaths, current: &str) -> Option<Staged> {
+    fs::read_dir(updates_dir(paths))
+        .ok()?
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let version = version_of_exe_name(&name)?.to_owned();
+            if !is_newer(&version, current) || !entry.path().is_file() {
+                return None;
+            }
+            Some((Version::parse(&version)?, version, entry.path()))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, version, path)| Staged { version, path })
+}
+
+// ---------------------------------------------------------------------------------------------
+// The swap
+
+impl Staged {
+    /// Replaces the exe at `exe` (normally the running one) with the staged file.
+    ///
+    /// The staged file is first copied beside `exe` (it may sit on another drive, and a rename
+    /// needs one), then `exe` is renamed to `<name>.old` and the copy to `exe`. If the second
+    /// rename fails the first is undone, so `exe` is never left missing. The staged file is
+    /// deleted afterwards. The running process keeps running from the `.old` file.
+    pub fn swap_in(&self, exe: &Path) -> Result<(), SelfUpdateError> {
+        let dir = exe.parent().unwrap_or(Path::new("."));
+        let name = exe
+            .file_name()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?
+            .to_string_lossy()
+            .into_owned();
+        let incoming = dir.join(format!("{name}.new"));
+        let _ = fs::remove_file(&incoming);
+        fs::copy(&self.path, &incoming).map_err(|e| writable_or(e, dir))?;
+        let old = free_old_name(dir, &name);
+        if let Err(error) = fs::rename(exe, &old) {
+            let _ = fs::remove_file(&incoming);
+            return Err(writable_or(error, dir));
+        }
+        if let Err(error) = fs::rename(&incoming, exe) {
+            let _ = fs::rename(&old, exe);
+            let _ = fs::remove_file(&incoming);
+            return Err(writable_or(error, dir));
+        }
+        let _ = fs::remove_file(&self.path);
+        Ok(())
+    }
+
+    /// [`swap_in`](Self::swap_in), then starts the new exe with `args`. The caller closes this
+    /// process afterwards.
+    pub fn restart(
+        &self,
+        exe: &Path,
+        args: impl IntoIterator<Item = std::ffi::OsString>,
+    ) -> Result<(), SelfUpdateError> {
+        self.swap_in(exe)?;
+        Command::new(exe).args(args).spawn()?;
+        Ok(())
+    }
+}
+
+fn writable_or(error: io::Error, dir: &Path) -> SelfUpdateError {
+    if error.kind() == io::ErrorKind::PermissionDenied {
+        SelfUpdateError::NotWritable(dir.to_path_buf())
+    } else {
+        SelfUpdateError::Io(error)
+    }
+}
+
+/// `<name>.old`, or `<name>.old1`, ... when an earlier one is still locked by a running process.
+fn free_old_name(dir: &Path, name: &str) -> PathBuf {
+    let mut candidate = dir.join(format!("{name}.old"));
+    for n in 1..100 {
+        if !candidate.exists() || fs::remove_file(&candidate).is_ok() {
+            break;
+        }
+        candidate = dir.join(format!("{name}.old{n}"));
+    }
+    candidate
+}
+
+/// At start: deletes what the last swap left. `<name>.old*` and `<name>.new` beside `exe`, and in
+/// the updates folder the partial downloads and every staged exe that is not newer than
+/// `current`. Best effort: a file that is still in use stays for the next start.
+pub fn cleanup(exe: &Path, paths: &AppPaths, current: &str) {
+    if let (Some(dir), Some(name)) = (exe.parent(), exe.file_name()) {
+        let name = name.to_string_lossy().into_owned();
+        for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let other = entry.file_name().to_string_lossy().into_owned();
+            let leftover = other
+                .strip_prefix(&name)
+                .is_some_and(|rest| rest == ".new" || rest.starts_with(".old"));
+            if leftover {
+                remove(&entry.path());
+            }
+        }
+    }
+    for entry in fs::read_dir(updates_dir(paths))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let stale = name.ends_with(".part")
+            || version_of_exe_name(&name).is_some_and(|v| !is_newer(v, current));
+        if stale {
+            remove(&entry.path());
+        }
+    }
+}
+
+fn remove(path: &Path) {
+    if let Err(error) = fs::remove_file(path) {
+        tracing::debug!("cannot delete {}: {error}", path.display());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+    use std::time::Duration;
+
+    fn v(text: &str) -> Version {
+        Version::parse(text).unwrap_or_else(|| panic!("{text} should parse"))
+    }
+
+    #[test]
+    fn versions_compare_as_semver() {
+        assert!(is_newer("0.1.2", "0.1.1"));
+        assert!(is_newer("v0.1.10", "0.1.9"));
+        assert!(is_newer("1.0.0", "0.99.99"));
+        assert!(!is_newer("0.1.1", "0.1.1"));
+        assert!(!is_newer("0.1.0", "0.1.1"));
+        // Build metadata does not count, a leading v is fine.
+        assert!(!is_newer("v0.1.1+abc", "0.1.1+def"));
+    }
+
+    #[test]
+    fn prereleases_sort_below_their_release() {
+        assert!(v("0.2.0-rc.1") < v("0.2.0"));
+        assert!(v("0.2.0") > v("0.2.0-rc.9"));
+        assert!(v("0.1.9") < v("0.2.0-alpha"));
+        // The examples of the semver spec, in order.
+        let order = [
+            "1.0.0-alpha",
+            "1.0.0-alpha.1",
+            "1.0.0-alpha.beta",
+            "1.0.0-beta",
+            "1.0.0-beta.2",
+            "1.0.0-beta.11",
+            "1.0.0-rc.1",
+            "1.0.0",
+        ];
+        for pair in order.windows(2) {
+            assert!(v(pair[0]) < v(pair[1]), "{} < {}", pair[0], pair[1]);
+        }
+        // A running pre-release is updated to the release it leads to.
+        assert!(is_newer("0.2.0", "0.2.0-rc.1"));
+        assert!(!is_newer("0.2.0-rc.1", "0.2.0"));
+        assert!(v("0.2.0-rc.1").is_prerelease() && !v("0.2.0").is_prerelease());
+    }
+
+    #[test]
+    fn garbage_is_never_newer() {
+        for bad in [
+            "",
+            "latest",
+            "1",
+            "1.2",
+            "1.2.3.4",
+            "01.2.3",
+            "1.2.x",
+            "1.2.3-",
+            "1.2.3-a..b",
+        ] {
+            assert!(Version::parse(bad).is_none(), "{bad:?}");
+            assert!(!is_newer(bad, "0.0.1"), "{bad:?}");
+        }
+        assert!(!is_newer("9.9.9", "nightly"));
+    }
+
+    const SUMS_HASH: &str = "ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12";
+
+    fn release_json(tag: &str, base: &str, with_sums: bool, with_exe: bool) -> String {
+        let version = tag.trim_start_matches('v');
+        let mut assets = vec![format!(
+            r#"{{"name": "AnyPS5-Launcher-{version}-Setup.exe", "size": 5, "browser_download_url": "{base}/setup"}}"#
+        )];
+        if with_exe {
+            assets.push(format!(
+                r#"{{"name": "AnyPS5-Launcher-{version}-x64.exe", "size": 4, "browser_download_url": "{base}/exe"}}"#
+            ));
+        }
+        if with_sums {
+            assets.push(format!(
+                r#"{{"name": "SHA256SUMS.txt", "size": 9, "browser_download_url": "{base}/sums"}}"#
+            ));
+        }
+        format!(
+            r#"{{"tag_name": "{tag}", "assets": [{}]}}"#,
+            assets.join(",")
+        )
+    }
+
+    #[test]
+    fn the_portable_exe_is_chosen_over_the_installer() {
+        let json = release_json("v0.2.0", "http://x", true, true);
+        let release = parse_latest(&json, "0.1.1").unwrap().unwrap();
+        assert_eq!(release.version(), "0.2.0");
+        assert_eq!(release.exe.name, "AnyPS5-Launcher-0.2.0-x64.exe");
+        assert_eq!(release.exe.url, "http://x/exe");
+        assert_eq!(release.sums.name, "SHA256SUMS.txt");
+    }
+
+    #[test]
+    fn an_old_or_equal_release_needs_no_assets() {
+        let json = r#"{"tag_name": "v0.1.1", "assets": []}"#;
+        assert_eq!(parse_latest(json, "0.1.1").unwrap(), None);
+        assert_eq!(parse_latest(json, "0.3.0").unwrap(), None);
+    }
+
+    #[test]
+    fn a_newer_release_without_the_files_is_an_error() {
+        let no_exe = release_json("v0.2.0", "http://x", true, false);
+        assert!(matches!(
+            parse_latest(&no_exe, "0.1.1"),
+            Err(SelfUpdateError::NoRelease)
+        ));
+        let no_sums = release_json("v0.2.0", "http://x", false, true);
+        assert!(matches!(
+            parse_latest(&no_sums, "0.1.1"),
+            Err(SelfUpdateError::NoRelease)
+        ));
+        assert!(parse_latest("not json", "0.1.1").is_err());
+        assert!(parse_latest("{}", "0.1.1").is_err());
+    }
+
+    #[test]
+    fn checksums_are_found_by_file_name() {
+        let sums = format!(
+            "{} *AnyPS5-Launcher-0.2.0-Setup.exe\n{} *AnyPS5-Launcher-0.2.0-x64.exe\n{}  other.txt\n",
+            "11".repeat(32),
+            SUMS_HASH.to_ascii_uppercase(),
+            "22".repeat(32),
+        );
+        assert_eq!(
+            checksum_for(&sums, "AnyPS5-Launcher-0.2.0-x64.exe").as_deref(),
+            Some(SUMS_HASH)
+        );
+        assert_eq!(checksum_for(&sums, "other.txt"), Some("22".repeat(32)));
+        assert_eq!(checksum_for(&sums, "missing.exe"), None);
+        // A short or non-hex hash is not a checksum.
+        assert_eq!(checksum_for("abc *f.exe\n", "f.exe"), None);
+        assert_eq!(
+            checksum_for(&format!("{} *f.exe", "zz".repeat(32)), "f.exe"),
+            None
+        );
+    }
+
+    /// Serves fixed bodies on localhost until the returned flag is set.
+    fn serve(routes: Vec<(&'static str, Vec<u8>)>) -> (String, Arc<AtomicBool>) {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", server.server_addr().to_ip().unwrap());
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        std::thread::spawn(move || {
+            while !flag.load(AtomicOrdering::SeqCst) {
+                let Ok(Some(request)) = server.recv_timeout(Duration::from_millis(50)) else {
+                    continue;
+                };
+                let path = request.url().to_string();
+                let _ = match routes.iter().find(|(p, _)| *p == path) {
+                    Some((_, body)) => {
+                        request.respond(tiny_http::Response::from_data(body.clone()))
+                    }
+                    None => request.respond(tiny_http::Response::empty(404)),
+                };
+            }
+        });
+        (base, stop)
+    }
+
+    fn sha_hex(data: &[u8]) -> String {
+        toolkit::hex(&Sha256::digest(data))
+    }
+
+    /// A served release 0.2.0 whose exe is `body`, with `sums` as its checksum list.
+    fn serve_release(body: &[u8], sums: String) -> (String, Arc<AtomicBool>, Release) {
+        let (base, stop) = serve(vec![("/exe", body.to_vec()), ("/sums", sums.into_bytes())]);
+        let json = release_json("v0.2.0", &base, true, true)
+            .replace("\"size\": 4", &format!("\"size\": {}", body.len()));
+        let release = parse_latest(&json, "0.1.1").unwrap().unwrap();
+        (base, stop, release)
+    }
+
+    const PROGRAM: &[u8] = b"MZ-new-launcher";
+
+    fn fixture() -> (tempfile::TempDir, AppPaths, PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        let paths = AppPaths::under(root.path());
+        let exe = root.path().join("app").join("AnyPS5-Launcher.exe");
+        fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        fs::write(&exe, b"MZ-old-launcher").unwrap();
+        (root, paths, exe)
+    }
+
+    #[test]
+    fn check_reads_the_latest_release_from_the_api() {
+        let json = release_json("v0.2.0", "http://x", true, true);
+        let (base, stop) = serve(vec![("/repos/o/r/releases/latest", json.into_bytes())]);
+        let newer = check_at(&base, "o/r", "0.1.1").unwrap();
+        assert_eq!(newer.map(|r| r.tag), Some("v0.2.0".into()));
+        assert_eq!(check_at(&base, "o/r", "0.2.0").unwrap(), None);
+        assert!(matches!(
+            check_at(&base, "o/missing", "0.1.1"),
+            Err(SelfUpdateError::NoRelease)
+        ));
+        stop.store(true, AtomicOrdering::SeqCst);
+    }
+
+    #[test]
+    fn a_matching_checksum_stages_the_update() {
+        let (_root, paths, exe) = fixture();
+        let sums = format!("{} *AnyPS5-Launcher-0.2.0-x64.exe\n", sha_hex(PROGRAM));
+        let (_, stop, release) = serve_release(PROGRAM, sums);
+        let mut last = 0.0;
+        let staged = stage(
+            &release,
+            &exe,
+            &paths,
+            &mut |p| last = p,
+            &CancelToken::new(),
+        )
+        .unwrap();
+        stop.store(true, AtomicOrdering::SeqCst);
+        assert_eq!(staged.version, "0.2.0");
+        assert_eq!(fs::read(&staged.path).unwrap(), PROGRAM);
+        assert_eq!(
+            staged.path,
+            updates_dir(&paths).join("AnyPS5-Launcher-0.2.0-x64.exe")
+        );
+        assert_eq!(last, 1.0);
+        // No partial file is left beside it.
+        assert_eq!(fs::read_dir(updates_dir(&paths)).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn a_wrong_checksum_refuses_the_update() {
+        let (_root, paths, exe) = fixture();
+        let sums = format!(
+            "{} *AnyPS5-Launcher-0.2.0-x64.exe\n",
+            sha_hex(b"MZ-something-else")
+        );
+        let (_, stop, release) = serve_release(PROGRAM, sums);
+        let result = stage(&release, &exe, &paths, &mut |_| {}, &CancelToken::new());
+        stop.store(true, AtomicOrdering::SeqCst);
+        assert!(matches!(result, Err(SelfUpdateError::Digest)), "{result:?}");
+        // Neither the file nor a partial download stays.
+        assert_eq!(fs::read_dir(updates_dir(&paths)).unwrap().count(), 0);
+        assert!(pending(&paths, "0.1.1").is_none());
+    }
+
+    #[test]
+    fn a_missing_checksum_refuses_the_update() {
+        let (_root, paths, exe) = fixture();
+        let sums = format!("{} *AnyPS5-Launcher-0.2.0-Setup.exe\n", sha_hex(PROGRAM));
+        let (_, stop, release) = serve_release(PROGRAM, sums);
+        let result = stage(&release, &exe, &paths, &mut |_| {}, &CancelToken::new());
+        stop.store(true, AtomicOrdering::SeqCst);
+        assert!(
+            matches!(result, Err(SelfUpdateError::NoChecksum(_))),
+            "{result:?}"
+        );
+        assert_eq!(fs::read_dir(updates_dir(&paths)).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_download_that_is_not_a_program_is_refused() {
+        let (_root, paths, exe) = fixture();
+        let page = b"<html>rate limited</html>";
+        let sums = format!("{} *AnyPS5-Launcher-0.2.0-x64.exe\n", sha_hex(page));
+        let (_, stop, release) = serve_release(page, sums);
+        let result = stage(&release, &exe, &paths, &mut |_| {}, &CancelToken::new());
+        stop.store(true, AtomicOrdering::SeqCst);
+        assert!(
+            matches!(result, Err(SelfUpdateError::NotAnExecutable)),
+            "{result:?}"
+        );
+        assert_eq!(fs::read_dir(updates_dir(&paths)).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_written_is_reported_before_any_download() {
+        let (root, paths, _) = fixture();
+        let gone = root
+            .path()
+            .join("no-such-folder")
+            .join("AnyPS5-Launcher.exe");
+        // Nothing listens at the asset URLs: reaching the network would be a different error.
+        let json = release_json("v0.2.0", "http://127.0.0.1:9", true, true);
+        let release = parse_latest(&json, "0.1.1").unwrap().unwrap();
+        let result = stage(&release, &gone, &paths, &mut |_| {}, &CancelToken::new());
+        assert!(
+            matches!(result, Err(SelfUpdateError::NotWritable(_))),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_staged_file_of_the_right_size_is_not_downloaded_again() {
+        let (_root, paths, exe) = fixture();
+        let sums = format!("{} *AnyPS5-Launcher-0.2.0-x64.exe\n", sha_hex(PROGRAM));
+        let (_, stop, release) = serve_release(PROGRAM, sums);
+        stage(&release, &exe, &paths, &mut |_| {}, &CancelToken::new()).unwrap();
+        stop.store(true, AtomicOrdering::SeqCst);
+        std::thread::sleep(Duration::from_millis(150));
+        // The server is gone; a second stage must come from disk.
+        let again = stage(&release, &exe, &paths, &mut |_| {}, &CancelToken::new()).unwrap();
+        assert_eq!(fs::read(again.path).unwrap(), PROGRAM);
+    }
+
+    fn staged_file(paths: &AppPaths, version: &str, body: &[u8]) -> Staged {
+        let path = updates_dir(paths).join(exe_name(version));
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, body).unwrap();
+        Staged {
+            version: version.into(),
+            path,
+        }
+    }
+
+    #[test]
+    fn the_swap_renames_the_old_exe_and_cleanup_removes_it() {
+        let (_root, paths, exe) = fixture();
+        let staged = staged_file(&paths, "0.2.0", PROGRAM);
+        staged.swap_in(&exe).unwrap();
+        assert_eq!(fs::read(&exe).unwrap(), PROGRAM);
+        let old = exe.with_file_name("AnyPS5-Launcher.exe.old");
+        assert_eq!(fs::read(&old).unwrap(), b"MZ-old-launcher");
+        assert!(!staged.path.exists(), "the staged file is consumed");
+        assert!(!exe.with_file_name("AnyPS5-Launcher.exe.new").exists());
+
+        cleanup(&exe, &paths, "0.2.0");
+        assert!(!old.exists());
+        assert!(exe.exists());
+    }
+
+    #[test]
+    fn a_second_swap_works_while_the_first_old_file_is_still_in_use() {
+        let (_root, paths, exe) = fixture();
+        let dir = exe.parent().unwrap();
+        // Keep the first `.old` locked: open without share-delete is not expressible portably,
+        // so make it a directory, which can never be removed as a file.
+        fs::create_dir(dir.join("AnyPS5-Launcher.exe.old")).unwrap();
+        staged_file(&paths, "0.2.0", PROGRAM).swap_in(&exe).unwrap();
+        assert_eq!(fs::read(&exe).unwrap(), PROGRAM);
+        assert_eq!(
+            fs::read(dir.join("AnyPS5-Launcher.exe.old1")).unwrap(),
+            b"MZ-old-launcher"
+        );
+    }
+
+    #[test]
+    fn a_missing_staged_file_leaves_the_exe_alone() {
+        let (_root, paths, exe) = fixture();
+        let staged = Staged {
+            version: "0.2.0".into(),
+            path: updates_dir(&paths).join(exe_name("0.2.0")),
+        };
+        assert!(staged.swap_in(&exe).is_err());
+        assert_eq!(fs::read(&exe).unwrap(), b"MZ-old-launcher");
+        assert_eq!(fs::read_dir(exe.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn pending_finds_the_newest_staged_update() {
+        let (_root, paths, _) = fixture();
+        assert!(pending(&paths, "0.1.1").is_none());
+        staged_file(&paths, "0.1.1", b"MZ");
+        staged_file(&paths, "0.1.10", b"MZ");
+        staged_file(&paths, "0.1.9", b"MZ");
+        fs::write(updates_dir(&paths).join("notes.txt"), b"x").unwrap();
+        assert_eq!(
+            pending(&paths, "0.1.1").map(|s| s.version),
+            Some("0.1.10".into())
+        );
+        assert!(pending(&paths, "0.1.10").is_none());
+    }
+
+    #[test]
+    fn cleanup_removes_stale_downloads_and_keeps_newer_ones() {
+        let (_root, paths, exe) = fixture();
+        staged_file(&paths, "0.1.1", b"MZ");
+        let newer = staged_file(&paths, "0.3.0", b"MZ");
+        fs::write(
+            updates_dir(&paths).join("AnyPS5-Launcher-0.3.0-x64.exe.part"),
+            b"MZ",
+        )
+        .unwrap();
+        fs::write(exe.with_file_name("AnyPS5-Launcher.exe.old2"), b"x").unwrap();
+        cleanup(&exe, &paths, "0.2.0");
+        let left: Vec<_> = fs::read_dir(updates_dir(&paths))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        assert_eq!(left, vec![newer.path]);
+        assert!(!exe.with_file_name("AnyPS5-Launcher.exe.old2").exists());
+        assert!(exe.exists(), "the exe itself is never touched");
+    }
+}
