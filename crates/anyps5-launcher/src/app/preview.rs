@@ -138,6 +138,8 @@ pub enum Step {
     Command(Command),
     /// Wait this many frames.
     Wait(u32),
+    /// `Ctrl+,`
+    OpenSettings,
 }
 
 fn parse_script(text: &str) -> Vec<Step> {
@@ -151,6 +153,7 @@ fn parse_script(text: &str) -> Vec<Step> {
                 "select" => Step::Command(Command::Select),
                 "back" => Step::Command(Command::Back),
                 "options" => Step::Command(Command::Options),
+                "settings" => Step::OpenSettings,
                 other => Step::Wait(other.strip_prefix("wait")?.parse().ok()?),
             })
         })
@@ -545,7 +548,7 @@ impl PreviewApp {
             paths: AppPaths::under(&dir.join("appdata")),
             persist: false,
             pipeline: Box::new(SimPipeline::new("0.1.0")),
-            panels: Box::new(crate::app::overlay::NoPanels),
+            panels: Box::new(crate::app::panels::PanelHost::new(&cc.egui_ctx, true)),
             scan_on_start: false,
         };
         let mut inner = LauncherApp::from_shell(shell, &cc.egui_ctx, config);
@@ -580,13 +583,20 @@ impl PreviewApp {
                 self.wait = 6;
             }
             Some(Step::Wait(frames)) => self.wait = frames,
+            Some(Step::OpenSettings) => {
+                self.inner.handle_event(ctx, InputEvent::OpenSettings);
+                self.wait = 6;
+            }
             None => {}
         }
     }
 }
 
 impl eframe::App for PreviewApp {
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
+        if self.options.scene.is_none() && self.frames == 0 {
+            crate::app::window_chrome::apply(frame);
+        }
         let ctx = ui.ctx().clone();
         self.run_script(&ctx);
         self.inner.step(&ctx);

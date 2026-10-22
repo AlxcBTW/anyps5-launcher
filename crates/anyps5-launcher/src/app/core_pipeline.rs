@@ -274,4 +274,12 @@ impl Pipeline for CorePipeline {
             unlock::remove_leftovers(root);
         }
     }
+
+    fn reload_toolkit(&mut self, prefs: &Preferences) {
+        self.locate_toolkit(prefs);
+    }
+
+    fn patches_dir(&self) -> Option<std::path::PathBuf> {
+        self.toolkit.as_ref().map(|t| t.patches().to_path_buf())
+    }
 }

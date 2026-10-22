@@ -89,6 +89,8 @@ pub enum Effect {
     /// "Hide the launcher while a game runs".
     MinimizeWindow,
     RestoreWindow,
+    /// The toolkit changed on disk or in the preferences: the pipeline looks for it again.
+    ReloadToolkit,
 }
 
 /// What became of a command.
@@ -196,6 +198,8 @@ pub struct Model {
     pub toast: Option<Toast>,
     /// The toolkit version on this PC (`None`: no toolkit, nothing can be unlocked).
     pub toolkit: Option<String>,
+    /// The toolkit's patch files, for the resolutions of the game settings.
+    pub patches_dir: Option<std::path::PathBuf>,
     /// Trophies earned by the running game, waiting for the banner. The banner drains it.
     pub trophy_banners: Vec<(GameId, Trophy)>,
     /// Work for the host; drained after every input pass.
@@ -235,6 +239,7 @@ impl Model {
             diagnoses: HashMap::new(),
             toast: None,
             toolkit: None,
+            patches_dir: None,
             trophy_banners: Vec::new(),
             effects: Vec::new(),
             trophies_read: HashSet::new(),
@@ -253,6 +258,12 @@ impl Model {
         if self.prefs != before {
             self.prefs_dirty = true;
         }
+    }
+
+    /// Marks the preferences as changed after a panel edited them in place (they are saved at the
+    /// end of the frame).
+    pub fn mark_prefs_dirty(&mut self) {
+        self.prefs_dirty = true;
     }
 
     /// True once after a change that has to be written (and only when persisting).
@@ -689,6 +700,12 @@ impl Model {
     // --- overlays ----------------------------------------------------------------------------
 
     pub fn open(&mut self, overlay: Overlay) {
+        self.switch_overlay(overlay);
+        self.sound(Cue::Select);
+    }
+
+    /// Opens or replaces the overlay without a sound: the panel modules play their own cues.
+    pub fn switch_overlay(&mut self, overlay: Overlay) {
         self.panel = match overlay {
             Overlay::Settings => PanelNav::settings(overlay.categories()),
             // The controls panel opens on its first key, below the hint; advanced below its header.
@@ -702,7 +719,11 @@ impl Model {
             self.library_index = self.selected;
         }
         self.overlay = Some(overlay);
-        self.sound(Cue::Select);
+    }
+
+    /// Closes the overlay without a sound (the panel played its own cue).
+    pub fn dismiss_overlay(&mut self) {
+        self.overlay = None;
     }
 
     pub fn close_overlay(&mut self) {

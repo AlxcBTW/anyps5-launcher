@@ -155,6 +155,12 @@ pub trait Pipeline {
     fn poll(&mut self, now: f64) -> Vec<PipelineEvent>;
     /// Called before a rescan while nothing unlocks: clean up half-made copies.
     fn before_scan(&mut self, _root: &Path) {}
+    /// A toolkit was downloaded or adopted, or the folder preference changed: look again.
+    fn reload_toolkit(&mut self, _prefs: &Preferences) {}
+    /// The toolkit's per-title patch files (the resolutions of the game settings come from them).
+    fn patches_dir(&self) -> Option<std::path::PathBuf> {
+        None
+    }
 }
 
 /// No pipeline: no toolkit, nothing starts. What the launcher runs with until the core's pipeline

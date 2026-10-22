@@ -31,6 +31,12 @@ pub enum Extra {
     /// `%@` = the missing CPU features.
     DiagnosisHostCpu,
     SaveReport,
+    /// Toast while the toolkit downloads.
+    ToolkitDownloading,
+    /// Toast: `%@` = the installed version.
+    ToolkitReady,
+    /// Toast: `%@` = the reason.
+    ToolkitFailed,
 }
 
 impl Extra {
@@ -61,6 +67,9 @@ impl Extra {
             Extra::CpuIntel => "Intel",
             Extra::DiagnosisHostCpu => "This CPU lacks %@, which the game needs.",
             Extra::SaveReport => "Save report",
+            Extra::ToolkitDownloading => "Downloading the toolkit…",
+            Extra::ToolkitReady => "Toolkit %@ is ready",
+            Extra::ToolkitFailed => "Toolkit not installed: %@",
         }
     }
 
@@ -91,6 +100,9 @@ impl Extra {
             Extra::CpuIntel => "Intel",
             Extra::DiagnosisHostCpu => "Bu işlemcide oyunun ihtiyaç duyduğu %@ yok.",
             Extra::SaveReport => "Raporu kaydet",
+            Extra::ToolkitDownloading => "Araç seti indiriliyor…",
+            Extra::ToolkitReady => "Araç seti %@ hazır",
+            Extra::ToolkitFailed => "Araç seti kurulamadı: %@",
         }
     }
 
@@ -105,7 +117,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 21] = [
+    pub const ALL: [Extra; 24] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -127,6 +139,9 @@ impl Extra {
         Extra::CpuIntel,
         Extra::DiagnosisHostCpu,
         Extra::SaveReport,
+        Extra::ToolkitDownloading,
+        Extra::ToolkitReady,
+        Extra::ToolkitFailed,
     ];
 }
 
