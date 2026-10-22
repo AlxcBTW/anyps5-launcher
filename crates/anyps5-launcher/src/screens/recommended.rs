@@ -152,9 +152,17 @@ pub fn build_rows(plan: &Plan, language: Language) -> Vec<Row> {
         ));
     }
     if plan.changes.is_empty() {
-        rows.push(Row::command("close", language.text(Key::Close)).icon(Icon::X));
+        rows.push(
+            Row::command("close", language.text(Key::Close))
+                .icon(Icon::X)
+                .group_start(),
+        );
     } else {
-        rows.push(Row::command("apply", Extra::RecApply.text(language)).icon(Icon::CHECK));
+        rows.push(
+            Row::command("apply", Extra::RecApply.text(language))
+                .icon(Icon::CHECK)
+                .group_start(),
+        );
     }
     rows
 }
@@ -286,7 +294,7 @@ mod tests {
         let rows = build_rows(&plan, Language::English);
         let ids: Vec<_> = rows.iter().map(|r| r.id).collect();
         assert_eq!(ids, ["change", "why", "change", "why", "apply"]);
-        assert_eq!(rows[0].title, "Missing PlayGo data");
+        assert_eq!(rows[0].title, "Missing PlayGo Data");
         assert_eq!(
             rows[0].control,
             rows::Control::Info(Some("Default → Report as installed".into()))
@@ -308,7 +316,7 @@ mod tests {
         let rows = build_rows(&plan, Language::English);
         let ids: Vec<_> = rows.iter().map(|r| r.id).collect();
         assert_eq!(ids, ["caution", "why", "close"]);
-        assert_eq!(rows[0].title, "Texture cache");
+        assert_eq!(rows[0].title, "Texture Cache");
         assert_eq!(
             rows[0].control,
             rows::Control::Info(Some("3072 MiB".into()))

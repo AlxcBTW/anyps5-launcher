@@ -721,6 +721,9 @@ The launcher keeps the port's structure but trims what read as noise next to the
   a reason no longer sits as far from its line as from the next one. The toolkit page's "Check
   Now" no longer repeats "Update available" (the row above says it) and shows the last check;
   "What's New" uses the document glyph, not the menu one.
+- **Review pass.** Recommended titles are in title case like every row; its hint says what to do
+  after applying; the Apply or Close row has the double gap above it. Left as designed: the focused
+  row and button grow 3 dp (a primary next to a button looks 7 dp away), documented above.
 - **Gallery scenes** `about-update` (About with a staged update, focus on "Restart Now") and
   `behavior-links` (links registered here) cover the two states that had none.
 - **Start-up and idle** (docs below measured on the demo preview, release build, AMD 880M plus RTX
