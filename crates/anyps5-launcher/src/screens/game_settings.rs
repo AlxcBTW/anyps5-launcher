@@ -33,8 +33,7 @@ pub enum GameSettingsAction {
     Reinstall,
     ShowInExplorer,
     OpenLog,
-    MakeReport,
-    /// Build the issue for AnyPS5 and show it before the browser opens.
+    /// Build the report and show it, to save or to send to AnyPS5 on GitHub.
     ReportToUpstream,
     ClearShaderCache,
     /// Open the confirmation ([`UninstallPanel`]).
@@ -199,7 +198,6 @@ impl GameSettingsPanel {
             "reinstall" => Some(GameSettingsAction::Reinstall),
             "finder" => Some(GameSettingsAction::ShowInExplorer),
             "log" => Some(GameSettingsAction::OpenLog),
-            "report" => Some(GameSettingsAction::MakeReport),
             "upstream" => Some(GameSettingsAction::ReportToUpstream),
             "cache" => Some(GameSettingsAction::ClearShaderCache),
             "uninstall" => Some(GameSettingsAction::AskUninstall),
@@ -338,14 +336,9 @@ pub fn build_rows(data: &GameSettingsData<'_>) -> Vec<Row> {
     rows.push(Row::command("finder", t(Key::ShowInFinder)).icon(Icon::FOLDER));
     rows.push(Row::command("log", t(Key::OpenLog)).icon(Icon::FILE_TEXT));
     rows.push(
-        Row::command("report", t(Key::MakeReport))
-            .detail(t(Key::MakeReportDetail))
-            .icon(Icon::STETHOSCOPE),
-    );
-    rows.push(
         Row::command("upstream", Share::Report.text(data.language))
             .detail(Share::ReportDetail.text(data.language))
-            .icon(Icon::EXPORT),
+            .icon(Icon::STETHOSCOPE),
     );
     rows.push(Row::command("cache", t(Key::ClearShaderCache)).icon(Icon::SPARKLE));
     rows[maintenance].group_start = true;
@@ -546,7 +539,6 @@ mod tests {
                 "reinstall",
                 "finder",
                 "log",
-                "report",
                 "upstream",
                 "cache",
                 "uninstall"

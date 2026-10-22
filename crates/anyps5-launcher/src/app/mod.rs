@@ -72,15 +72,19 @@ impl Config {
         let paths = AppPaths::from_env()
             .unwrap_or_else(|| AppPaths::under(&std::env::temp_dir().join("anyps5-launcher")));
         let prefs = Preferences::load(&paths);
+        crate::startup::mark("preferences loaded");
         // Whatever the last self-update swap left behind (`.old` exes, stale downloads).
         if let Ok(exe) = std::env::current_exe() {
             anyps5_core::selfupdate::cleanup(&exe, &paths, env!("CARGO_PKG_VERSION"));
         }
+        crate::startup::mark("update leftovers cleaned");
         let repaint = ctx.clone();
         let wake: std::sync::Arc<dyn Fn() + Send + Sync> =
             std::sync::Arc::new(move || repaint.request_repaint());
+        let pipeline = CorePipeline::new(paths.clone(), &prefs, wake);
+        crate::startup::mark("toolkit and queue ready");
         Self {
-            pipeline: Box::new(CorePipeline::new(paths.clone(), &prefs, wake)),
+            pipeline: Box::new(pipeline),
             prefs,
             paths,
             persist: true,
@@ -124,6 +128,8 @@ pub struct LauncherApp {
     pub offline: bool,
     /// Keep the backdrop clock still (screenshots).
     pub freeze_backdrop: bool,
+    /// Behave as if the window had focus (the demo, to measure a focused launcher unattended).
+    pub assume_focus: bool,
 }
 
 impl LauncherApp {
@@ -159,6 +165,7 @@ impl LauncherApp {
             scan_on_start: config.scan_on_start,
             offline: false,
             freeze_backdrop: false,
+            assume_focus: false,
         }
     }
 
@@ -191,7 +198,7 @@ impl LauncherApp {
         }
         self.textures.poll();
 
-        let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
+        let focused = self.assume_focus || ctx.input(|i| i.viewport().focused).unwrap_or(true);
         if focused && !self.focused {
             self.model.window_focused();
         }
@@ -658,11 +665,14 @@ pub fn run(inbox: Option<crate::instance::Inbox>, arguments: Vec<String>) -> efr
         ..Default::default()
     };
     crate::ui::restrict_backends(&mut options);
-    eframe::run_native(
+    crate::startup::mark("window requested");
+    let result = eframe::run_native(
         "AnyPS5",
         options,
         Box::new(|cc| {
+            crate::startup::mark("window and GPU ready");
             let mut app = LauncherApp::new(cc, Config::from_environment(&cc.egui_ctx));
+            crate::startup::mark("app built");
             app.attach_links(&cc.egui_ctx, inbox, &arguments);
             Ok(Box::new(App {
                 app,
@@ -671,7 +681,29 @@ pub fn run(inbox: Option<crate::instance::Inbox>, arguments: Vec<String>) -> efr
                 start_fullscreen: fullscreen,
             }))
         }),
-    )
+    );
+    match result {
+        // No DirectX 12 GPU: start again on Vulkan (the window never opened, nothing is lost).
+        Err(error) if crate::ui::can_fall_back_to_vulkan() => {
+            tracing::warn!("cannot start on DirectX 12 ({error}); trying Vulkan");
+            relaunch_on_vulkan()
+        }
+        other => other,
+    }
+}
+
+/// Starts this program again with the Vulkan backend and the same arguments, and waits for it.
+fn relaunch_on_vulkan() -> eframe::Result {
+    let status = std::env::current_exe().and_then(|exe| {
+        std::process::Command::new(exe)
+            .args(std::env::args_os().skip(1))
+            .env(crate::ui::GPU_ENV, "vulkan")
+            .status()
+    });
+    if let Err(error) = status {
+        tracing::error!("cannot start again: {error}");
+    }
+    Ok(())
 }
 
 /// The eframe wrapper of [`LauncherApp`].
@@ -693,6 +725,9 @@ impl eframe::App for App {
         }
         let ctx = ui.ctx().clone();
         self.frames = self.frames.saturating_add(1);
+        if self.frames <= 3 {
+            crate::startup::mark(&format!("frame {} begins", self.frames));
+        }
         if self.start_fullscreen && self.frames == 2 {
             ctx.send_viewport_cmd(ViewportCommand::Fullscreen(true));
         }

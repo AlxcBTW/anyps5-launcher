@@ -45,13 +45,13 @@ impl Share {
             Share::LayoutImportedPartly => {
                 "Layout imported. Some actions are not shown in this list."
             }
-            Share::Report => "Report to AnyPS5",
-            Share::ReportDetail => "Opens a pre-filled issue on GitHub",
+            Share::Report => "Report a Problem",
+            Share::ReportDetail => "Review the report, then save it or open GitHub",
             Share::ReportHint => {
-                "This is the text the issue form starts with. Nothing is sent from here: the form opens in your browser and you submit it on GitHub."
+                "This is the report. Save it as a file, or open GitHub with it filled in. Nothing is sent until you submit it there."
             }
             Share::ReportPasteHint => {
-                "The log is too long for the link. The full report is copied to the clipboard when you continue; paste it into the form."
+                "The log is too long for the link. Open GitHub copies the full report; paste it into the form."
             }
             Share::ReportOpen => "Open GitHub",
             Share::ReportOpenedPaste => "Report copied. Paste it into the GitHub form.",
@@ -73,13 +73,13 @@ impl Share {
             Share::LayoutImportedPartly => {
                 "Düzen içe aktarıldı. Bazı eylemler bu listede gösterilmiyor."
             }
-            Share::Report => "AnyPS5'e bildir",
-            Share::ReportDetail => "GitHub'da önceden doldurulmuş bir sorun bildirimi açar",
+            Share::Report => "Sorun bildir",
+            Share::ReportDetail => "Raporu gözden geçir, sonra kaydet ya da GitHub'ı aç",
             Share::ReportHint => {
-                "Kayıt formu bu metinle başlar. Buradan hiçbir şey gönderilmez: form tarayıcında açılır ve GitHub'da kendin gönderirsin."
+                "Bu rapordur. Dosya olarak kaydet ya da doldurulmuş hâliyle GitHub'ı aç. GitHub'da sen gönderene kadar hiçbir şey gönderilmez."
             }
             Share::ReportPasteHint => {
-                "Günlük bağlantı için çok uzun. Devam edince raporun tamamı panoya kopyalanır; forma yapıştır."
+                "Günlük bağlantı için çok uzun. GitHub'ı açınca raporun tamamı panoya kopyalanır; forma yapıştır."
             }
             Share::ReportOpen => "GitHub'ı aç",
             Share::ReportOpenedPaste => "Rapor kopyalandı. GitHub formuna yapıştır.",

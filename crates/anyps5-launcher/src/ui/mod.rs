@@ -97,9 +97,11 @@ impl Shell {
     /// A shell for tests and the gallery: no gamepad, silent.
     pub fn headless(cc: &eframe::CreationContext<'_>, theme: Theme) -> Self {
         theme::install(&cc.egui_ctx);
+        crate::startup::mark("fonts and visuals installed");
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             background::init(render_state);
         }
+        crate::startup::mark("GPU pipelines built");
         let sounds = Sounds::silent();
         Self {
             input: Input::new(None),
@@ -154,12 +156,64 @@ impl Shell {
     }
 }
 
-/// Restricts wgpu to Vulkan and DX12 (OpenGL probing crashes some AMD drivers).
+/// The environment variable that picks the graphics API (`dx12`, `vulkan` or `both`); the launcher
+/// sets it to `vulkan` itself when DirectX 12 has no usable GPU.
+pub const GPU_ENV: &str = "ANYPS5_GPU";
+
+/// Chooses the graphics API and the GPU of the window.
+///
+/// * One API, never OpenGL (its probing crashes some AMD drivers). On Windows that is DirectX 12:
+///   enumerating Vulkan as well loads every Vulkan driver layer and probes each GPU, seconds
+///   before the first frame, for a choice DirectX 12 makes as well. Elsewhere it is Vulkan.
+///   `ANYPS5_GPU` overrides it.
+/// * The low-power GPU first, so a laptop does not wake its discrete GPU to draw a launcher.
+///   `ANYPS5_POWER=high` turns that round. A software renderer is no choice on Windows: with
+///   nothing else the start fails and [`can_fall_back_to_vulkan`] tells the caller to retry.
 pub fn restrict_backends(options: &mut eframe::NativeOptions) {
-    use egui_wgpu::{WgpuSetup, wgpu::Backends};
-    if let WgpuSetup::CreateNew(create_new) = &mut options.wgpu_options.wgpu_setup {
-        create_new.instance_descriptor.backends = Backends::VULKAN | Backends::DX12;
-    }
+    use egui_wgpu::WgpuSetup;
+    use egui_wgpu::wgpu::{Adapter, Backends, DeviceType, PowerPreference};
+    let WgpuSetup::CreateNew(create_new) = &mut options.wgpu_options.wgpu_setup else {
+        return;
+    };
+    create_new.instance_descriptor.backends = match std::env::var(GPU_ENV).as_deref() {
+        Ok("vulkan") => Backends::VULKAN,
+        Ok("both") => Backends::VULKAN | Backends::DX12,
+        Ok("dx12") => Backends::DX12,
+        _ if cfg!(windows) => Backends::DX12,
+        _ => Backends::VULKAN,
+    };
+    let low_power = std::env::var("ANYPS5_POWER").as_deref() != Ok("high");
+    create_new.power_preference = if low_power {
+        PowerPreference::LowPower
+    } else {
+        PowerPreference::HighPerformance
+    };
+    let no_software = can_fall_back_to_vulkan();
+    create_new.native_adapter_selector = Some(std::sync::Arc::new(move |adapters, surface| {
+        let rank = |adapter: &Adapter| -> Option<u8> {
+            if surface.is_some_and(|s| !adapter.is_surface_supported(s)) {
+                return None;
+            }
+            match (adapter.get_info().device_type, low_power) {
+                (DeviceType::Cpu, _) if no_software => None,
+                (DeviceType::Cpu, _) => Some(3),
+                (DeviceType::IntegratedGpu, true) | (DeviceType::DiscreteGpu, false) => Some(0),
+                (DeviceType::DiscreteGpu, true) | (DeviceType::IntegratedGpu, false) => Some(1),
+                _ => Some(2),
+            }
+        };
+        adapters
+            .iter()
+            .filter_map(|adapter| rank(adapter).map(|rank| (rank, adapter)))
+            .min_by_key(|(rank, _)| *rank)
+            .map(|(_, adapter)| adapter.clone())
+            .ok_or_else(|| "no usable GPU".to_owned())
+    }));
+}
+
+/// Whether a failed start may be retried on Vulkan: on Windows, when DirectX 12 was the default.
+pub fn can_fall_back_to_vulkan() -> bool {
+    cfg!(windows) && std::env::var_os(GPU_ENV).is_none()
 }
 
 #[cfg(test)]

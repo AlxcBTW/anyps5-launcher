@@ -123,15 +123,26 @@ pub fn build_rows(plan: &Plan, language: Language) -> Vec<Row> {
     let mut rows = Vec::new();
     let mut changes: Vec<&Change> = plan.changes.iter().collect();
     changes.sort_by_key(|c| c.kind != Kind::Required);
+    // Each reason hangs under its line; the pairs are set apart by a double gap.
     for change in changes {
         let (label, from, to) = describe(change, language);
-        rows.push(Row::info("change", label, Some(format!("{from} → {to}"))));
-        rows.push(Row::info("why", change.why.clone(), None));
+        let row = Row::info("change", label, Some(format!("{from} → {to}")));
+        rows.push(if rows.is_empty() {
+            row
+        } else {
+            row.group_start()
+        });
+        rows.push(Row::info("why", change.why.clone(), None).attached());
     }
     for caution in &plan.cautions {
         let (label, value) = describe_caution(caution, language);
-        rows.push(Row::info("caution", label, Some(value)));
-        rows.push(Row::info("why", caution.why.clone(), None));
+        let row = Row::info("caution", label, Some(value));
+        rows.push(if rows.is_empty() {
+            row
+        } else {
+            row.group_start()
+        });
+        rows.push(Row::info("why", caution.why.clone(), None).attached());
     }
     if plan.needs_unlock() {
         rows.push(Row::info(

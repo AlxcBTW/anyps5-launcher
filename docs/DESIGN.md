@@ -711,6 +711,33 @@ The launcher keeps the port's structure but trims what read as noise next to the
   ("Unlocked with v0.1.2. v0.1.3 is installed.") when the copy was made with another toolkit.
   What each toolkit release supports is the table in `core::compat`; an older toolkit loses the
   feature (screenshots row, patch resolutions), never the launch.
+- **One way to report a problem.** The game sheet has one row, "Report a Problem" (detail: "Review
+  the report, then save it or open GitHub"), in place of "Make a Report" and "Report to AnyPS5". It
+  opens the review (the log view): Cancel, Save Report and Open GitHub, 12 dp apart, Open GitHub
+  the one primary. The log view's own button reads "Report a Problem" and leads to the same review.
+  The sentence above the text says both ways out in one line.
+- **Recommended, grouped.** Each reason hangs directly under its `current -> recommended` line
+  (`Row::attached`, no row gap, no air above the note); the pairs are set apart by the double gap, so
+  a reason no longer sits as far from its line as from the next one. The toolkit page's "Check
+  Now" no longer repeats "Update available" (the row above says it) and shows the last check;
+  "What's New" uses the document glyph, not the menu one.
+- **Gallery scenes** `about-update` (About with a staged update, focus on "Restart Now") and
+  `behavior-links` (links registered here) cover the two states that had none.
+- **Start-up and idle** (docs below measured on the demo preview, release build, AMD 880M plus RTX
+  5070 laptop, warm; the real launcher adds only preferences and a queue). The window now uses
+  DirectX 12 alone on Windows (Vulkan stays the fallback: a start without a DirectX 12 GPU runs
+  again with `ANYPS5_GPU=vulkan`; OpenGL stays out) and asks for the low-power GPU, so the
+  discrete one is not woken for a launcher. Enumerating Vulkan loaded every driver layer and probed
+  both GPUs (cooperative-matrix queries) before the first frame. Time from `main` to "window and
+  GPU ready": 571 and 600 ms before (2200 ms on the first run), 369 to 460 ms after (530 ms first
+  run). The pipelines take 130 to 170 ms, the first frame about 60 ms. A focused, idle home screen
+  used 16.5 % of a core and 30 % GPU (58 threads) before, 11 % and 15 % (26 threads) after; the
+  backdrop is untouched and still draws at 60 Hz while focused. A window without focus, and a game
+  running, stop all drawing (0.2 to 2 % of a core). The gamepad thread polls every 100 ms while no
+  pad is connected (8 ms with one). `ANYPS5_GPU=dx12|vulkan|both` and `ANYPS5_POWER=high` undo the
+  choice for diagnosis; the log carries `startup t=...ms <step>` lines and the demo an `idle ...
+  frames/s` line every 5 s. The demo no longer forces a repaint every frame (it idled at 40 % of a
+  core, unlike the launcher).
 
 ## 4. Materials and blur on the GPU
 

@@ -68,6 +68,8 @@ pub struct Row {
     pub destructive: bool,
     /// Starts a new group: the list leaves a double gap above it.
     pub group_start: bool,
+    /// A note that belongs to the row above: no gap between them.
+    pub attached: bool,
 }
 
 impl Row {
@@ -81,6 +83,7 @@ impl Row {
             control,
             destructive: false,
             group_start: false,
+            attached: false,
         }
     }
 
@@ -96,6 +99,12 @@ impl Row {
     /// Starts a new group (a double gap above the row).
     pub fn group_start(mut self) -> Row {
         self.group_start = true;
+        self
+    }
+
+    /// Sits right under the row above it, as its note.
+    pub fn attached(mut self) -> Row {
+        self.attached = true;
         self
     }
 
@@ -448,7 +457,12 @@ pub fn list(
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = size::ROW_GAP;
                 let origin = ui.cursor().min.y;
-                for (index, row) in rows.iter_mut().enumerate() {
+                for index in 0..rows.len() {
+                    // The gap after a row is the next row's to give: none before an attached note.
+                    let next_attached = rows.get(index + 1).is_some_and(|next| next.attached);
+                    ui.spacing_mut().item_spacing.y =
+                        if next_attached { 0.0 } else { size::ROW_GAP };
+                    let row = &mut rows[index];
                     if row.group_start && index > 0 {
                         ui.add_space(size::ROW_GAP);
                     }
@@ -507,6 +521,7 @@ fn show_row(
         control,
         destructive,
         group_start: _,
+        attached,
     } = row;
     let caps;
     let none_label = language.text(Key::NoKey);
@@ -558,6 +573,7 @@ fn show_row(
         .language(language)
         .focused(focused)
         .destructive(*destructive)
+        .attached(*attached)
         .force(force);
     if let Some(icon) = icon {
         panel_row = panel_row.icon(*icon);

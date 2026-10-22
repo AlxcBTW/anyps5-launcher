@@ -547,10 +547,16 @@ pub fn run(options: Options, inbox: Option<crate::instance::Inbox>) -> eframe::R
         ..Default::default()
     };
     crate::ui::restrict_backends(&mut native);
+    crate::startup::mark("preview: window requested");
     eframe::run_native(
         "AnyPS5 preview",
         native,
-        Box::new(move |cc| Ok(Box::new(PreviewApp::new(cc, options, inbox)))),
+        Box::new(move |cc| {
+            crate::startup::mark("window and GPU ready");
+            let app = PreviewApp::new(cc, options, inbox);
+            crate::startup::mark("app built");
+            Ok(Box::new(app))
+        }),
     )
 }
 
@@ -561,6 +567,8 @@ struct PreviewApp {
     requested: bool,
     script: std::collections::VecDeque<Step>,
     wait: u32,
+    /// Frames drawn since the last rate line of the demo.
+    rate: (std::time::Instant, u32),
 }
 
 impl PreviewApp {
@@ -574,6 +582,7 @@ impl PreviewApp {
             Some(folder) => showcase_games(folder),
             None => make_games(&dir),
         };
+        crate::startup::mark("preview games made");
         let demo = options.scene.is_none();
         let prefs = Preferences {
             language: if options.turkish {
@@ -619,6 +628,7 @@ impl PreviewApp {
         inner.intro = options.intro;
         inner.offline = true;
         inner.freeze_backdrop = !demo;
+        inner.assume_focus = demo && std::env::var_os("ANYPS5_DEMO_FOCUS").is_some();
         let mut games = games;
         if let Some(real) = &options.real_art {
             use_real_art(&mut games[1], real);
@@ -636,6 +646,7 @@ impl PreviewApp {
             requested: false,
             script: options.script.iter().copied().collect(),
             wait: 0,
+            rate: (std::time::Instant::now(), 0),
             options,
         }
     }
@@ -669,6 +680,9 @@ impl eframe::App for PreviewApp {
             crate::app::window_chrome::apply(frame);
         }
         let ctx = ui.ctx().clone();
+        if self.frames <= 3 {
+            crate::startup::mark(&format!("frame {} begins", self.frames + 1));
+        }
         // Like the launcher: fullscreen once the window is shown.
         if self.options.fullscreen && self.frames == 1 {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
@@ -677,7 +691,20 @@ impl eframe::App for PreviewApp {
         self.inner.step(&ctx);
         self.inner.paint(ui);
         self.frames += 1;
-        ctx.request_repaint();
+        if self.options.scene.is_none() {
+            // The demo says how often it draws, to see what an idle launcher costs.
+            self.rate.1 += 1;
+            let seconds = self.rate.0.elapsed().as_secs_f32();
+            if seconds >= 5.0 {
+                let focused = ctx.input(|i| i.viewport().focused).unwrap_or(true);
+                tracing::info!(target: "idle", "{:.1} frames/s, focused={focused}", self.rate.1 as f32 / seconds);
+                self.rate = (std::time::Instant::now(), 0);
+            }
+        }
+        // Scenes and screenshots draw every frame; the demo idles like the launcher does.
+        if self.options.scene.is_some() || self.options.screenshot.is_some() {
+            ctx.request_repaint();
+        }
         if let Some(path) = self.options.screenshot.clone()
             && self.frames >= self.options.frames
             && !self.requested

@@ -422,7 +422,7 @@ pub fn build_categories(
         toolkit.push(
             Row::action("whatsNew", Extra::WhatsNew.text(language))
                 .detail(detail)
-                .icon(Icon::LIST),
+                .icon(Icon::FILE_TEXT),
         );
     }
     let missing = env.toolkit_version.is_none() && channel != ToolkitChannel::Local;
@@ -442,9 +442,8 @@ pub fn build_categories(
             UpdateState::Checking => Some(Extra::Checking.text(language).to_owned()),
             UpdateState::Downloading => Some(Extra::ToolkitDownloading.text(language).to_owned()),
             UpdateState::UpToDate => Some(Extra::UpToDate.text(language).to_owned()),
-            UpdateState::Available(v) => {
-                Some(Extra::UpdateAvailable.format(language, &[Arg::Str(&format!("v{v}"))]))
-            }
+            // The row above already names the update; this one says when it looked.
+            UpdateState::Available(_) => None,
             UpdateState::Failed => Some(Extra::CheckFailed.text(language).to_owned()),
         };
         let last_checked = prefs.toolkit_checked_at.as_deref().map_or_else(
@@ -680,6 +679,11 @@ impl SettingsPanel {
             self.nav.row = 0;
         }
         self.last_category = self.nav.category;
+    }
+
+    /// Puts the focus on a row of the open category (the gallery shows the row that matters).
+    pub fn focus_row(&mut self, row: usize) {
+        self.nav.row = row;
     }
 
     pub fn close(&mut self) {

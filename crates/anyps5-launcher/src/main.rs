@@ -6,12 +6,15 @@
 mod app;
 mod instance;
 mod screens;
+mod startup;
 mod ui;
 
 use instance::Join;
 
 fn main() -> eframe::Result {
+    startup::begin();
     tracing_subscriber::fmt().init();
+    startup::mark("main");
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     instance::wait_after_update(&mut args);
     // A first argument that is no flag is a link or a folder (the URL scheme and the folder menu
@@ -44,5 +47,6 @@ fn main() -> eframe::Result {
         Join::Primary(inbox) => Some(inbox),
         Join::Alone => None,
     };
+    startup::mark("instance joined");
     app::run(inbox, arguments)
 }
