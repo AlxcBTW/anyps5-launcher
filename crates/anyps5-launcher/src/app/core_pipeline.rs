@@ -157,7 +157,9 @@ impl CorePipeline {
         let settings = prefs.game_settings(&game.id);
         // Without the input file the game keeps the engine's built-in keys.
         let input_file = self.paths.input_file(&name);
-        let written = settings.write_input_file(&input_file).is_ok();
+        let written = settings
+            .write_input_file(&input_file, self.toolkit.as_ref().and_then(|t| t.tag()))
+            .is_ok();
         let screenshots = prefs.screenshots_dir(&self.paths);
         let shader_cache = self.paths.shader_cache_dir(&game.title_id);
         let launcher_language = match prefs.language {

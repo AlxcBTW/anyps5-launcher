@@ -1,0 +1,134 @@
+== IMC_Contextual_MinecartStationUnlocked (Dungeons/Content/Spicewood/Core/Platform/Input/EnhancedInput/MappingContexts/Contextual/IMC_Contextual_MinecartStationUnlocked.uasset)
+   IA_OpenUI_FastTravel -> M
+   IA_OpenUI_FastTravel -> Gamepad_Special_Left
+== IMC_Contextual_TutorialLog (Dungeons/Content/Spicewood/Core/Platform/Input/EnhancedInput/MappingContexts/Contextual/IMC_Contextual_TutorialLog.uasset)
+   IA_OpenUI_TutorialLog -> U
+   IA_OpenUI_TutorialLog -> Gamepad_Special_Left
+== IMC_AITestRunner (Dungeons/Content/Spicewood/Core/Platform/Input/EnhancedInput/MappingContexts/IMC_AITestRunner.uasset)
+   IA_Gamepad_Move -> W
+   IA_Gamepad_Move -> A
+   IA_Gamepad_Move -> S
+   IA_Gamepad_Move -> D
+   IA_DodgeForward -> R
+== IMC_DefaultGamepad (Dungeons/Content/Spicewood/Core/Platform/Input/EnhancedInput/MappingContexts/IMC_DefaultGamepad.uasset)
+   IA_Gamepad_Move -> Gamepad_Left2D
+   IA_Gamepad_MeleeAttack -> Gamepad_FaceButton_Left
+   IA_RangedAttack -> Gamepad_RightTrigger
+   IA_Jump -> Gamepad_FaceButton_Bottom
+   IA_HeavyJumpAttack -> Gamepad_FaceButton_Left
+   IA_PotionSlot -> Gamepad_LeftTriggerAxis
+   IA_Artifact1 -> Gamepad_FaceButton_Top
+   IA_Artifact2 -> Gamepad_FaceButton_Right
+   IA_Artifact3 -> Gamepad_RightShoulder
+   IA_DodgeDirectional -> Gamepad_Right2D
+   IA_DodgeForward -> Gamepad_LeftShoulder
+   IA_ToggleGuidance -> Gamepad_LeftThumbstick
+   IA_Track_Quest -> Gamepad_DPad_Right
+   IA_OpenUI_Inventory_Primary -> Gamepad_DPad_Up
+   IA_OpenUI_Inventory_Secondary -> Gamepad_DPad_Up
+   IA_OpenUI_QuestMenu -> Gamepad_DPad_Right
+   IA_OpenUI_MultiplayerWheel -> Gamepad_Special_Right
+   IA_OpenUI_WorldMap -> Gamepad_Special_Left
+   IA_OpenUI_TeleportToPlayer -> Gamepad_DPad_Left
+   IA_OpenUI_Emotes -> Gamepad_RightThumbstick
+   IA_OpenUI_EventLog -> Gamepad_Special_Right
+   IA_OpenUI_SocialMenu -> Gamepad_DPad_Down
+== IMC_DefaultGamepad_Interact (Dungeons/Content/Spicewood/Core/Platform/Input/EnhancedInput/MappingContexts/IMC_DefaultGamepad_Interact.uasset)
+   IA_Gamepad_Interact -> Gamepad_FaceButton_Bottom
+== IMC_DefaultKBM (Dungeons/Content/Spicewood/Core/Platform/Input/EnhancedInput/MappingContexts/IMC_DefaultKBM.uasset)
+   IA_KBM_PrimaryAction -> LeftMouseButton
+   IA_RangedAttack -> RightMouseButton
+   IA_Jump -> SpaceBar
+   IA_HeavyJumpAttack -> Q
+   IA_HeavyJumpAttack -> ThumbMouseButton
+   IA_Artifact1 -> One
+   IA_Artifact2 -> Two
+   IA_Artifact3 -> Three
+   IA_PotionSlot -> E
+   IA_RootPlayer -> LeftShift
+   IA_DodgeDirectional -> R
+   IA_DodgeDirectional -> ThumbMouseButton
+   IA_DodgeForward -> ThumbMouseButton2
+   IA_ToggleGuidance -> MiddleMouseButton
+   IA_OpenUI_Inventory_Primary -> I
+   IA_OpenUI_Inventory_Primary -> Tab
+   IA_OpenUI_Inventory_Secondary -> I
+   IA_OpenUI_SystemMenu -> Escape
+   IA_OpenUI_QuestMenu -> J
+   IA_OpenUI_MultiplayerWheel -> S
+   IA_OpenUI_EventLog -> K
+   IA_Track_Quest -> J
+   IA_OpenUI_WorldMap -> M
+   IA_OpenUI_Collectibles -> U
+   IA_OpenUI_Emotes -> G
+   IA_OpenUI_TeleportToPlayer -> X
+   IA_TeleportToPlayer1 -> F1
+   IA_TeleportToPlayer2 -> F2
+   IA_TeleportToPlayer3 -> F3
+   IA_TeleportToPlayer4 -> F4
+   IA_OpenUI_SocialMenu -> F
+   IA_TownPortal -> Z
+== IMC_Default_Cancel (Dungeons/Content/Spicewood/Core/Platform/Input/EnhancedInput/MappingContexts/IMC_Default_Cancel.uasset)
+   IA_Cancel -> Escape
+   IA_Cancel -> Gamepad_FaceButton_Right
+== IMC_SwitchGamepad (Dungeons/Content/Spicewood/Core/Platform/Input/EnhancedInput/MappingContexts/IMC_SwitchGamepad.uasset)
+   IA_Gamepad_Move -> Gamepad_Left2D
+   IA_Gamepad_MeleeAttack -> Gamepad_FaceButton_Bottom
+   IA_RangedAttack -> Gamepad_RightTrigger
+   IA_Jump -> Gamepad_FaceButton_Right
+   IA_HeavyJumpAttack -> Gamepad_FaceButton_Bottom
+   IA_PotionSlot -> Gamepad_LeftTrigger
+   IA_Artifact1 -> Gamepad_FaceButton_Left
+   IA_Artifact2 -> Gamepad_FaceButton_Top
+   IA_Artifact3 -> Gamepad_RightShoulder
+   IA_DodgeDirectional -> Gamepad_Right2D
+   IA_DodgeForward -> Gamepad_LeftShoulder
+   IA_ToggleGuidance -> Gamepad_LeftThumbstick
+   IA_Track_Quest -> Gamepad_DPad_Right
+   IA_OpenUI_Inventory_Primary -> Gamepad_DPad_Up
+   IA_OpenUI_Inventory_Secondary -> Gamepad_DPad_Up
+   IA_OpenUI_QuestMenu -> Gamepad_DPad_Right
+   IA_OpenUI_MultiplayerWheel -> Gamepad_Special_Right
+   IA_OpenUI_WorldMap -> Gamepad_Special_Left
+   IA_OpenUI_TeleportToPlayer -> Gamepad_DPad_Left
+   IA_OpenUI_Emotes -> Gamepad_RightThumbstick
+   IA_OpenUI_EventLog -> Gamepad_Special_Right
+   IA_OpenUI_SocialMenu -> Gamepad_DPad_Down
+== IMC_SwitchSingleJoycon_Left (Dungeons/Content/Spicewood/Core/Platform/Input/EnhancedInput/MappingContexts/IMC_SwitchSingleJoycon_Left.uasset)
+   IA_Gamepad_Move -> Gamepad_Left2D
+   IA_Gamepad_MeleeAttack -> Gamepad_FaceButton_Bottom
+   IA_RangedAttack -> Gamepad_RightTrigger
+   IA_Jump -> Gamepad_FaceButton_Right
+   IA_HeavyJumpAttack -> Gamepad_FaceButton_Bottom
+   IA_PotionSlot -> Gamepad_RightShoulder
+   IA_Artifact1 -> Gamepad_FaceButton_Left
+   IA_Artifact2 -> Gamepad_FaceButton_Top
+   IA_Artifact3 -> Gamepad_LeftTrigger
+   IA_DodgeForward -> Gamepad_LeftThumbstick
+   IA_ToggleGuidance -> Tilt
+   IA_OpenUI_MultiplayerWheel -> Gamepad_Special_Right
+== IMC_SwitchSingleJoycon_Right (Dungeons/Content/Spicewood/Core/Platform/Input/EnhancedInput/MappingContexts/IMC_SwitchSingleJoycon_Right.uasset)
+   IA_Gamepad_Move -> Gamepad_Left2D
+   IA_Gamepad_MeleeAttack -> Gamepad_FaceButton_Bottom
+   IA_RangedAttack -> Gamepad_RightTrigger
+   IA_Jump -> Gamepad_FaceButton_Right
+   IA_HeavyJumpAttack -> Gamepad_FaceButton_Bottom
+   IA_PotionSlot -> Gamepad_LeftShoulder
+   IA_Artifact1 -> Gamepad_FaceButton_Left
+   IA_Artifact2 -> Gamepad_FaceButton_Top
+   IA_Artifact3 -> Gamepad_LeftTrigger
+   IA_DodgeForward -> Gamepad_LeftThumbstick
+   IA_ToggleGuidance -> Tilt
+   IA_OpenUI_MultiplayerWheel -> Gamepad_Special_Right
+== IMC_Switch_Cancel (Dungeons/Content/Spicewood/Core/Platform/Input/EnhancedInput/MappingContexts/IMC_Switch_Cancel.uasset)
+   IA_Cancel -> Gamepad_FaceButton_Bottom
+== IMC_Switch_Interact (Dungeons/Content/Spicewood/Core/Platform/Input/EnhancedInput/MappingContexts/IMC_Switch_Interact.uasset)
+   IA_Gamepad_Interact -> Gamepad_FaceButton_Right
+== IMC_Telescope (Dungeons/Content/Spicewood/Core/Platform/Input/EnhancedInput/MappingContexts/IMC_Telescope.uasset)
+   IA_TelescopePan -> W
+   IA_TelescopePan -> S
+   IA_TelescopePan -> A
+   IA_TelescopePan -> D
+   IA_TelescopeExit -> SpaceBar
+   IA_TelescopeZoom -> Q
+   IA_TelescopeZoom -> E

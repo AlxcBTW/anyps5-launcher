@@ -17,6 +17,8 @@ pub struct SystemInfo {
     pub threads: usize,
     pub ram_gb: u64,
     pub gpus: Vec<String>,
+    /// The display driver of each GPU in `gpus`, empty where unknown.
+    pub drivers: Vec<String>,
     /// `<ProductName> <DisplayVersion> (build <CurrentBuild>.<UBR>)`
     pub windows: String,
 }
@@ -25,6 +27,20 @@ impl SystemInfo {
     /// Reads this PC. Slow enough (DXGI, registry) to belong on the `report` thread.
     pub fn collect() -> SystemInfo {
         collect_system()
+    }
+
+    /// One entry per GPU: its name and, when known, `(driver <version>)`.
+    pub fn gpu_lines(&self) -> Vec<String> {
+        self.gpus
+            .iter()
+            .enumerate()
+            .map(
+                |(i, name)| match self.drivers.get(i).filter(|d| !d.is_empty()) {
+                    Some(driver) => format!("{name} (driver {driver})"),
+                    None => name.clone(),
+                },
+            )
+            .collect()
     }
 }
 
@@ -72,7 +88,7 @@ pub fn diagnostic_text(input: &ReportInput) -> String {
             if system.gpus.is_empty() {
                 "unknown".to_string()
             } else {
-                system.gpus.join("; ")
+                system.gpu_lines().join("; ")
             }
         ),
         format!("Windows: {}", or_unknown(&system.windows)),
@@ -172,11 +188,13 @@ fn collect_system() -> SystemInfo {
     let ram = unsafe { GlobalMemoryStatusEx(&mut status) }
         .map(|()| status.ullTotalPhys / (1 << 30))
         .unwrap_or(0);
+    let adapters = gpu_adapters();
     SystemInfo {
         cpu: crate::hostcpu::HostCpu::detect().brand,
         threads: std::thread::available_parallelism().map_or(0, |n| n.get()),
         ram_gb: ram,
-        gpus: gpu_names(),
+        gpus: adapters.iter().map(|a| a.0.clone()).collect(),
+        drivers: adapters.into_iter().map(|a| a.1).collect(),
         windows: windows_version(),
     }
 }
@@ -190,12 +208,14 @@ fn collect_system() -> SystemInfo {
     }
 }
 
-/// Hardware adapters (software ones, like the basic render driver, are left out).
+/// Hardware adapters as (name, driver version); software ones, like the basic render driver,
+/// are left out.
 #[cfg(windows)]
-fn gpu_names() -> Vec<String> {
+fn gpu_adapters() -> Vec<(String, String)> {
     use windows::Win32::Graphics::Dxgi::{
-        CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIFactory1,
+        CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIDevice, IDXGIFactory1,
     };
+    use windows::core::Interface;
     let mut names = Vec::new();
     // SAFETY: plain COM calls on interfaces we own.
     unsafe {
@@ -216,10 +236,32 @@ fn gpu_names() -> Vec<String> {
                 .iter()
                 .position(|c| *c == 0)
                 .unwrap_or(desc.Description.len());
-            names.push(String::from_utf16_lossy(&desc.Description[..end]));
+            let driver = adapter
+                .CheckInterfaceSupport(&IDXGIDevice::IID)
+                .map(|v| driver_version(v, desc.VendorId))
+                .unwrap_or_default();
+            names.push((String::from_utf16_lossy(&desc.Description[..end]), driver));
         }
     }
     names
+}
+
+/// The user-mode driver version DXGI reports (`a.b.c.d`); for NVIDIA also the number on the
+/// driver's download page, the last five digits of `c.d` (31.0.15.5222 is 552.22).
+fn driver_version(raw: i64, vendor: u32) -> String {
+    if raw <= 0 {
+        return String::new();
+    }
+    let part = |shift: u32| (raw >> shift) & 0xFFFF;
+    let (a, b, c, d) = (part(48), part(32), part(16), part(0));
+    if vendor == 0x10DE {
+        let digits = format!("{c}{d:04}");
+        let tail = &digits[digits.len().saturating_sub(5)..];
+        if tail.len() == 5 {
+            return format!("{}.{} ({a}.{b}.{c}.{d})", &tail[..3], &tail[3..]);
+        }
+    }
+    format!("{a}.{b}.{c}.{d}")
 }
 
 #[cfg(windows)]
@@ -298,6 +340,7 @@ mod tests {
                     "NVIDIA GeForce RTX 3060".into(),
                     "AMD Radeon(TM) Graphics".into(),
                 ],
+                drivers: vec!["552.22 (31.0.15.5222)".into(), String::new()],
                 windows: "Windows 11 Home 25H2 (build 26200.1000)".into(),
             },
             launcher_version: "v0.1.0-3-gabc".into(),
@@ -317,7 +360,7 @@ AnyPS5 report, 2026-10-22T09:31:00Z
 
 Game: Stray (PPSA02100, version 01.000.000)
 PC: AMD Ryzen 5 3600 6-Core Processor, 12 threads, 31 GB
-GPU: NVIDIA GeForce RTX 3060; AMD Radeon(TM) Graphics
+GPU: NVIDIA GeForce RTX 3060 (driver 552.22 (31.0.15.5222)); AMD Radeon(TM) Graphics
 Windows: Windows 11 Home 25H2 (build 26200.1000)
 Launcher: v0.1.0-3-gabc
 Toolkit: 0.1.3-abcdef123456

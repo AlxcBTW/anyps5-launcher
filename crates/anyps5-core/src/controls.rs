@@ -317,32 +317,368 @@ impl Controls {
                 .filter(|s| !s.starts_with("KEY:")),
         );
         result.insert(to.name().to_string(), own);
-        result.retain(|name, value| {
-            PadAction::from_name(name)
-                .is_some_and(|a| Controls::default_sources(a) != value.as_slice())
+        result.retain(|name, value| match PadAction::from_name(name) {
+            Some(a) => Controls::default_sources(a) != value.as_slice(),
+            None => EXTRA_ACTIONS.contains(&name.as_str()),
         });
         result
     }
 
     /// The text of `anyps5-input.ini` for the changes and the tuning. UTF-8, LF, final newline.
     pub fn file(changes: &Changes, tuning: &InputTuning) -> String {
-        let mut lines = vec![Controls::HEADER.to_string()];
+        Controls::file_for(changes, tuning, None)
+    }
+
+    /// [`Controls::file`] for the toolkit that will read it (its version or tag; `None` when
+    /// unknown): the lines only toolkits from v0.1.3 accept are left out for an older one.
+    pub fn file_for(changes: &Changes, tuning: &InputTuning, toolkit: Option<&str>) -> String {
+        let mut changes = changes.clone();
+        let mut tuning = *tuning;
+        if !writes_v013_lines(toolkit) {
+            changes.remove(PadAction::StickModifier.name());
+            tuning.keyboard_ramp_ms = InputTuning::default().keyboard_ramp_ms;
+            tuning.trigger_ramp_ms = InputTuning::default().trigger_ramp_ms;
+        }
+        Controls::text(Controls::HEADER, &changes, &tuning)
+    }
+
+    /// A layout as a file to share: the same lines as the input file (the form of upstream's
+    /// `INPUT_MAPPING.md`) under a header that names the layout.
+    pub fn export(changes: &Changes, tuning: &InputTuning, title: &str) -> String {
+        let header = format!(
+            "# AnyPS5 controls layout: {}\n# Format: INPUT_MAPPING.md of AnyPS5. Actions left out have no key of their own.",
+            title.replace(['\r', '\n'], " ")
+        );
+        Controls::text(&header, changes, tuning)
+    }
+
+    fn text(header: &str, changes: &Changes, tuning: &InputTuning) -> String {
+        let mut lines = vec![header.to_string()];
         for action in PadAction::ALL {
-            let current = Controls::sources(action, changes);
-            if current.is_empty() {
-                lines.push(format!("{} = {}", action.name(), Controls::UNBOUND));
+            let sources = Controls::sources(action, changes);
+            // Toolkits before v0.1.3 do not know StickModifier and stop at a line naming it; it
+            // has no built-in key, so while it is unbound the line stays out.
+            if action == PadAction::StickModifier && sources.is_empty() {
+                continue;
             }
-            lines.extend(
-                current
-                    .into_iter()
-                    .map(|source| format!("{} = {source}", action.name())),
-            );
+            push_sources(&mut lines, action.name(), &sources);
+        }
+        // Actions the launcher has no row for travel with the layout.
+        for name in EXTRA_ACTIONS {
+            if let Some(sources) = changes.get(name) {
+                push_sources(&mut lines, name, sources);
+            }
         }
         lines.extend(tuning.lines());
         let mut text = lines.join("\n");
         text.push('\n');
         text
     }
+
+    /// Reads a layout file in the form of `INPUT_MAPPING.md`, as the engine does: names without
+    /// regard to case, `#` or `;` at the start of a line for a comment, the first line of an
+    /// action replacing its built-in keys and later ones adding to them, repeated entries
+    /// ignored, actions the file leaves out keeping the engine's own keys. The first line the
+    /// engine would refuse is the error.
+    pub fn parse(text: &str) -> Result<ParsedLayout, ImportError> {
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+        let mut listed: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
+        let mut tuning = InputTuning::default();
+        let mut tuned: Vec<&'static str> = Vec::new();
+        for (index, raw) in text.lines().enumerate() {
+            let fail = |message: String| ImportError {
+                line: index + 1,
+                message,
+            };
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+                continue;
+            }
+            let Some((name, value)) = line.split_once('=') else {
+                return Err(fail("expected \"Action = KEY:Name\"".into()));
+            };
+            let (name, value) = (name.trim(), value.trim());
+            if let Some(setting) = TUNING_NAMES
+                .into_iter()
+                .find(|s| s.eq_ignore_ascii_case(name))
+            {
+                if tuned.contains(&setting) {
+                    return Err(fail(format!("{setting} appears twice")));
+                }
+                set_tuning(&mut tuning, setting, value).map_err(fail)?;
+                tuned.push(setting);
+                continue;
+            }
+            let Some(action) = ACTION_NAMES
+                .into_iter()
+                .find(|a| a.eq_ignore_ascii_case(name))
+            else {
+                return Err(fail(format!("unknown action or setting \"{name}\"")));
+            };
+            let source = parse_source(action, value).map_err(fail)?;
+            let sources = listed.entry(action).or_default();
+            if !sources.contains(&source) {
+                sources.push(source);
+            }
+        }
+        let own = |name: &str| -> Option<Vec<String>> {
+            listed.get(name).map(|sources| {
+                sources
+                    .iter()
+                    .filter(|s| s.as_str() != Controls::UNBOUND)
+                    .cloned()
+                    .collect()
+            })
+        };
+        let mut changes = Changes::new();
+        for action in PadAction::ALL {
+            let sources = own(action.name())
+                .unwrap_or_else(|| strings(upstream_default_sources(action.name())));
+            if sources != Controls::default_sources(action) {
+                changes.insert(action.name().to_string(), sources);
+            }
+        }
+        for name in EXTRA_ACTIONS {
+            if let Some(sources) = own(name)
+                && sources != upstream_default_sources(name)
+            {
+                changes.insert(name.to_string(), sources);
+            }
+        }
+        Ok(ParsedLayout {
+            changes,
+            tuning: (!tuned.is_empty()).then_some(tuning),
+        })
+    }
+}
+
+/// Whether the toolkit reads `StickModifier`, `KeyboardRampMs` and `TriggerRampMs` (added in
+/// v0.1.3; an older one stops input at such a line). An unknown or local toolkit gets them.
+pub fn writes_v013_lines(toolkit: Option<&str>) -> bool {
+    let Some(tag) = toolkit.map(|t| t.trim().trim_start_matches('v')) else {
+        return true;
+    };
+    let mut numbers = tag
+        .split(|c: char| !c.is_ascii_digit())
+        .map(|part| part.parse::<u32>());
+    match (numbers.next(), numbers.next(), numbers.next()) {
+        (Some(Ok(major)), Some(Ok(minor)), Some(Ok(patch)))
+            if tag.starts_with(|c: char| c.is_ascii_digit()) =>
+        {
+            (major, minor, patch) >= (0, 1, 3)
+        }
+        _ => true,
+    }
+}
+
+fn strings(sources: &[&str]) -> Vec<String> {
+    sources.iter().map(|s| (*s).to_string()).collect()
+}
+
+/// The lines of one action; an action without a source is written as the unbound marker.
+fn push_sources(lines: &mut Vec<String>, name: &str, sources: &[String]) {
+    if sources.is_empty() {
+        lines.push(format!("{name} = {}", Controls::UNBOUND));
+    }
+    lines.extend(sources.iter().map(|source| format!("{name} = {source}")));
+}
+
+/// Actions of the engine's input file the launcher has no row for. They are kept in the changes
+/// by name, written back and shared with the layout.
+pub const EXTRA_ACTIONS: [&str; 5] = [
+    "Shake",
+    "ToggleMouse",
+    "ToggleFullscreen",
+    "TogglePerformanceOverlay",
+    "Screenshot",
+];
+
+const ACTION_NAMES: [&str; 31] = [
+    "Cross",
+    "Circle",
+    "Square",
+    "Triangle",
+    "L1",
+    "R1",
+    "L2",
+    "R2",
+    "L3",
+    "R3",
+    "Options",
+    "TouchLeft",
+    "TouchRight",
+    "Up",
+    "Down",
+    "Left",
+    "Right",
+    "LeftStickUp",
+    "LeftStickDown",
+    "LeftStickLeft",
+    "LeftStickRight",
+    "RightStickUp",
+    "RightStickDown",
+    "RightStickLeft",
+    "RightStickRight",
+    "StickModifier",
+    "Shake",
+    "ToggleMouse",
+    "ToggleFullscreen",
+    "TogglePerformanceOverlay",
+    "Screenshot",
+];
+
+const TUNING_NAMES: [&str; 12] = [
+    "LeftStickDeadzone",
+    "RightStickDeadzone",
+    "MouseSensitivity",
+    "MouseVerticalScale",
+    "MouseCurve",
+    "MouseDeadzoneOffset",
+    "MouseMaxSpeed",
+    "MouseSmoothingMs",
+    "MouseDecayMs",
+    "StickModifierScale",
+    "KeyboardRampMs",
+    "TriggerRampMs",
+];
+
+/// The engine's built-in sources of an action (INPUT_MAPPING.md, "Default bindings"): what a
+/// file that does not mention the action leaves in force.
+pub fn upstream_default_sources(action: &str) -> &'static [&'static str] {
+    match action {
+        "Cross" => &["KEY:Return", "KEY:Space"],
+        "Circle" => &["KEY:C"],
+        "Triangle" => &["KEY:I"],
+        "Square" => &["MOUSE:Left"],
+        "L1" => &["KEY:Q"],
+        "R1" => &["KEY:E", "KEY:Left Alt", "KEY:Right Alt"],
+        "L2" => &["KEY:R", "MOUSE:X1"],
+        "R2" => &["MOUSE:Right"],
+        "L3" => &["KEY:Left Shift", "KEY:Right Shift"],
+        "R3" => &["KEY:Left Ctrl", "KEY:Right Ctrl"],
+        "Options" => &["KEY:Escape"],
+        "Up" => &["KEY:Up", "WHEEL:Up"],
+        "Right" => &["KEY:Right"],
+        "Down" => &["KEY:Down", "WHEEL:Down"],
+        "Left" => &["KEY:Left"],
+        "LeftStickLeft" => &["KEY:A"],
+        "LeftStickRight" => &["KEY:D"],
+        "LeftStickUp" => &["KEY:W"],
+        "LeftStickDown" => &["KEY:S"],
+        "RightStickLeft" => &["KEY:F"],
+        "RightStickRight" => &["KEY:H"],
+        "RightStickUp" => &["KEY:T"],
+        "RightStickDown" => &["KEY:G"],
+        "TouchLeft" => &["KEY:Backspace"],
+        "TouchRight" => &["KEY:Tab"],
+        "Shake" => &["KEY:X"],
+        "ToggleMouse" => &["MOUSE:Middle", "KEY:F7"],
+        "ToggleFullscreen" => &["KEY:F11"],
+        "TogglePerformanceOverlay" => &["KEY:F10"],
+        "Screenshot" => &["KEY:F12"],
+        _ => &[],
+    }
+}
+
+/// A layout file read by [`Controls::parse`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParsedLayout {
+    /// Against the launcher's layout, the form games store.
+    pub changes: Changes,
+    /// `Some` when the file has at least one tuning line; the other values are the defaults.
+    pub tuning: Option<InputTuning>,
+}
+
+/// Why a layout file cannot be used: the line the engine would stop at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportError {
+    pub line: usize,
+    pub message: String,
+}
+
+impl std::fmt::Display for ImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "line {}: {}", self.line, self.message)
+    }
+}
+
+/// `Type:Value` as a canonical source (`KEY:Left Shift`).
+fn parse_source(action: &str, value: &str) -> Result<String, String> {
+    let Some((kind, name)) = value.split_once(':') else {
+        return Err(format!(
+            "\"{value}\" is not Type:Value (KEY, MOUSE or WHEEL)"
+        ));
+    };
+    let (kind, name) = (kind.trim(), name.trim());
+    let pick =
+        |names: &[&'static str]| names.iter().find(|n| n.eq_ignore_ascii_case(name)).copied();
+    if kind.eq_ignore_ascii_case("KEY") {
+        if let Some((_, known)) = SCANCODES.iter().find(|(_, n)| n.eq_ignore_ascii_case(name)) {
+            return Ok(format!("KEY:{known}"));
+        }
+        // F13 to F24: SDL names them, no key of the launcher's list is one (F24 is "unbound").
+        if let Some(number) = name
+            .strip_prefix(['F', 'f'])
+            .and_then(|n| n.parse::<u8>().ok())
+            && (13..=24).contains(&number)
+        {
+            return Ok(format!("KEY:F{number}"));
+        }
+        return Err(format!("\"{name}\" is not a key name the launcher knows"));
+    }
+    if matches!(
+        action,
+        "ToggleFullscreen" | "TogglePerformanceOverlay" | "Screenshot"
+    ) {
+        return Err(format!("{action} takes keyboard keys only"));
+    }
+    if kind.eq_ignore_ascii_case("MOUSE") {
+        return pick(&["Left", "Middle", "Right", "X1", "X2"])
+            .map(|b| format!("MOUSE:{b}"))
+            .ok_or_else(|| {
+                format!("\"{name}\" is not a mouse button (Left, Middle, Right, X1 or X2)")
+            });
+    }
+    if kind.eq_ignore_ascii_case("WHEEL") {
+        return pick(&["Up", "Down"])
+            .map(|b| format!("WHEEL:{b}"))
+            .ok_or_else(|| format!("\"{name}\" is not a wheel direction (Up or Down)"));
+    }
+    Err(format!(
+        "\"{kind}\" is not a source type (KEY, MOUSE or WHEEL)"
+    ))
+}
+
+/// Writes one `Setting = Value` into the tuning, in the steps the launcher keeps, within the
+/// ranges of INPUT_MAPPING.md.
+fn set_tuning(tuning: &mut InputTuning, setting: &str, value: &str) -> Result<(), String> {
+    let number: f64 = value
+        .parse()
+        .ok()
+        .filter(|n: &f64| n.is_finite())
+        .ok_or_else(|| format!("{setting} needs a number, not \"{value}\""))?;
+    let check = |low: f64, high: f64, step: f64| -> Result<i32, String> {
+        if number < low || number > high {
+            return Err(format!("{setting} must be from {low} to {high}"));
+        }
+        Ok((number * step).round() as i32)
+    };
+    match setting {
+        "LeftStickDeadzone" => tuning.left_deadzone = check(0.0, 90.0, 1.0)?,
+        "RightStickDeadzone" => tuning.right_deadzone = check(0.0, 90.0, 1.0)?,
+        "MouseSensitivity" => tuning.mouse_sensitivity = check(0.1, 10.0, 10.0)?,
+        "MouseVerticalScale" => tuning.mouse_vertical_scale = check(0.1, 10.0, 10.0)?,
+        "MouseCurve" => tuning.mouse_curve = check(0.2, 5.0, 10.0)?,
+        "MouseDeadzoneOffset" => tuning.mouse_deadzone_offset = check(0.0, 0.9, 100.0)?,
+        "MouseMaxSpeed" => tuning.mouse_max_speed = check(0.1, 10.0, 10.0)?,
+        "MouseSmoothingMs" => tuning.mouse_smoothing_ms = check(0.0, 500.0, 1.0)?,
+        "MouseDecayMs" => tuning.mouse_decay_ms = check(1.0, 1000.0, 1.0)?,
+        "StickModifierScale" => tuning.stick_modifier_scale = check(0.05, 1.0, 100.0)?,
+        "KeyboardRampMs" => tuning.keyboard_ramp_ms = check(0.0, 2000.0, 1.0)?,
+        "TriggerRampMs" => tuning.trigger_ramp_ms = check(0.0, 2000.0, 1.0)?,
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Ready-made layouts the Controls panel offers (docs/DESIGN.md 5.17).
@@ -492,7 +828,6 @@ RightStickUp = KEY:T
 RightStickDown = KEY:G
 RightStickLeft = KEY:F
 RightStickRight = KEY:H
-StickModifier = KEY:F24
 ";
 
     fn changes(entries: &[(&str, &[&str])]) -> Changes {
@@ -539,8 +874,49 @@ StickModifier = KEY:F24
         };
         let text = Controls::file(&Changes::new(), &tuning);
         assert!(text.ends_with(
-            "StickModifier = KEY:F24\nLeftStickDeadzone = 15\nMouseSensitivity = 2.5\n"
+            "RightStickRight = KEY:H\nLeftStickDeadzone = 15\nMouseSensitivity = 2.5\n"
         ));
+    }
+
+    #[test]
+    fn stick_modifier_is_written_only_when_it_has_a_key() {
+        // Toolkits before v0.1.3 stop at a StickModifier line; no key is its built-in state.
+        let text = Controls::file(&Changes::new(), &InputTuning::default());
+        assert!(!text.contains("StickModifier"));
+        // The ramps are tuning lines: written only when moved, so v0.1.2 files stay valid.
+        assert!(!text.contains("KeyboardRampMs") && !text.contains("TriggerRampMs"));
+        let on = changes(&[("StickModifier", &["KEY:Left Alt"])]);
+        assert!(
+            Controls::file(&on, &InputTuning::default())
+                .contains("\nStickModifier = KEY:Left Alt\n")
+        );
+    }
+
+    #[test]
+    fn older_toolkits_get_no_v013_lines() {
+        assert!(!writes_v013_lines(Some("0.1.2")));
+        assert!(!writes_v013_lines(Some("v0.1.1")));
+        assert!(!writes_v013_lines(Some("v0.0.9-abcdef")));
+        assert!(writes_v013_lines(Some("0.1.3")));
+        assert!(writes_v013_lines(Some("v0.1.3-abcdef123456")));
+        assert!(writes_v013_lines(Some("v0.2.0")));
+        assert!(writes_v013_lines(Some("1.0.0")));
+        assert!(writes_v013_lines(None), "unknown toolkit");
+        assert!(writes_v013_lines(Some("local-abcdef")), "adopted folder");
+        let moved = changes(&[("StickModifier", &["KEY:Z"]), ("Circle", &["KEY:C"])]);
+        let tuning = InputTuning {
+            keyboard_ramp_ms: 100,
+            trigger_ramp_ms: 50,
+            left_deadzone: 5,
+            ..Default::default()
+        };
+        let old = Controls::file_for(&moved, &tuning, Some("0.1.2"));
+        assert!(!old.contains("StickModifier") && !old.contains("Ramp"));
+        assert!(old.contains("Circle = KEY:C\n") && old.contains("LeftStickDeadzone = 5\n"));
+        let new = Controls::file_for(&moved, &tuning, Some("0.1.3"));
+        assert!(new.contains("StickModifier = KEY:Z\n") && new.contains("KeyboardRampMs = 100\n"));
+        assert!(new.contains("TriggerRampMs = 50\n"));
+        assert_eq!(new, Controls::file(&moved, &tuning));
     }
 
     #[test]
@@ -735,6 +1111,102 @@ StickModifier = KEY:F24
         assert_eq!(key_name(0x56), None);
         assert_eq!(key_name(0x64), None);
         assert_eq!(scancode_of("Space"), Some(0x39));
+    }
+
+    #[test]
+    fn the_input_file_reads_back_as_the_launcher_layout() {
+        let parsed = Controls::parse(GOLDEN).unwrap();
+        assert!(parsed.changes.is_empty());
+        assert_eq!(parsed.tuning, None);
+    }
+
+    #[test]
+    fn an_export_reads_back_exactly() {
+        let mut c = Controls::assign("KEY:Z", PadAction::Circle, &Changes::new());
+        c = Controls::assign("KEY:W", PadAction::Cross, &c);
+        c.insert("ToggleMouse".into(), vec!["KEY:F8".into()]);
+        c.insert("Shake".into(), vec![]);
+        let tuning = InputTuning {
+            left_deadzone: 12,
+            mouse_sensitivity: 25,
+            mouse_deadzone_offset: 12,
+            ..Default::default()
+        };
+        let text = Controls::export(&c, &tuning, "Stray\nPPSA01");
+        assert!(text.starts_with("# AnyPS5 controls layout: Stray PPSA01\n"));
+        assert!(text.contains("\nShake = KEY:F24\n") && text.contains("\nToggleMouse = KEY:F8\n"));
+        let parsed = Controls::parse(&text).unwrap();
+        assert_eq!(parsed.changes, c);
+        assert_eq!(parsed.tuning, Some(tuning));
+    }
+
+    #[test]
+    fn a_partial_file_leaves_the_engines_own_keys_in_force() {
+        // The example of INPUT_MAPPING.md.
+        let text = "\u{feff}# comment\n; another\nCross = KEY:F\nCROSS = KEY:Space\nLeftStickLeft = KEY:J\n\
+                    leftstickright = key:l\nSquare = MOUSE:Left\nR2 = mouse:right\nToggleMouse = MOUSE:Middle\n\
+                    Cross = KEY:F\n";
+        let c = Controls::parse(text).unwrap().changes;
+        assert_eq!(
+            c["Cross"],
+            ["KEY:F", "KEY:Space"],
+            "first replaces, later add, repeats go"
+        );
+        assert_eq!(c["LeftStickLeft"], ["KEY:J"]);
+        assert_eq!(c["LeftStickRight"], ["KEY:L"]);
+        // Left out: the engine's keys, which are not the launcher's.
+        assert_eq!(c["Circle"], ["KEY:C"]);
+        assert_eq!(c["L3"], ["KEY:Left Shift", "KEY:Right Shift"]);
+        // Same as the launcher's layout: no entry.
+        assert!(!c.contains_key("Options"));
+        assert_eq!(
+            c["ToggleMouse"],
+            ["MOUSE:Middle"],
+            "F7 is dropped: the file named only one"
+        );
+    }
+
+    #[test]
+    fn the_first_bad_line_is_named() {
+        let err = |text: &str| Controls::parse(text).unwrap_err();
+        assert_eq!(err("Cross = KEY:K\nJump = KEY:Space\n").line, 2);
+        assert!(err("Cross KEY:K").message.contains("expected"));
+        assert!(err("Cross = KEY:Banana").message.contains("Banana"));
+        assert!(err("Cross = PAD:A").message.contains("source type"));
+        assert!(err("Cross = KEY").message.contains("Type:Value"));
+        assert!(err("Cross = MOUSE:Fourth").message.contains("mouse button"));
+        assert!(err("Cross = WHEEL:Left").message.contains("wheel"));
+        assert!(
+            err("ToggleFullscreen = MOUSE:Left")
+                .message
+                .contains("keyboard")
+        );
+        assert!(err("MouseCurve = 6").message.contains("0.2 to 5"));
+        assert!(err("MouseCurve = fast").message.contains("number"));
+        assert!(
+            err("LeftStickDeadzone = 1\nleftstickdeadzone = 2")
+                .message
+                .contains("twice")
+        );
+        assert_eq!(
+            err("LeftStickDeadzone = 91").to_string(),
+            "line 1: LeftStickDeadzone must be from 0 to 90"
+        );
+        assert!(Controls::parse("Cross = KEY:F24").is_ok());
+        assert!(Controls::parse("Cross = KEY:F17").is_ok());
+    }
+
+    #[test]
+    fn unbound_markers_and_empty_files() {
+        let c = Controls::parse("Cross = KEY:F24\nCircle = KEY:F24\nCircle = KEY:Z\n")
+            .unwrap()
+            .changes;
+        assert_eq!(c["Cross"], Vec::<String>::new());
+        assert_eq!(c["Circle"], ["KEY:Z"]);
+        // Nothing listed: every action is the engine's.
+        let all = Controls::parse("").unwrap().changes;
+        assert_eq!(all["Cross"], ["KEY:Return", "KEY:Space"]);
+        assert_eq!(all["Square"], ["MOUSE:Left"]);
     }
 
     #[test]

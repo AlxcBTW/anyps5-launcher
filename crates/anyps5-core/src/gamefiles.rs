@@ -787,6 +787,56 @@ fn pad_stick(key: &str) -> Option<Vec<PadAction>> {
 mod tests {
     use super::*;
 
+    /// The input mapping contexts of Minecraft Dungeons II (PPSA16064, 01.100.100), as the IoStore
+    /// reader lists them: `== <context> (<package>)`, then `   <input action> -> <key>`.
+    fn md2_contexts() -> Vec<iostore::MappingContext> {
+        let mut contexts: Vec<iostore::MappingContext> = Vec::new();
+        for line in include_str!("../tests/data/md2-mappings.txt").lines() {
+            if let Some(head) = line.strip_prefix("== ") {
+                let (name, package) = head.split_once(" (").unwrap();
+                contexts.push(iostore::MappingContext {
+                    name: name.to_string(),
+                    package: package.trim_end_matches(')').to_string(),
+                    mappings: Vec::new(),
+                });
+            } else if let Some((action, key)) = line.trim().split_once(" -> ") {
+                contexts
+                    .last_mut()
+                    .unwrap()
+                    .mappings
+                    .push((action.to_string(), key.to_string()));
+            }
+        }
+        contexts
+    }
+
+    /// `community/layouts/PPSA16064/from-the-game.ini` is what "From the Game" makes of the game's
+    /// own keys, exported. Regenerate it with `WRITE_COMMUNITY_LAYOUT=1 cargo test -p anyps5-core
+    /// the_community_layout_of_minecraft_dungeons_ii`.
+    #[test]
+    fn the_community_layout_of_minecraft_dungeons_ii_is_the_games_own_keys() {
+        let actions = actions_from_contexts(&md2_contexts());
+        let (changes, buttons) = game_layout(&actions, &Changes::new());
+        assert!(buttons >= 10, "{buttons}");
+        let text = Controls::export(
+            &changes,
+            &crate::controls::InputTuning::default(),
+            "Minecraft Dungeons II (PPSA16064), the keys the game names itself",
+        );
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../community/layouts/PPSA16064/from-the-game.ini"
+        );
+        if std::env::var_os("WRITE_COMMUNITY_LAYOUT").is_some() {
+            std::fs::write(path, &text).unwrap();
+        }
+        let file = std::fs::read_to_string(path).unwrap().replace("\r\n", "\n");
+        assert_eq!(file, text);
+        // And the engine would take it.
+        let parsed = Controls::parse(&file).unwrap();
+        assert_eq!(parsed.changes, changes);
+    }
+
     const INI: &str = r#"
 [/Script/Engine.InputSettings]
 +ActionMappings=(ActionName="Jump",bShift=False,bCtrl=False,bAlt=False,bCmd=False,Key=SpaceBar)
