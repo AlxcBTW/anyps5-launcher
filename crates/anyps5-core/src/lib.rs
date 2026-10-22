@@ -2,6 +2,7 @@
 
 pub mod controls;
 pub mod diagnosis;
+pub mod discord;
 pub mod error;
 pub mod events;
 pub mod fsx;

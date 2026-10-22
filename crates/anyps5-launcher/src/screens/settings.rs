@@ -252,6 +252,13 @@ pub fn build_categories(
         Row::toggle("music", Extra::HomeMusic.text(language), prefs.music)
             .detail(Extra::HomeMusicDetail.text(language))
             .icon(Icon::MUSIC_NOTES),
+        Row::toggle(
+            "discord",
+            Extra::DiscordPresence.text(language),
+            prefs.discord_presence,
+        )
+        .detail(Extra::DiscordPresenceDetail.text(language))
+        .icon(Icon::DISCORD_LOGO),
         Row::toggle("hide", t(Key::HideWhilePlaying), prefs.hide_while_playing)
             .icon(Icon::EYE_SLASH),
     ];
@@ -419,6 +426,7 @@ pub fn apply_value(prefs: &mut Preferences, change: &Change) -> bool {
         }
         Change::Toggle { row: "sounds", on } => prefs.sounds = *on,
         Change::Toggle { row: "music", on } => prefs.music = *on,
+        Change::Toggle { row: "discord", on } => prefs.discord_presence = *on,
         Change::Toggle { row: "hide", on } => prefs.hide_while_playing = *on,
         Change::Toggle {
             row: "updateCheck",
@@ -963,6 +971,14 @@ mod tests {
             }
         ));
         assert!(!prefs.music);
+        assert!(apply_value(
+            &mut prefs,
+            &Change::Toggle {
+                row: "discord",
+                on: false
+            }
+        ));
+        assert!(!prefs.discord_presence);
         assert!(apply_value(
             &mut prefs,
             &Change::Choice {

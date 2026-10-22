@@ -29,8 +29,9 @@ pub mod toolkit;
 pub mod window_chrome;
 
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
+use anyps5_core::discord::Presence;
 use anyps5_core::paths::{AppPaths, GameId};
 use anyps5_core::settings::Preferences;
 use egui::{Context, Rect, Ui, UiBuilder, ViewportCommand};
@@ -105,6 +106,11 @@ pub struct LauncherApp {
     started: bool,
     /// Play the launch intro and the boot cue on the next frame (real launches only).
     pub intro: bool,
+    /// Show the running game on Discord (real launches only; previews and tests never touch it).
+    discord: bool,
+    presence: Option<Presence>,
+    /// A game is on Discord right now.
+    presence_shown: bool,
     start_screen: screens::start::StartScreen,
     scan_on_start: bool,
     /// No scan, size or trophy work (previews and the demo have a made-up library).
@@ -117,6 +123,7 @@ impl LauncherApp {
     pub fn new(cc: &eframe::CreationContext<'_>, config: Config) -> Self {
         let mut app = Self::from_shell(Shell::new(cc), &cc.egui_ctx, config);
         app.intro = true;
+        app.discord = true;
         app
     }
 
@@ -137,6 +144,9 @@ impl LauncherApp {
             artwork: Vec::new(),
             started: false,
             intro: false,
+            discord: false,
+            presence: None,
+            presence_shown: false,
             start_screen: screens::start::StartScreen::default(),
             scan_on_start: config.scan_on_start,
             offline: false,
@@ -234,6 +244,9 @@ impl LauncherApp {
             self.shell.set_reduced_motion(ctx, reduced);
         }
         self.shell.sounds.enabled = self.model.prefs.sounds;
+        if !self.model.prefs.discord_presence {
+            self.clear_presence();
+        }
         // The music fades out while a game starts or runs and while another window has focus.
         let playing = self.model.running.is_some() || self.model.starting.is_some();
         self.shell
@@ -241,6 +254,15 @@ impl LauncherApp {
             .set_music(self.model.prefs.music && !playing && self.focused);
         self.shell.backdrop.paused =
             self.model.running.is_some() || !self.focused || self.freeze_backdrop;
+    }
+
+    /// Takes the game off Discord if it is shown there.
+    fn clear_presence(&mut self) {
+        if std::mem::take(&mut self.presence_shown)
+            && let Some(presence) = &self.presence
+        {
+            presence.clear();
+        }
     }
 
     pub fn handle_event(&mut self, ctx: &Context, event: InputEvent) {
@@ -350,6 +372,14 @@ impl LauncherApp {
                 }
             }
             Effect::ReloadToolkit => self.pipeline.reload_toolkit(&self.model.prefs),
+            Effect::Presence(Some(game)) if self.discord => {
+                let cache = self.model.paths.cache_dir().join("discord-games.json");
+                self.presence
+                    .get_or_insert_with(|| Presence::spawn(cache))
+                    .playing(&game, SystemTime::now());
+                self.presence_shown = true;
+            }
+            Effect::Presence(_) => self.clear_presence(),
             Effect::MinimizeWindow => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
             Effect::RestoreWindow => {
                 ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
