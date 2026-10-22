@@ -24,6 +24,8 @@ tracing-subscriber.workspace = true
 bytemuck = { version = "1", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 sys-locale = "0.3"
+rfd = "0.17.2"
+time = { version = "0.3", features = ["local-offset"] }
 
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "3"

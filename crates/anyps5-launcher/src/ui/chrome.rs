@@ -340,6 +340,8 @@ pub struct PanelRow<'a> {
     pub control: RowControl<'a>,
     pub focused: bool,
     pub destructive: bool,
+    /// A controller face glyph painted before the title (`✕ Cross`).
+    pub pad_glyph: Option<components::PadGlyph>,
     pub force: Option<Force>,
     /// Language of the accessible names of the chevrons.
     pub language: Language,
@@ -369,9 +371,18 @@ impl<'a> PanelRow<'a> {
             control,
             focused: false,
             destructive: false,
+            pad_glyph: None,
             force: None,
             language: Language::English,
         }
+    }
+    pub fn pad_glyph(mut self, glyph: components::PadGlyph) -> Self {
+        self.pad_glyph = Some(glyph);
+        self
+    }
+    pub fn force(mut self, force: Option<Force>) -> Self {
+        self.force = force;
+        self
     }
     pub fn language(mut self, language: Language) -> Self {
         self.language = language;
@@ -455,7 +466,10 @@ impl<'a> PanelRow<'a> {
         } else {
             0.0
         };
-        let text_width = (width - 2.0 * pad - icon_block - value_width - 12.0).max(40.0);
+        // `✕ Cross`: a painted controller glyph in front of the title.
+        let glyph_block = if self.pad_glyph.is_some() { 24.0 } else { 0.0 };
+        let text_width =
+            (width - 2.0 * pad - icon_block - glyph_block - value_width - 12.0).max(40.0);
         let title_style = ty::ROW_TITLE;
         let title_galley = {
             let shrink = {
@@ -557,6 +571,16 @@ impl<'a> PanelRow<'a> {
             dim(0.62)
         };
         let title_h = title_galley.size().y;
+        if let Some(glyph) = self.pad_glyph {
+            let first_line = title_galley.rows.first().map_or(title_h, |r| r.height());
+            glyph.paint(
+                &painter,
+                pos2(x + 8.0, top + first_line * 0.5),
+                16.0,
+                title_color,
+            );
+            x += glyph_block;
+        }
         painter.galley(pos2(x, top), title_galley, title_color);
         if let Some(detail) = detail_galley {
             painter.galley(pos2(x, top + title_h + 3.0), detail, dim(0.55));

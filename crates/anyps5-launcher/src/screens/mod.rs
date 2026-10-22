@@ -1,0 +1,87 @@
+//! The panels and overlays of the launcher (docs/DESIGN.md section 5), one module each. Every
+//! module owns a state struct and a `show(...)` that takes the [`Shell`](crate::ui::Shell), the
+//! egui context and the frame's input events and returns the actions the host has to perform; the
+//! host (the home screen and its state machine) decides which panel is open and keeps the data.
+//!
+//! | Module | Screen |
+//! |---|---|
+//! | [`settings`] | app settings: appearance, library, language, behaviour, toolkit, advanced, about |
+//! | [`game_settings`] | the "..." side panel and the uninstall confirmation |
+//! | [`controls`] | key bindings of a game with key capture |
+//! | [`advanced`] | sticks, mouse, keyboard, shader cache, sharing |
+//! | [`trophies`] | the trophy list |
+//! | [`banner`] | the trophy banner card |
+//! | [`start`] | the launch splash with its timer |
+//! | [`unlock`] | the unlocking progress (steps, overall fraction, hero block) |
+//! | [`log`] | the log view, the diagnosis line and the report |
+//! | [`library`] | the library grid |
+//!
+//! [`rows`] and [`side`] are the shared row list and side-panel frame, [`convert`] maps the core's
+//! preference enums to the UI's tokens, [`strings`] holds the Windows-only texts and [`dialogs`]
+//! the native file dialogs. [`gallery`] renders every panel and state for screenshots.
+
+// The host (the home screen) consumes these modules in a later change; until then most of the
+// API is unused outside the gallery and the tests.
+#![allow(dead_code)]
+
+pub mod advanced;
+pub mod banner;
+pub mod controls;
+pub mod convert;
+pub mod dialogs;
+pub mod format;
+pub mod game_settings;
+pub mod gallery;
+pub mod library;
+pub mod log;
+pub mod rows;
+pub mod scroll;
+pub mod settings;
+pub mod side;
+pub mod start;
+pub mod strings;
+pub mod trophies;
+pub mod unlock;
+
+use std::sync::Arc;
+
+use egui::epaint::text::LayoutJob;
+use egui::{Color32, Galley, Painter};
+
+use crate::ui::icons::Icon;
+use crate::ui::theme::TextStyle;
+
+/// Text clamped to `max_rows` rows of `width`, with an ellipsis where it is cut.
+pub fn clamped(
+    painter: &Painter,
+    style: TextStyle,
+    text: &str,
+    color: Color32,
+    width: f32,
+    max_rows: usize,
+) -> Arc<Galley> {
+    let mut job = LayoutJob::simple(text.to_owned(), style.font(), color, width);
+    job.wrap.max_rows = max_rows;
+    job.sections[0].format.line_height = Some(style.line_height());
+    painter.layout_job(job)
+}
+
+/// A message for the host's toast (section 5.6): a glyph and a sentence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToastRequest {
+    pub icon: Icon,
+    pub text: String,
+}
+
+impl ToastRequest {
+    pub fn new(icon: Icon, text: impl Into<String>) -> Self {
+        Self {
+            icon,
+            text: text.into(),
+        }
+    }
+
+    pub fn warning(text: impl Into<String>) -> Self {
+        Self::new(Icon::WARNING, text)
+    }
+}
