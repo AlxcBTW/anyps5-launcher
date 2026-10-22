@@ -52,6 +52,7 @@ pub fn diagnosis_summary(diagnosis: &Diagnosis, language: Language) -> String {
         ),
         Diagnosis::Crashed(what) => language.format(Key::DiagnosisCrashed, &[Arg::Str(what)]),
         Diagnosis::HostCpu(list) => Extra::DiagnosisHostCpu.format(language, &[Arg::Str(list)]),
+        Diagnosis::NoUdmabuf => Extra::DiagnosisNoUdmabuf.format(language, &[]),
     }
 }
 

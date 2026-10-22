@@ -142,6 +142,7 @@ impl ToolProcess {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
+        crate::platform::isolate_group(&mut command);
         let child = command.spawn()?;
         // The command still holds the write end; it must close for the pipe to reach EOF.
         drop(command);
@@ -173,6 +174,7 @@ impl ToolProcess {
             job.terminate(1);
             return;
         }
+        crate::platform::kill_group(self.id());
         let _ = self.0.child.lock().expect("child lock").kill();
     }
 

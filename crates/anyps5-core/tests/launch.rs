@@ -8,8 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyps5_core::diagnosis::{Diagnosis, ExitInfo};
-use anyps5_core::launch::{LaunchEvent, LaunchRequest, Launcher, RunHandle, WindowPrefs};
+use anyps5_core::launch::{LaunchEvent, LaunchRequest, Launcher, RunHandle};
 use anyps5_core::paths::GameId;
+use anyps5_core::unlock::EXECUTABLE;
 use support::*;
 
 struct Setup {
@@ -23,7 +24,7 @@ fn setup(settings: &[&str]) -> Setup {
     let dir = tempfile::tempdir().unwrap();
     let copy = dir.path().join("PPSA00001-abc");
     fs::create_dir_all(&copy).unwrap();
-    fs::copy(fake_binary(), copy.join("eboot.exe")).unwrap();
+    fs::copy(fake_binary(), copy.join(EXECUTABLE)).unwrap();
     configure_fake(&copy, settings);
     Setup {
         log: dir.path().join("logs/PPSA00001.log"),
@@ -241,6 +242,7 @@ fn a_game_that_outlives_the_deadline_without_a_window_is_reported_as_forced() {
 #[cfg(windows)]
 #[test]
 fn the_first_window_is_found_placed_and_reported() {
+    use anyps5_core::launch::WindowPrefs;
     let s = setup(&["FAKE_GAME_SLEEP_MS=60000", "FAKE_GAME_WINDOW=800x600"]);
     let mut request = s.request();
     request.window = WindowPrefs {

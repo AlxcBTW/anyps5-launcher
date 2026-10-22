@@ -41,14 +41,29 @@ pub fn local_time() -> ClockTime {
     }
 }
 
-/// The time of day in UTC (no time zone database without a Windows API).
+/// The local time of day (`localtime_r` reads the system time zone); UTC where that fails.
 #[cfg(not(windows))]
 pub fn local_time() -> ClockTime {
-    let secs = unix_seconds().rem_euclid(86_400) as u32;
-    ClockTime {
-        hour: secs / 3600,
-        minute: secs % 3600 / 60,
-        second: secs % 60,
+    let now = unix_seconds() as libc::time_t;
+    // SAFETY: `tm` is plain data that `localtime_r` fills; both pointers are valid for the call.
+    let local = unsafe {
+        let mut tm: libc::tm = std::mem::zeroed();
+        (!libc::localtime_r(&now, &mut tm).is_null()).then_some(tm)
+    };
+    match local {
+        Some(tm) => ClockTime {
+            hour: tm.tm_hour as u32,
+            minute: tm.tm_min as u32,
+            second: tm.tm_sec as u32,
+        },
+        None => {
+            let secs = unix_seconds().rem_euclid(86_400) as u32;
+            ClockTime {
+                hour: secs / 3600,
+                minute: secs % 3600 / 60,
+                second: secs % 60,
+            }
+        }
     }
 }
 

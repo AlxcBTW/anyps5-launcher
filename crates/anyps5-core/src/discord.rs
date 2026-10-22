@@ -327,17 +327,17 @@ fn open_pipe(index: u32) -> Option<Box<dyn Pipe>> {
     Some(Box::new(file))
 }
 
-/// `discord-ipc-N` in the runtime or temporary folder elsewhere.
+/// `discord-ipc-N` in the runtime folder, the Flatpak and Snap folders below it, or the temporary
+/// folder elsewhere (see [`crate::platform::discord_socket_candidates`]).
 #[cfg(not(windows))]
 fn open_pipe(index: u32) -> Option<Box<dyn Pipe>> {
-    let folder = std::env::var_os("XDG_RUNTIME_DIR")
-        .or_else(|| std::env::var_os("TMPDIR"))
-        .map_or_else(std::env::temp_dir, PathBuf::from);
-    let stream =
-        std::os::unix::net::UnixStream::connect(folder.join(format!("discord-ipc-{index}")))
-            .ok()?;
-    stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
-    Some(Box::new(stream))
+    crate::platform::discord_socket_candidates(index, &crate::platform::process_vars)
+        .into_iter()
+        .find_map(|socket| std::os::unix::net::UnixStream::connect(socket).ok())
+        .and_then(|stream| {
+            stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
+            Some(Box::new(stream) as Box<dyn Pipe>)
+        })
 }
 
 #[cfg(test)]

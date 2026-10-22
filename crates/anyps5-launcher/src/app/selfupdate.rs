@@ -56,7 +56,8 @@ impl SelfUpdateService {
     /// Checks for a newer launcher in the background, once per start. A verified update from an
     /// earlier run is reported at once, without waiting for the network.
     pub fn start(&mut self, paths: &AppPaths) {
-        if self.started || self.simulated {
+        // The update is the Windows portable exe; a Linux build is replaced from the releases page.
+        if self.started || self.simulated || !cfg!(windows) {
             return;
         }
         self.started = true;

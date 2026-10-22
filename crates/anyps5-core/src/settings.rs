@@ -541,6 +541,7 @@ impl Preferences {
             prefs.language = Language::from_locale(&locale);
         }
         if let Some(name) = std::env::var("USERNAME")
+            .or_else(|_| std::env::var("USER"))
             .ok()
             .and_then(|n| n.split_whitespace().next().map(str::to_string))
         {

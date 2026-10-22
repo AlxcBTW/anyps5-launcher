@@ -129,9 +129,136 @@ fn wait_for_exit(_pid: u32, timeout: std::time::Duration) {
 #[cfg(windows)]
 pub use windows_impl::join;
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+pub use unix_impl::join;
+
+#[cfg(not(any(windows, unix)))]
 pub fn join(_name: &str, _arguments: &[String]) -> Join {
     Join::Alone
+}
+
+/// The same handoff over a Unix socket, `$XDG_RUNTIME_DIR/anyps5-launcher-<name>.sock` (the
+/// temporary folder, per user, without a runtime folder). The socket is private to the user.
+#[cfg(unix)]
+mod unix_impl {
+    use std::io::{Read, Write};
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::path::PathBuf;
+    use std::sync::mpsc;
+    use std::sync::{Arc, OnceLock};
+    use std::time::Duration;
+
+    use super::{ANSWER, Arguments, Inbox, Join, MESSAGE_BYTES, decode, encode};
+
+    /// How long a later launch waits for the running one to take its message.
+    const HANDOFF: Duration = Duration::from_secs(3);
+
+    fn socket_path(name: &str) -> PathBuf {
+        let file = format!("anyps5-launcher-{name}.sock");
+        match std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
+            Some(runtime) => PathBuf::from(runtime).join(file),
+            // SAFETY: `getuid` has no arguments and cannot fail.
+            None => std::env::temp_dir().join(format!("{}-{file}", unsafe { libc::getuid() })),
+        }
+    }
+
+    /// Becomes the launcher, or hands `arguments` to the one that is running.
+    pub fn join(name: &str, arguments: &[String]) -> Join {
+        let path = socket_path(name);
+        match UnixListener::bind(&path) {
+            Ok(listener) => return primary(listener, &path),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {}
+            Err(error) => {
+                tracing::warn!("single instance: cannot create {}: {error}", path.display());
+                return Join::Alone;
+            }
+        }
+        match deliver(&path, arguments) {
+            Ok(()) => Join::Delivered,
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+                // Nobody listens: a launcher that ended without cleaning up. Take the name over.
+                let _ = std::fs::remove_file(&path);
+                match UnixListener::bind(&path) {
+                    Ok(listener) => primary(listener, &path),
+                    Err(_) => Join::Alone,
+                }
+            }
+            Err(error) => {
+                tracing::warn!("single instance: cannot reach the running launcher: {error}");
+                Join::Alone
+            }
+        }
+    }
+
+    fn deliver(path: &PathBuf, arguments: &[String]) -> std::io::Result<()> {
+        let mut stream = UnixStream::connect(path)?;
+        stream.set_read_timeout(Some(HANDOFF))?;
+        stream.set_write_timeout(Some(HANDOFF))?;
+        stream.write_all(&encode(arguments))?;
+        stream.shutdown(std::net::Shutdown::Write)?;
+        let mut answer = Vec::new();
+        stream.read_to_end(&mut answer)?;
+        if answer == ANSWER {
+            Ok(())
+        } else {
+            Err(std::io::ErrorKind::InvalidData.into())
+        }
+    }
+
+    fn primary(listener: UnixListener, path: &PathBuf) -> Join {
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        let (sender, receiver) = mpsc::channel::<Arguments>();
+        let repaint: Arc<OnceLock<egui::Context>> = Arc::default();
+        let thread_repaint = repaint.clone();
+        let spawned = std::thread::Builder::new()
+            .name("single-instance".into())
+            .spawn(move || {
+                for stream in listener.incoming().flatten() {
+                    let sender = sender.clone();
+                    let repaint = thread_repaint.clone();
+                    // One thread per client: a client that never writes holds only its own.
+                    let _ = std::thread::Builder::new()
+                        .name("single-instance-client".into())
+                        .spawn(move || answer(stream, &sender, &repaint));
+                }
+            });
+        match spawned {
+            Ok(_) => Join::Primary(Inbox { receiver, repaint }),
+            Err(_) => Join::Alone,
+        }
+    }
+
+    /// Reads one message, passes it on, answers.
+    fn answer(
+        mut stream: UnixStream,
+        sender: &mpsc::Sender<Arguments>,
+        repaint: &Arc<OnceLock<egui::Context>>,
+    ) {
+        let _ = stream.set_read_timeout(Some(HANDOFF));
+        let mut message = Vec::new();
+        if (&mut stream)
+            .take(MESSAGE_BYTES as u64)
+            .read_to_end(&mut message)
+            .is_err()
+        {
+            return;
+        }
+        let reply: &[u8] = match decode(&message) {
+            Some(arguments) => {
+                tracing::info!("single instance: another launch handed over {arguments:?}");
+                let _ = sender.send(arguments);
+                if let Some(ctx) = repaint.get() {
+                    // Wayland may refuse the focus; the window still wakes up and acts.
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    ctx.request_repaint();
+                }
+                ANSWER
+            }
+            None => b"no",
+        };
+        let _ = stream.write_all(reply);
+    }
 }
 
 #[cfg(windows)]
@@ -452,8 +579,8 @@ mod tests {
     }
 
     /// Two launches of one name: the first becomes the launcher, the second hands over and is
-    /// delivered. Windows only; the name is unique to the test process.
-    #[cfg(windows)]
+    /// delivered. The name is unique to the test process.
+    #[cfg(any(windows, unix))]
     #[test]
     fn the_second_launch_reaches_the_first() {
         let name = format!("unit-{}", std::process::id());

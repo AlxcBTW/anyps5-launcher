@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::CancelToken;
 use crate::paths::AppPaths;
+use crate::platform::Os;
 
 /// The MinGW runtime the libraries need beside them (without it `LoadLibrary` fails with 126).
 pub const MINGW_DLLS: [&str; 3] = [
@@ -43,7 +44,7 @@ pub enum ToolkitError {
     Digest,
     #[error("{0}")]
     Io(#[from] io::Error),
-    #[error("the release has no Windows relinker or libraries")]
+    #[error("the release has no relinker or libraries for this system")]
     NoRelease,
     #[error("cancelled")]
     Cancelled,
@@ -138,7 +139,7 @@ impl Toolkit {
     /// Opens an installed toolkit folder: `relinker.exe`, `libs\` with `.prx` files and the MinGW
     /// DLLs, optionally `version.txt`, `toolkit.json` and `patches\`.
     pub fn open(root: &Path) -> Result<Toolkit, ToolkitError> {
-        let relinker = root.join("relinker.exe");
+        let relinker = root.join(Os::current().relinker_file());
         let libs = root.join("libs");
         let mut toolkit = Self::from_parts(root, relinker, libs, false)?;
         if let Ok(text) = fs::read_to_string(root.join("version.txt")) {
@@ -184,14 +185,14 @@ impl Toolkit {
         adopted: bool,
     ) -> Result<Toolkit, ToolkitError> {
         if !relinker.is_file() {
-            return Err(ToolkitError::Missing("relinker.exe".into()));
+            return Err(ToolkitError::Missing(Os::current().relinker_file().into()));
         }
         if !has_prx(&libs) {
             return Err(ToolkitError::Missing("libs\\*.prx".into()));
         }
         let mut extra_runtime = Vec::new();
         let mut missing = Vec::new();
-        for dll in MINGW_DLLS {
+        for dll in Os::current().runtime_libs() {
             if libs.join(dll).is_file() {
                 continue;
             }
@@ -335,10 +336,10 @@ fn cmake_caches(root: &Path) -> Vec<PathBuf> {
 pub fn adopt_folder(folder: &Path) -> Result<Toolkit, ToolkitError> {
     let relinker = find_below(folder, 4, &|p| {
         p.file_name()
-            .is_some_and(|n| n.eq_ignore_ascii_case("relinker.exe"))
+            .is_some_and(|n| n.eq_ignore_ascii_case(Os::current().relinker_file()))
             && p.is_file()
     })
-    .ok_or_else(|| ToolkitError::Missing("relinker.exe".into()))?;
+    .ok_or_else(|| ToolkitError::Missing(Os::current().relinker_file().into()))?;
     let libs = find_below(folder, 5, &|p| {
         p.is_dir()
             && p.file_name()
@@ -486,8 +487,8 @@ impl ReleaseInfo {
     }
 }
 
-/// Reads the JSON of `GET /repos/<repo>/releases?per_page=N`: the releases that have a Windows
-/// relinker and libraries, in the API's order (newest first). Drafts and unusable ones are left out.
+/// Reads the JSON of `GET /repos/<repo>/releases?per_page=N`: the releases that have a relinker and
+/// libraries for this system, in the API's order (newest first). Drafts and unusable ones are left out.
 pub fn parse_releases(json: &str) -> Result<Vec<ReleaseInfo>, ToolkitError> {
     let value: serde_json::Value = serde_json::from_str(json)
         .map_err(|e| ToolkitError::Network(format!("bad release data: {e}")))?;
@@ -501,8 +502,13 @@ pub fn parse_releases(json: &str) -> Result<Vec<ReleaseInfo>, ToolkitError> {
         .collect())
 }
 
-/// Reads the JSON of `GET /repos/<repo>/releases/latest`.
+/// Reads the JSON of `GET /repos/<repo>/releases/latest`, picking the assets of this system.
 pub fn parse_release(json: &str) -> Result<ReleaseInfo, ToolkitError> {
+    parse_release_for(Os::current(), json)
+}
+
+/// [`parse_release`] for another system (tests).
+pub fn parse_release_for(os: Os, json: &str) -> Result<ReleaseInfo, ToolkitError> {
     let value: serde_json::Value = serde_json::from_str(json)
         .map_err(|e| ToolkitError::Network(format!("bad release data: {e}")))?;
     let text =
@@ -526,8 +532,8 @@ pub fn parse_release(json: &str) -> Result<ReleaseInfo, ToolkitError> {
                 })
             })
     };
-    let relinker = find(&format!("relinker-{tag}.exe")).ok_or(ToolkitError::NoRelease)?;
-    let libs = find(&format!("prx-windows-{tag}.zip")).ok_or(ToolkitError::NoRelease)?;
+    let relinker = find(&os.relinker_asset(&tag)).ok_or(ToolkitError::NoRelease)?;
+    let libs = find(&os.libs_asset(&tag)).ok_or(ToolkitError::NoRelease)?;
     Ok(ReleaseInfo {
         notes: find("release-notes.md"),
         published: text(&value, "published_at").unwrap_or_default(),
@@ -657,11 +663,12 @@ fn install_into(
     download(
         &agent,
         &info.relinker,
-        &partial.join("relinker.exe"),
+        &partial.join(Os::current().relinker_file()),
         DownloadStage::Relinker,
         progress,
         cancel,
     )?;
+    make_executable(&partial.join(Os::current().relinker_file()))?;
     let zip_path = partial.join("libs.zip");
     download(
         &agent,
@@ -678,7 +685,7 @@ fn install_into(
         copy_patches(source, &partial.join("patches"))?;
     }
     let fp = fingerprint(
-        &partial.join("relinker.exe"),
+        &partial.join(Os::current().relinker_file()),
         &partial.join("libs"),
         &partial.join("patches"),
     )?;
@@ -723,6 +730,20 @@ fn copy_patches(from: &Path, to: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// A downloaded tool has no execute bit on Unix.
+fn make_executable(file: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(file, fs::Permissions::from_mode(0o755))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        Ok(())
+    }
 }
 
 fn download(
@@ -885,16 +906,18 @@ fn prune_old_releases(paths: &AppPaths, keep_tag: &str) {
 mod tests {
     use super::*;
 
+    const RELINKER: &str = Os::current().relinker_file();
+
     fn write(path: &Path, bytes: &[u8]) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, bytes).unwrap();
     }
 
     fn make_toolkit(root: &Path, dlls: bool) {
-        write(&root.join("relinker.exe"), b"RELINKER");
+        write(&root.join(RELINKER), b"RELINKER");
         write(&root.join("libs/a.prx"), b"AAA");
         if dlls {
-            for dll in MINGW_DLLS {
+            for dll in Os::current().runtime_libs() {
                 write(&root.join("libs").join(dll), b"D");
             }
         }
@@ -904,13 +927,13 @@ mod tests {
     fn fingerprint_vector() {
         let dir = tempfile::tempdir().unwrap();
         let r = dir.path();
-        write(&r.join("relinker.exe"), b"RELINKER");
+        write(&r.join(RELINKER), b"RELINKER");
         write(&r.join("libs/b.prx"), b"BBBB");
         write(&r.join("libs/a.prx"), b"AAA");
         write(&r.join("libs/libx.dll"), b"D");
         write(&r.join("patches/p.json"), b"patches!");
         write(&r.join("patches/readme.txt"), b"ignored");
-        let fp = fingerprint(&r.join("relinker.exe"), &r.join("libs"), &r.join("patches")).unwrap();
+        let fp = fingerprint(&r.join(RELINKER), &r.join("libs"), &r.join("patches")).unwrap();
         assert_eq!(fp, "3549fbc1b2f8");
         let full = {
             let mut h = Sha256::new();
@@ -926,12 +949,33 @@ mod tests {
     }
 
     #[test]
-    fn open_requires_relinker_prx_and_runtime() {
+    fn open_requires_relinker_and_prx() {
         let dir = tempfile::tempdir().unwrap();
         assert!(
-            matches!(Toolkit::open(dir.path()), Err(ToolkitError::Missing(f)) if f == "relinker.exe")
+            matches!(Toolkit::open(dir.path()), Err(ToolkitError::Missing(f)) if f == RELINKER)
         );
-        write(&dir.path().join("relinker.exe"), b"R");
+        write(&dir.path().join(RELINKER), b"R");
+        assert!(matches!(
+            Toolkit::open(dir.path()),
+            Err(ToolkitError::Missing(_))
+        ));
+        write(&dir.path().join("libs/a.prx"), b"A");
+        if Os::current() == Os::Linux {
+            assert!(
+                Toolkit::open(dir.path()).is_ok(),
+                "Linux needs no runtime DLLs"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn open_requires_the_mingw_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(
+            matches!(Toolkit::open(dir.path()), Err(ToolkitError::Missing(f)) if f == RELINKER)
+        );
+        write(&dir.path().join(RELINKER), b"R");
         assert!(matches!(
             Toolkit::open(dir.path()),
             Err(ToolkitError::Missing(_))
@@ -976,11 +1020,11 @@ mod tests {
         make_toolkit(flat.path(), true);
         let toolkit = adopt_folder(flat.path()).unwrap();
         assert!(toolkit.is_adopted());
-        assert_eq!(toolkit.relinker(), flat.path().join("relinker.exe"));
+        assert_eq!(toolkit.relinker(), flat.path().join(RELINKER));
 
         let tree = tempfile::tempdir().unwrap();
         let r = tree.path();
-        write(&r.join("build/core/relinker/relinker.exe"), b"R");
+        write(&r.join(format!("build/core/relinker/{RELINKER}")), b"R");
         write(&r.join("build/core/libs/libs/x.prx"), b"X");
         for dll in MINGW_DLLS {
             write(&r.join("build/core/libs/libs").join(dll), b"D");
@@ -988,7 +1032,7 @@ mod tests {
         let toolkit = adopt_folder(r).unwrap();
         assert_eq!(
             toolkit.relinker(),
-            r.join("build/core/relinker/relinker.exe")
+            r.join(format!("build/core/relinker/{RELINKER}"))
         );
         assert_eq!(toolkit.libs(), r.join("build/core/libs/libs"));
         assert_eq!(toolkit.tag(), None);
@@ -1001,11 +1045,12 @@ mod tests {
         ));
     }
 
+    #[cfg(windows)]
     #[test]
     fn adopted_toolkit_finds_the_runtime_next_to_the_recorded_compiler() {
         let tree = tempfile::tempdir().unwrap();
         let r = tree.path();
-        write(&r.join("build/core/relinker/relinker.exe"), b"R");
+        write(&r.join(format!("build/core/relinker/{RELINKER}")), b"R");
         write(&r.join("build/core/libs/libs/x.prx"), b"X");
         let compiler = r.join("mingw64/bin");
         for dll in MINGW_DLLS {
@@ -1095,12 +1140,13 @@ mod tests {
         {"name": "relinker-v0.1.3.exe", "browser_download_url": "https://x/relinker.exe", "size": 5400000,
          "digest": "sha256:ABCDEF"},
         {"name": "prx-windows-v0.1.3.zip", "browser_download_url": "https://x/prx.zip", "size": 96600000},
+        {"name": "prx-linux-v0.1.3.zip", "browser_download_url": "https://x/prx-linux.zip", "size": 102000000},
         {"name": "USAGE.md", "browser_download_url": "https://x/USAGE.md", "size": 10}
       ]}"#;
 
     #[test]
     fn parses_the_release_assets_by_exact_name() {
-        let info = parse_release(RELEASE_JSON).unwrap();
+        let info = parse_release_for(Os::Windows, RELEASE_JSON).unwrap();
         assert_eq!(info.tag, "v0.1.3");
         assert_eq!(info.plain_tag(), "0.1.3");
         assert_eq!(info.relinker.url, "https://x/relinker.exe");
@@ -1111,9 +1157,24 @@ mod tests {
     }
 
     #[test]
+    fn the_linux_assets_are_the_ones_without_an_extension_and_the_linux_zip() {
+        let info = parse_release_for(Os::Linux, RELEASE_JSON).unwrap();
+        assert_eq!(info.relinker.url, "https://x/linux");
+        assert_eq!(info.libs.name, "prx-linux-v0.1.3.zip");
+        let json = RELEASE_JSON.replace("prx-linux-v0.1.3.zip", "prx-other.zip");
+        assert!(matches!(
+            parse_release_for(Os::Linux, &json),
+            Err(ToolkitError::NoRelease)
+        ));
+    }
+
+    #[test]
     fn a_release_without_the_windows_assets_is_no_release() {
-        let json = RELEASE_JSON.replace("prx-windows-v0.1.3.zip", "prx-linux-v0.1.3.zip");
-        assert!(matches!(parse_release(&json), Err(ToolkitError::NoRelease)));
+        let json = RELEASE_JSON.replace("prx-windows-v0.1.3.zip", "prx-other.zip");
+        assert!(matches!(
+            parse_release_for(Os::Windows, &json),
+            Err(ToolkitError::NoRelease)
+        ));
         assert!(matches!(parse_release("{}"), Err(ToolkitError::NoRelease)));
         assert!(matches!(
             parse_release("nope"),

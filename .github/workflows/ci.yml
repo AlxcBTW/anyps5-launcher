@@ -35,3 +35,48 @@ jobs:
           name: anyps5-launcher-windows-x64
           path: target/x86_64-pc-windows-msvc/release/anyps5-launcher.exe
           if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # alsa for cpal (sound), udev for gilrs (gamepads), xkbcommon/xcb for winit's X11 and
+      # Wayland input. rfd uses the XDG portal over D-Bus and needs no GTK.
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2.9.3
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace --no-fail-fast
+      - name: Release build
+        run: cargo build --release
+      # Renders the real UI on a software Vulkan device (lavapipe) in a virtual X server.
+      - name: Smoke packages
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            xvfb mesa-vulkan-drivers libvulkan1 libx11-6 libxcursor1 libxi6 libxrandr2 \
+            libxkbcommon-x11-0 libgl1
+      - name: Smoke screenshots
+        run: |
+          mkdir -p shots
+          for scene in home controls; do
+            xvfb-run -a -s "-screen 0 1920x1080x24" \
+              target/release/anyps5-launcher --gallery=$scene --screenshot=shots/$scene.png
+          done
+          ls -l shots
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: anyps5-launcher-linux-screenshots
+          path: shots/*.png
+          if-no-files-found: error

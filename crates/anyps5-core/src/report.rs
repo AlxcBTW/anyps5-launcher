@@ -91,7 +91,16 @@ pub fn diagnostic_text(input: &ReportInput) -> String {
                 system.gpu_lines().join("; ")
             }
         ),
-        format!("Windows: {}", or_unknown(&system.windows)),
+        format!(
+            "{}: {}",
+            if system.windows.starts_with("Windows") || (system.windows.is_empty() && cfg!(windows))
+            {
+                "Windows"
+            } else {
+                "System"
+            },
+            or_unknown(&system.windows)
+        ),
         format!("Launcher: {}", input.launcher_version),
         format!(
             "Toolkit: {}",
@@ -158,22 +167,9 @@ fn file_stamp() -> String {
     now.format(&format).unwrap_or_else(|_| "report".into())
 }
 
-/// D24: shows a file in Explorer (`explorer.exe /select,<path>`, no shell).
+/// D24: shows a file in Explorer (`explorer.exe /select,<path>`, no shell). Elsewhere its folder opens.
 pub fn reveal_in_explorer(path: &std::path::Path) -> io::Result<()> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // `/select,<path>` must be one argument; raw_arg keeps the quoting Explorer expects.
-        std::process::Command::new("explorer.exe")
-            .raw_arg(format!("/select,\"{}\"", path.display()))
-            .spawn()?;
-        Ok(())
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = path;
-        Err(io::Error::from(io::ErrorKind::Unsupported))
-    }
+    crate::platform::reveal(path)
 }
 
 #[cfg(windows)]
@@ -201,11 +197,32 @@ fn collect_system() -> SystemInfo {
 
 #[cfg(not(windows))]
 fn collect_system() -> SystemInfo {
+    let read = |file: &str| std::fs::read_to_string(file).unwrap_or_default();
     SystemInfo {
         cpu: crate::hostcpu::HostCpu::detect().brand,
         threads: std::thread::available_parallelism().map_or(0, |n| n.get()),
+        ram_gb: meminfo_gb(&read("/proc/meminfo")),
+        windows: os_release_name(&read("/etc/os-release")),
         ..SystemInfo::default()
     }
+}
+
+/// Total memory in GiB from the text of `/proc/meminfo`; 0 when it has no `MemTotal`.
+#[cfg(any(not(windows), test))]
+fn meminfo_gb(text: &str) -> u64 {
+    text.lines()
+        .find_map(|l| l.strip_prefix("MemTotal:"))
+        .and_then(|rest| rest.split_whitespace().next()?.parse::<u64>().ok())
+        .map_or(0, |kib| kib / (1 << 20))
+}
+
+/// `PRETTY_NAME` out of the text of `/etc/os-release`; empty when it has none.
+#[cfg(any(not(windows), test))]
+fn os_release_name(text: &str) -> String {
+    text.lines()
+        .find_map(|l| l.strip_prefix("PRETTY_NAME="))
+        .map(|v| v.trim().trim_matches('"').to_string())
+        .unwrap_or_default()
 }
 
 /// Hardware adapters as (name, driver version); software ones, like the basic render driver,
@@ -327,6 +344,15 @@ fn windows_version() -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn linux_system_facts_come_from_proc_and_os_release() {
+        assert_eq!(meminfo_gb("MemTotal:  32768000 kB\nMemFree: 1 kB\n"), 31);
+        assert_eq!(meminfo_gb("nothing"), 0);
+        let release = "NAME=\"Arch Linux\"\nPRETTY_NAME=\"Arch Linux\"\nID=arch\n";
+        assert_eq!(os_release_name(release), "Arch Linux");
+        assert_eq!(os_release_name(""), "");
+    }
+
     fn input() -> ReportInput {
         ReportInput {
             game_name: "Stray".into(),
@@ -394,7 +420,8 @@ line 2
         let text = diagnostic_text(&i);
         assert!(text.contains("PC: unknown, 0 threads, 0 GB\n"));
         assert!(text.contains("GPU: unknown\n"));
-        assert!(text.contains("Windows: unknown\n"));
+        let label = if cfg!(windows) { "Windows" } else { "System" };
+        assert!(text.contains(&format!("{label}: unknown\n")));
         assert!(text.contains("Toolkit: none\n"));
         assert!(text.contains("Reason: none found\n"));
         assert!(!text.contains("Crash report"));

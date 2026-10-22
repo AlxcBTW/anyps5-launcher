@@ -22,6 +22,10 @@ use crate::error::EventSink;
 use crate::paths::GameId;
 use crate::unlock::EXECUTABLE;
 
+/// Linux has no portable way to find another process's window (X11 and Wayland differ, and Wayland
+/// offers none), so a game that has run this long counts as shown.
+#[cfg(not(windows))]
+const LINUX_WINDOW_GRACE: Duration = Duration::from_secs(6);
 /// The ring buffer of the game's latest output kept in memory.
 pub const TAIL_BYTES: usize = 400 * 1024;
 /// A log above this size is cut to its last [`KEEP_AFTER_TRUNCATE`] bytes at the next start.
@@ -206,6 +210,8 @@ impl Running {
             job.terminate(1);
             return;
         }
+        // Elsewhere the game leads a process group of its own: end it with everything it started.
+        crate::platform::kill_group(self.pid);
         let _ = self.child.lock().expect("child lock").kill();
     }
 }
@@ -293,6 +299,7 @@ impl Launcher {
             // CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
             command.creation_flags(0x0800_0000 | 0x0000_0200);
         }
+        crate::platform::isolate_group(&mut command);
         let child = command.spawn().map_err(LaunchError::Spawn)?;
         // The command holds the write end; the pipe only ends when it is gone.
         drop(command);
@@ -392,7 +399,7 @@ fn watch(
             #[cfg(windows)]
             let found = crate::win::find_window(&running.pids());
             #[cfg(not(windows))]
-            let found: Option<isize> = None;
+            let found: Option<isize> = (started.elapsed() >= LINUX_WINDOW_GRACE).then_some(0);
             if let Some(window) = found {
                 running.window.store(window, Ordering::SeqCst);
                 had_window = true;
@@ -487,7 +494,7 @@ mod tests {
             .env
             .insert("ANYPS5_PRESENT_MODE".into(), "fifo".into());
         let spec = build_command(&request);
-        assert_eq!(spec.program, request.copy.join("eboot.exe"));
+        assert_eq!(spec.program, request.copy.join(EXECUTABLE));
         assert_eq!(spec.cwd, request.copy);
         assert!(spec.args.is_empty());
         assert_eq!(spec.env["ANYPS5_PRESENT_MODE"], "fifo");

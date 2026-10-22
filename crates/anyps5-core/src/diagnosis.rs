@@ -33,6 +33,8 @@ pub enum Diagnosis {
     Crashed(String),
     /// The host CPU lacks extensions the game needs (the list).
     HostCpu(String),
+    /// Linux: the user may not open `/dev/udmabuf`, so GPU stores through shared memory fail.
+    NoUdmabuf,
 }
 
 const MINGW_RUNTIME: &str =
@@ -172,6 +174,13 @@ impl Diagnosis {
             return Some(Self::classify(&message));
         }
 
+        // Linux: the engine says so at start; it matters once GPU stores fail because of it.
+        if session.contains("open /dev/udmabuf: Permission denied")
+            && session.contains("BDA access failed")
+        {
+            return Some(Diagnosis::NoUdmabuf);
+        }
+
         // 4 and 5. The GPU.
         if session.contains("VK_ERROR_DEVICE_LOST")
             || regex(&VK4, r"Vulkan result -4\b").is_match(session)
@@ -302,6 +311,7 @@ impl Diagnosis {
             Diagnosis::EngineError(message) => ("diagnosisEngineError", vec![message.clone()]),
             Diagnosis::Crashed(what) => ("diagnosisCrashed", vec![what.clone()]),
             Diagnosis::HostCpu(list) => ("diagnosisHostCpu", vec![list.clone()]),
+            Diagnosis::NoUdmabuf => ("diagnosisNoUdmabuf", vec![]),
         }
     }
 
@@ -328,6 +338,9 @@ impl Diagnosis {
             Diagnosis::EngineError(message) => format!("Engine error: {message}"),
             Diagnosis::Crashed(what) => format!("The game crashed ({what})."),
             Diagnosis::HostCpu(list) => format!("This CPU lacks {list}, which the game needs."),
+            Diagnosis::NoUdmabuf => {
+                "The game cannot open /dev/udmabuf. Add your user to the kvm group and log in again.".into()
+            }
         }
     }
 }
@@ -433,6 +446,14 @@ mod tests {
             read(wrapped),
             Some(Diagnosis::EngineError("some other thing happened".into()))
         );
+    }
+
+    #[test]
+    fn a_denied_udmabuf_counts_once_gpu_stores_fail() {
+        let denied = "[gpu] open /dev/udmabuf: Permission denied\n";
+        assert_eq!(read(denied), None, "a copy fallback alone is no failure");
+        let failed = format!("{denied}BDA access failed at 0x1000\nVulkan result -4\n");
+        assert_eq!(read(&failed), Some(Diagnosis::NoUdmabuf));
     }
 
     #[test]

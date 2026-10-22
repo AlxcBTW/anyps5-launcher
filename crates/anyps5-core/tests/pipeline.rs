@@ -11,7 +11,8 @@ use anyps5_core::fsx::LinkMode;
 use anyps5_core::paths::GameId;
 use anyps5_core::toolkit::Toolkit;
 use anyps5_core::unlock::{
-    self, Step, UnlockControl, UnlockError, UnlockEvent, UnlockQueue, UnlockRequest, run_unlock,
+    self, EXECUTABLE, Step, UnlockControl, UnlockError, UnlockEvent, UnlockQueue, UnlockRequest,
+    run_unlock,
 };
 use support::*;
 
@@ -112,7 +113,7 @@ fn unlocks_a_dump_end_to_end() {
     );
 
     // The layout.
-    assert!(copy.join("eboot.exe").is_file());
+    assert!(copy.join(EXECUTABLE).is_file());
     assert_eq!(
         fs::read(copy.join("app0/data/level1.pak")).unwrap(),
         b"LEVEL-ONE-DATA"
@@ -153,11 +154,13 @@ fn unlocks_a_dump_end_to_end() {
     no_leftovers(&w.root);
 
     // What the relinker was asked.
-    let args = args_of(&copy.join("eboot.exe"));
+    let args = args_of(&copy.join(EXECUTABLE));
+    let format_args = anyps5_core::platform::Os::current().relinker_args();
+    let (format, args) = args.split_at(format_args.len());
+    assert_eq!(format, format_args);
     assert_eq!(
-        &args[..6],
+        &args[..5],
         [
-            "--windows",
             "--to-intel",
             "--module-dir",
             ".",
@@ -165,9 +168,9 @@ fn unlocks_a_dump_end_to_end() {
             "Media/Plugins"
         ]
     );
-    assert_eq!(args[6], "eboot.bin");
-    assert!(args[7].ends_with("eboot.exe"));
-    let exe_text = fs::read_to_string(copy.join("eboot.exe")).unwrap();
+    assert_eq!(args[5], "eboot.bin");
+    assert!(args[6].ends_with(EXECUTABLE));
+    let exe_text = fs::read_to_string(copy.join(EXECUTABLE)).unwrap();
     assert!(
         exe_text.contains("icon=true"),
         "the title icon is staged beside the executable"
@@ -364,7 +367,7 @@ fn patches_are_passed_to_the_relinker() {
     request.patches_toml = Some("format = 1\n".into());
     run(&request).0.unwrap();
     let copy = unlock::unlocked_copy("PPSA00009", &request.game, &w.root);
-    let args = args_of(&copy.join("eboot.exe"));
+    let args = args_of(&copy.join(EXECUTABLE));
     let at = args
         .iter()
         .position(|a| a == "--patches")

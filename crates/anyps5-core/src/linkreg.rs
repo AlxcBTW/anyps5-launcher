@@ -39,12 +39,14 @@ pub fn program_of(command: &str) -> &str {
     }
 }
 
+#[cfg(any(windows, test))]
 fn same_program(registered: &str, exe: &Path) -> bool {
     let normal = |s: &str| s.replace('/', "\\").to_lowercase();
     normal(registered) == normal(&exe.display().to_string())
 }
 
 /// Only the launcher's own scheme names are ever written or deleted.
+#[cfg(any(windows, test))]
 fn valid_scheme(scheme: &str) -> bool {
     scheme.starts_with("anyps5")
         && scheme

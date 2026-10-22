@@ -19,6 +19,7 @@ pub mod links;
 pub mod notes;
 pub mod patches;
 pub mod paths;
+pub mod platform;
 pub mod process;
 pub mod recommended;
 pub mod releases;
