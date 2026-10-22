@@ -17,10 +17,19 @@ pub enum Cue {
     Unlocked,
     /// Something failed (a warning toast).
     Error,
+    /// The launcher opened: a slow swell under the intro.
+    Boot,
 }
 
 impl Cue {
-    pub const ALL: [Cue; 5] = [Cue::Move, Cue::Select, Cue::Back, Cue::Unlocked, Cue::Error];
+    pub const ALL: [Cue; 6] = [
+        Cue::Move,
+        Cue::Select,
+        Cue::Back,
+        Cue::Unlocked,
+        Cue::Error,
+        Cue::Boot,
+    ];
 }
 
 /// How a cue is mixed: peak level, reverb send and decay, lowpass, and the dry length in
@@ -46,11 +55,15 @@ const ROUND: &[(f32, f32)] = &[(1.0, 1.0), (2.0, 0.45), (3.0, 0.08)];
 /// Nearly a pure sine.
 const PURE: &[(f32, f32)] = &[(1.0, 1.0), (2.0, 0.25)];
 
+const F3: f32 = 174.61;
 const A3: f32 = 220.0;
 const B_FLAT3: f32 = 233.08;
+const C4: f32 = 261.63;
 const E4: f32 = 329.63;
 const F4: f32 = 349.23;
+const G4: f32 = 392.0;
 const C5: f32 = 523.25;
+const F5: f32 = 698.46;
 const G5: f32 = 783.99;
 const C6: f32 = 1046.5;
 
@@ -107,6 +120,36 @@ fn recipe(cue: Cue) -> (Mix, Draw) {
             |o, r| {
                 tone(o, r, 0.0, A3, 1.0, shape(0.012, 0.09), PURE, 0.0);
                 tone(o, r, 0.0, B_FLAT3, 0.9, shape(0.012, 0.09), PURE, 0.0);
+            },
+        ),
+        // The trophy chord's family an octave lower and slower: F3 C4 G4 C5 F5 swelling in
+        // 70 ms apart over 0.35 s each, shimmering, with a late glitter; under the launch intro.
+        Cue::Boot => (
+            Mix {
+                peak_db: -12.0,
+                send: 0.35,
+                rt60: 2.2,
+                cutoff: 7000.0,
+                length: 7.0,
+            },
+            |o, r| {
+                for (k, (freq, amp)) in [F3, C4, G4, C5, F5]
+                    .into_iter()
+                    .zip([0.9, 0.8, 0.7, 0.55, 0.45])
+                    .enumerate()
+                {
+                    tone(
+                        o,
+                        r,
+                        k as f32 * 0.07,
+                        freq,
+                        amp,
+                        shape(0.35, 0.65),
+                        PURE,
+                        5.0,
+                    );
+                }
+                shimmer(o, r, 0.3, 0.1, 0.25, 9);
             },
         ),
         // Stacked fifths F4 C5 G5 C6 entering 15 ms apart, slowly shimmering, with a faint

@@ -103,6 +103,8 @@ pub struct LauncherApp {
     /// Artwork behind the home screen that is fading in or out, newest last.
     artwork: Vec<GameId>,
     started: bool,
+    /// Play the launch intro and the boot cue on the next frame (real launches only).
+    pub intro: bool,
     start_screen: screens::start::StartScreen,
     scan_on_start: bool,
     /// No scan, size or trophy work (previews and the demo have a made-up library).
@@ -113,7 +115,9 @@ pub struct LauncherApp {
 
 impl LauncherApp {
     pub fn new(cc: &eframe::CreationContext<'_>, config: Config) -> Self {
-        Self::from_shell(Shell::new(cc), &cc.egui_ctx, config)
+        let mut app = Self::from_shell(Shell::new(cc), &cc.egui_ctx, config);
+        app.intro = true;
+        app
     }
 
     /// With an already built shell (previews use a silent one).
@@ -132,6 +136,7 @@ impl LauncherApp {
             overlays_shown: Vec::new(),
             artwork: Vec::new(),
             started: false,
+            intro: false,
             start_screen: screens::start::StartScreen::default(),
             scan_on_start: config.scan_on_start,
             offline: false,
@@ -175,6 +180,10 @@ impl LauncherApp {
         self.focused = focused;
 
         self.apply_preferences(ctx);
+        if std::mem::take(&mut self.intro) {
+            crate::ui::intro::start(ctx);
+            self.shell.play(crate::ui::sound::Cue::Boot);
+        }
         for event in frame.events {
             self.handle_event(ctx, event);
         }
@@ -396,6 +405,7 @@ impl LauncherApp {
             ctx: &ctx,
         };
         self.panels.frame(&mut cx);
+        crate::ui::intro::paint_curtain(&ctx);
         self.run_effects(&ctx);
         self.save_preferences();
         self.schedule_repaints(&ctx);

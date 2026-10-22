@@ -325,6 +325,10 @@ pub mod color {
     pub fn text_value() -> Color32 {
         white(0.85)
     }
+    /// The key name or face button inside a hint keycap.
+    pub fn text_hint_key() -> Color32 {
+        white(0.92)
+    }
     pub fn text_hint() -> Color32 {
         white(0.72)
     }
@@ -370,7 +374,7 @@ pub mod color {
         white(0.08)
     }
     pub fn surface_prominent() -> Color32 {
-        white(0.20)
+        white(0.26)
     }
     pub fn surface_hover() -> Color32 {
         white(0.16)
@@ -386,7 +390,7 @@ pub mod color {
     }
     // Hairlines
     pub fn hairline() -> Color32 {
-        white(0.12)
+        white(0.07)
     }
     pub fn hairline_card() -> Color32 {
         white(0.14)
@@ -437,6 +441,10 @@ pub mod color {
     pub fn destructive_icon() -> Color32 {
         rgb(1.0, 0.55, 0.50)
     }
+    /// Destructive text and glyph on a focused (white) row: 6.5:1 on white.
+    pub fn destructive_on_focus() -> Color32 {
+        rgb(0.72, 0.11, 0.09)
+    }
     pub fn error_text() -> Color32 {
         rgb(1.0, 0.70, 0.65)
     }
@@ -468,7 +476,7 @@ pub mod radius {
     pub const TROPHY_ROW: f32 = 16.0;
     pub const LANGUAGE_CARD: f32 = 20.0;
     pub const THEME_CARD: f32 = 18.0;
-    pub const KEYCAP_HINT: f32 = 5.0;
+    pub const KEYCAP_HINT: f32 = 6.0;
     pub const KEYCAP: f32 = 7.0;
     pub const TOAST: f32 = 28.0;
     pub const BANNER: f32 = 20.0;
@@ -489,24 +497,28 @@ pub mod size {
     pub const TILE_SMALL: f32 = 118.0;
     pub const TILE_LARGE: f32 = 176.0;
     pub const TILE_GAP: f32 = 16.0;
-    pub const TILE_LABEL_COLUMN: f32 = 300.0;
+    pub const TILE_LABEL_COLUMN: f32 = 0.0;
     pub const LIBRARY_TILE: f32 = 196.0;
     pub const SPLASH_TILE: f32 = 200.0;
     pub const ONBOARDING_TILE: f32 = 84.0;
     pub const BUTTON_MIN_HEIGHT: f32 = 54.0;
     pub const BUTTON_PADDING: f32 = 30.0;
-    pub const BUTTON_PADDING_ICON_ONLY: f32 = 18.0;
+    pub const BUTTON_PADDING_ICON_ONLY: f32 = 16.0;
     pub const BUTTON_ICON: f32 = 17.0;
+    /// The glyph of a button without text, such as the "more" dots.
+    pub const BUTTON_ICON_ONLY: f32 = 22.0;
     pub const BUTTON_GAP: f32 = 10.0;
     pub const PLAY_MIN_WIDTH: f32 = 210.0;
     pub const ICON_BUTTON: f32 = 44.0;
-    pub const ICON_BUTTON_GLYPH: f32 = 18.0;
+    pub const ICON_BUTTON_GLYPH: f32 = 20.0;
     pub const AVATAR: f32 = 36.0;
     pub const INFO_CARD: (f32, f32) = (236.0, 96.0);
     pub const INFO_CARD_PADDING: f32 = 18.0;
     pub const INFO_CARD_GAP: f32 = 14.0;
     pub const SIDE_PANEL_WIDTH: f32 = 560.0;
     pub const SIDE_PANEL_PADDING: f32 = 36.0;
+    /// Inset of row lists inside their panel (room for the focused row to grow).
+    pub const LIST_INSET: f32 = 6.0;
     pub const SETTINGS_CATEGORY_WIDTH: f32 = 330.0;
     pub const SETTINGS_CATEGORY_ROW: f32 = 52.0;
     pub const ROW_MIN_HEIGHT: f32 = 58.0;
@@ -531,9 +543,13 @@ pub mod size {
     pub const THEME_CARD_PREVIEW: (f32, f32) = (330.0, 186.0);
     pub const PROGRESS_HEIGHT: f32 = 4.0;
     pub const HERO_PROGRESS_WIDTH: f32 = 340.0;
-    pub const TOAST_TOP: f32 = 26.0;
-    pub const HINT_BAR_GAP: f32 = 22.0;
+    pub const TOAST_TOP: f32 = 28.0;
+    pub const HINT_BAR_GAP: f32 = 28.0;
     pub const HINT_GAP: f32 = 8.0;
+    /// A hint key: a 26 dp circle for a face button, a 26 dp high keycap for a key name.
+    pub const HINT_CAP: f32 = 26.0;
+    pub const HINT_CAP_PADDING: f32 = 8.0;
+    pub const HINT_GLYPH: f32 = 12.0;
 
     /// Progress line height inside a tile: `max(3, size * 0.03)`.
     pub fn tile_progress_height(tile: f32) -> f32 {
@@ -545,13 +561,13 @@ pub mod size {
 pub mod pad {
     pub const HOME_X: f32 = 64.0;
     pub const HOME_TOP: f32 = 34.0;
-    pub const HERO_X: f32 = 72.0;
+    pub const HERO_X: f32 = 64.0;
     pub const HINT_Y: f32 = 28.0;
     pub const ONBOARDING: (f32, f32) = (110.0, 80.0);
     pub const SETTINGS: (f32, f32, f32) = (90.0, 70.0, 50.0); // horizontal, top, bottom
-    pub const LIBRARY: (f32, f32) = (80.0, 60.0);
-    pub const TROPHIES: (f32, f32) = (80.0, 56.0);
-    pub const LOG: f32 = 70.0;
+    pub const LIBRARY: (f32, f32) = (90.0, 60.0);
+    pub const TROPHIES: (f32, f32) = (90.0, 56.0);
+    pub const LOG: f32 = 90.0;
 }
 
 /// A SwiftUI `shadow(radius: r, y:)` as an egui shadow (`blur = 2 * r`, estimate from DESIGN.md 1.4).
@@ -564,41 +580,44 @@ pub fn shadow(color: Color32, swiftui_radius: f32, y: f32) -> Shadow {
     }
 }
 
-/// Named shadows of section 1.4. `t` is the focus amount (0..=1) where a shadow animates.
+/// Named shadows, softened from section 1.4 (DESIGN.md 3.7): elevation is a quiet dark shadow,
+/// focus is the white fill or ring, with only a faint halo behind it. `t` is the focus amount
+/// (0..=1) where a shadow animates.
 pub mod shadows {
     use super::*;
 
-    /// Tile: black 0.45, radius 10 -> 22 when focused, y 8.
+    /// Tile: black 0.22 -> 0.32, radius 12 -> 18 when focused, y 6 -> 8.
     pub fn tile(t: f32) -> Shadow {
-        shadow(black(0.45), 10.0 + 12.0 * t.clamp(0.0, 1.0), 8.0)
+        let t = t.clamp(0.0, 1.0);
+        shadow(black(0.22 + 0.10 * t), 12.0 + 6.0 * t, 6.0 + 2.0 * t)
     }
-    /// Focus glow: white 0.45 radius 10 scaled by the focus amount.
+    /// Halo behind a focus ring: white 0.14, radius 8, scaled by the focus amount.
     pub fn focus_glow(t: f32) -> Shadow {
-        shadow(white(0.45 * t.clamp(0.0, 1.0)), 10.0, 0.0)
+        shadow(white(0.14 * t.clamp(0.0, 1.0)), 8.0, 0.0)
     }
     pub fn console_button(t: f32) -> Shadow {
-        shadow(white(0.28 * t.clamp(0.0, 1.0)), 18.0, 0.0)
+        shadow(white(0.10 * t.clamp(0.0, 1.0)), 12.0, 0.0)
     }
     pub fn icon_button(t: f32) -> Shadow {
-        shadow(white(0.40 * t.clamp(0.0, 1.0)), 10.0, 0.0)
+        shadow(white(0.12 * t.clamp(0.0, 1.0)), 8.0, 0.0)
     }
     pub fn settings_row(t: f32) -> Shadow {
-        shadow(white(0.22 * t.clamp(0.0, 1.0)), 12.0, 0.0)
+        shadow(white(0.07 * t.clamp(0.0, 1.0)), 10.0, 0.0)
     }
     pub fn language_card(t: f32) -> Shadow {
-        shadow(white(0.30 * t.clamp(0.0, 1.0)), 20.0, 0.0)
+        shadow(white(0.10 * t.clamp(0.0, 1.0)), 14.0, 0.0)
     }
     pub fn toast() -> Shadow {
-        shadow(black(0.40), 20.0, 8.0)
+        shadow(black(0.30), 16.0, 6.0)
     }
     pub fn banner() -> Shadow {
-        shadow(black(0.50), 18.0, 8.0)
+        shadow(black(0.34), 16.0, 6.0)
     }
     pub fn switch_knob() -> Shadow {
         shadow(black(0.25), 2.0, 1.0)
     }
     pub fn progress_glow(accent: Color32) -> Shadow {
-        shadow(fade(accent, 0.6), 6.0, 0.0)
+        shadow(fade(accent, 0.35), 4.0, 0.0)
     }
 }
 
@@ -759,18 +778,18 @@ pub mod ty {
     pub const INFO_VALUE: TextStyle = TextStyle::new(17.0, Weight::SemiBold);
     pub const PROFILE: TextStyle = TextStyle::new(16.0, Weight::Medium);
     pub const TOAST: TextStyle = TextStyle::new(16.0, Weight::Medium);
-    pub const CHOICE_VALUE: TextStyle = TextStyle::new(16.0, Weight::SemiBold);
+    pub const CHOICE_VALUE: TextStyle = TextStyle::new(16.0, Weight::Regular);
     pub const DIAGNOSIS_LOG: TextStyle = TextStyle::new(16.0, Weight::Medium);
     pub const ROW_INFO: TextStyle = TextStyle::new(15.0, Weight::Medium);
     pub const PROGRESS_LABEL: TextStyle = TextStyle::new(15.0, Weight::Medium);
     pub const PROGRESS_PERCENT: TextStyle = TextStyle::new(15.0, Weight::SemiBold);
-    pub const HINT_LABEL: TextStyle = TextStyle::new(13.0, Weight::Medium);
-    pub const HINT_KEY: TextStyle = TextStyle::new(12.0, Weight::Bold);
+    pub const HINT_LABEL: TextStyle = TextStyle::new(15.0, Weight::Medium);
+    pub const HINT_KEY: TextStyle = TextStyle::new(13.0, Weight::SemiBold);
     pub const DETAIL: TextStyle = TextStyle::new(13.0, Weight::Regular);
     pub const DETAIL_LARGE: TextStyle = TextStyle::new(14.0, Weight::Regular);
     pub const STATE_LABEL: TextStyle = TextStyle::new(14.0, Weight::Medium);
     pub const STATE_LABEL_SMALL: TextStyle = TextStyle::new(12.0, Weight::Medium);
-    pub const INFO_OVERLINE: TextStyle = TextStyle::tracked(12.0, Weight::SemiBold, 0.6);
+    pub const INFO_OVERLINE: TextStyle = TextStyle::tracked(13.0, Weight::SemiBold, 0.6);
     pub const ONBOARDING_OVERLINE: TextStyle = TextStyle::tracked(14.0, Weight::SemiBold, 0.8);
     pub const TROPHIES_OVERLINE: TextStyle = TextStyle::tracked(13.0, Weight::SemiBold, 0.8);
     pub const KEY_CAP: TextStyle = TextStyle::new(13.5, Weight::SemiBold);

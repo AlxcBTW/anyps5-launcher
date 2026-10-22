@@ -32,7 +32,7 @@ pub const WINDOW: (f32, f32) = (560.0, 150.0);
 /// The card inside it.
 pub const CARD_WIDTH: f32 = 480.0;
 /// Resting offset of the card from the top of the window.
-pub const REST_OFFSET: f32 = 14.0;
+pub const REST_OFFSET: f32 = 24.0;
 /// How long the card holds once it has arrived, from its spawn.
 pub const HOLD: f32 = 5.0;
 /// Rising away.
@@ -334,16 +334,10 @@ pub fn paint_card(
         + 4.0 * k
         + detail_style.line_height();
     let mut y = card.center().y - block * 0.5;
-    painter.text(
-        pos2(x + 6.5 * k, y + label_style.line_height() * 0.5),
-        Align2::CENTER_CENTER,
-        Icon::TROPHY.glyph(),
-        Icon::TROPHY.font(13.0 * k, true),
-        fade(grade, alpha),
-    );
+    // No cup before the label: the grade's trophy already stands on the right.
     text::paint(
         &painter,
-        pos2(x + 20.0 * k, y),
+        pos2(x, y),
         Align2::LEFT_TOP,
         label_style,
         language.text(Key::TrophyEarned),
@@ -608,7 +602,7 @@ mod tests {
         assert_eq!(away.opacity(), 0.0);
         assert_eq!(away.icon_scale(), 0.6);
         let settled = BannerLook::SETTLED;
-        assert_eq!(settled.offset_y(), 14.0);
+        assert_eq!(settled.offset_y(), REST_OFFSET);
         assert_eq!(settled.opacity(), 1.0);
         assert_eq!(settled.icon_scale(), 1.0);
         assert_eq!(settled.glow_opacity(), 1.0);

@@ -15,6 +15,7 @@
 //! | [`sound`] | the five synthesised cues and the home music |
 //! | [`i18n`] | 212 keys in English and Turkish |
 //! | [`input`], [`focus`], [`gamepad`] | commands, wheel, gamepad, home and panel focus models |
+//! | [`intro`] | the launch intro: fade from black, parts rising into place |
 //!
 //! A screen host creates a [`Shell`] once and calls [`Shell::begin_frame`] at the start of every
 //! frame; see its documentation.
@@ -36,6 +37,7 @@ pub mod gpu;
 pub mod i18n;
 pub mod icons;
 pub mod input;
+pub mod intro;
 pub mod sound;
 pub mod text;
 pub mod theme;

@@ -172,6 +172,28 @@ impl Repeater {
 // The pipeline
 // ---------------------------------------------------------------------------------------------
 
+/// The device the player used last; hint bars show its keys.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Device {
+    #[default]
+    Keyboard,
+    Gamepad,
+}
+
+/// The device [`Input::poll`] saw last (keyboard until a gamepad is used).
+pub fn device(ctx: &Context) -> Device {
+    ctx.data(|d| d.get_temp(device_id())).unwrap_or_default()
+}
+
+fn device_id() -> egui::Id {
+    egui::Id::unique("input-device")
+}
+
+/// Sets the device the hint bars follow (the input pipeline does this; previews force it).
+pub fn set_device(ctx: &Context, device: Device) {
+    ctx.data_mut(|d| d.insert_temp(device_id(), device));
+}
+
 /// Owns the input state. Create once, call [`poll`](Self::poll) once per frame.
 #[derive(Default)]
 pub struct Input {
@@ -200,6 +222,9 @@ impl Input {
         // Gamepad first: it is never blocked by text fields or panels.
         if let Some(pad) = &self.pad {
             while let Ok(message) = pad.try_recv() {
+                if !matches!(message, PadMessage::Direction(None)) {
+                    set_device(ctx, Device::Gamepad);
+                }
                 match message {
                     PadMessage::Direction(direction) => {
                         if let Some(command) = self.repeater.set_direction(direction, now) {
@@ -231,6 +256,7 @@ impl Input {
                     repeat,
                     modifiers,
                 } => {
+                    set_device(ctx, Device::Keyboard);
                     if self.capture_keys {
                         out.push(InputEvent::CapturedKey {
                             key,

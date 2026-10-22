@@ -178,7 +178,9 @@ pub fn wrapped(
     painter.layout_job(job)
 }
 
-/// A circle filled with a diagonal gradient from the top left to the bottom right.
+/// A circle filled with a diagonal gradient from the top left to the bottom right. A raw mesh
+/// gets no anti-aliasing from egui, so the edge is feathered by hand over one physical pixel,
+/// like egui's own shapes.
 pub fn paint_gradient_circle(
     painter: &Painter,
     centre: Pos2,
@@ -186,7 +188,8 @@ pub fn paint_gradient_circle(
     from: Color32,
     to: Color32,
 ) {
-    const SEGMENTS: usize = 48;
+    const SEGMENTS: u32 = 96;
+    let feather = 1.0 / painter.ctx().pixels_per_point();
     let tint = |p: Pos2| {
         let d = (p - centre) / radius;
         crate::ui::theme::mix(from, to, ((d.x + d.y) * 0.5 * 0.5 + 0.5).clamp(0.0, 1.0))
@@ -197,31 +200,36 @@ pub fn paint_gradient_circle(
         uv: WHITE_UV,
         color: tint(centre),
     });
-    for i in 0..=SEGMENTS {
+    // Per segment an inner vertex in full colour and an outer one, a pixel further out,
+    // fully transparent.
+    for i in 0..SEGMENTS {
         let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
-        let p = centre + radius * vec2(a.cos(), a.sin());
+        let direction = vec2(a.cos(), a.sin());
+        let inner = centre + (radius - feather * 0.5) * direction;
         mesh.vertices.push(Vertex {
-            pos: p,
+            pos: inner,
             uv: WHITE_UV,
-            color: tint(p),
+            color: tint(inner),
+        });
+        mesh.vertices.push(Vertex {
+            pos: centre + (radius + feather * 0.5) * direction,
+            uv: WHITE_UV,
+            color: Color32::TRANSPARENT,
         });
     }
-    for i in 0..SEGMENTS as u32 {
-        mesh.indices.extend_from_slice(&[0, i + 1, i + 2]);
+    for i in 0..SEGMENTS {
+        let j = (i + 1) % SEGMENTS;
+        let (inner_i, outer_i, inner_j, outer_j) = (1 + 2 * i, 2 + 2 * i, 1 + 2 * j, 2 + 2 * j);
+        mesh.indices.extend_from_slice(&[0, inner_i, inner_j]);
+        mesh.indices
+            .extend_from_slice(&[inner_i, outer_i, outer_j, inner_i, outer_j, inner_j]);
     }
     painter.add(Shape::mesh(mesh));
 }
 
 /// A small spinning arc (the original's `ProgressView().controlSize(.small)`).
 pub fn paint_spinner(painter: &Painter, centre: Pos2, radius: f32, time: f64, color: Color32) {
-    let angle = (time * std::f64::consts::TAU * 1.1) as f32;
-    let points: Vec<Pos2> = (0..=18)
-        .map(|i| {
-            let a = angle + i as f32 / 18.0 * std::f32::consts::PI * 1.5;
-            centre + radius * vec2(a.cos(), a.sin())
-        })
-        .collect();
-    painter.add(Shape::line(points, egui::Stroke::new(2.0, color)));
+    crate::ui::components::paint_spinner_arc(painter, centre, radius, time, 2.0, color);
 }
 
 // ---------------------------------------------------------------------------------------------

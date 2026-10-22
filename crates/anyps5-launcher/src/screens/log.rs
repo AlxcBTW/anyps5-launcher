@@ -206,9 +206,6 @@ impl LogView {
     }
 }
 
-/// The text shown for an empty log.
-const EMPTY_LOG: &str = "—";
-
 fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
     let language = data.language;
     let painter = ui.painter().clone();
@@ -295,12 +292,20 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
     let log_rect = Rect::from_min_max(pos2(area.min.x, y), area.max);
     paint_glass(ui.ctx(), &painter, log_rect, GlassStyle::log_box());
     let inner = log_rect.shrink(18.0);
+    if data.text.is_empty() {
+        // An empty log says what will appear here, centred in the box.
+        crate::ui::text::paint(
+            &painter,
+            log_rect.center(),
+            Align2::CENTER_CENTER,
+            theme::TextStyle::new(15.0, theme::Weight::Regular),
+            Extra::EmptyLog.text(language),
+            white(0.6),
+        );
+        return;
+    }
+    let body = data.text;
     let mut child = ui.new_child(UiBuilder::new().max_rect(inner));
-    let body = if data.text.is_empty() {
-        EMPTY_LOG
-    } else {
-        data.text
-    };
     ScrollArea::vertical()
         .id_salt("log-text")
         .auto_shrink([false, false])

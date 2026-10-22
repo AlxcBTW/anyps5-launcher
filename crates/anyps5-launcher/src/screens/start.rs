@@ -11,7 +11,7 @@ use crate::screens::side::commands;
 use crate::ui::Shell;
 use crate::ui::anim::{self, AnimExt, lerp};
 use crate::ui::chrome::{TileImage, TileStyle, fullscreen_panel, paint_tile};
-use crate::ui::components::{Hint, IndeterminateLine, paint_shadow};
+use crate::ui::components::{Hint, HintAction, IndeterminateLine, paint_shadow};
 use crate::ui::glass::GlassStyle;
 use crate::ui::i18n::{Key, Language};
 use crate::ui::input::{Command, InputEvent};
@@ -185,18 +185,20 @@ fn draw(ui: &mut Ui, data: &StartData<'_>, since: f64) {
     // "Starting..." with the timer on the right, the sweep, the explanation.
     let left = cx - column_w * 0.5;
     let right = left + column_w;
+    const STATUS: theme::TextStyle = theme::TextStyle::new(16.0, theme::Weight::Medium);
     let ink = white(0.88);
     text::paint(
         &painter,
         pos2(left, y),
         Align2::LEFT_TOP,
-        theme::TextStyle::new(16.0, theme::Weight::Medium),
+        STATUS,
         language.text(Key::Starting),
         ink,
     );
+    // The timer in the same weight as the word beside it.
     let clock = elapsed_text((time - since).max(0.0) as u64);
-    let w = text::tabular_width(&painter, ty::CHOICE_VALUE, &clock);
-    text::paint_tabular(&painter, pos2(right - w, y), ty::CHOICE_VALUE, &clock, ink);
+    let w = text::tabular_width(&painter, STATUS, &clock);
+    text::paint_tabular(&painter, pos2(right - w, y), STATUS, &clock, ink);
     y += status_h + 14.0;
     let mut bar = ui.new_child(UiBuilder::new().max_rect(Rect::from_min_size(
         pos2(left, y),
@@ -216,7 +218,7 @@ fn draw(ui: &mut Ui, data: &StartData<'_>, since: f64) {
             .layout(Layout::top_down(Align::Center)),
     );
     Hint {
-        keys: "esc / ○",
+        action: HintAction::Back,
         label: language.text(Key::Cancel),
     }
     .show(&mut hint);

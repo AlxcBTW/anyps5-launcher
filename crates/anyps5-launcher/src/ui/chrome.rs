@@ -140,7 +140,7 @@ fn paint_tile_overlay(painter: &Painter, rect: Rect, r: f32, style: &TileStyle, 
     let dim = |amount: f32| painter.rect_filled(rect, corner(r), fade(black(amount), alpha));
     let badge = |icon: Icon| {
         dim(0.42);
-        let glyph = side * 0.13;
+        let glyph = (side * 0.15).max(14.0);
         let boxed = glyph + side * 0.16;
         let centre = pos2(rect.max.x - boxed * 0.5, rect.max.y - boxed * 0.5);
         painter.circle_filled(
@@ -152,7 +152,7 @@ fn paint_tile_overlay(painter: &Painter, rect: Rect, r: f32, style: &TileStyle, 
             centre,
             Align2::CENTER_CENTER,
             icon.glyph(),
-            icon.font(text::quantize_size(glyph), true),
+            icon.font(text::quantize_size(glyph), icon != Icon::X_CIRCLE),
             fade(Color32::WHITE, alpha),
         );
     };
@@ -184,17 +184,14 @@ fn paint_tile_overlay(painter: &Painter, rect: Rect, r: f32, style: &TileStyle, 
         TileOverlay::Starting => {
             dim(0.42);
             let radius = side * 0.07;
-            let angle = (style.time * std::f64::consts::TAU * 1.1) as f32;
-            let points: Vec<_> = (0..=18)
-                .map(|i| {
-                    let a = angle + i as f32 / 18.0 * std::f32::consts::PI * 1.5;
-                    rect.center() + radius * vec2(a.cos(), a.sin())
-                })
-                .collect();
-            painter.add(egui::Shape::line(
-                points,
-                egui::Stroke::new(2.0, fade(Color32::WHITE, alpha)),
-            ));
+            components::paint_spinner_arc(
+                painter,
+                rect.center(),
+                radius,
+                style.time,
+                2.0,
+                fade(Color32::WHITE, alpha),
+            );
         }
         TileOverlay::Running => {
             let d = side * 0.09;
@@ -461,13 +458,18 @@ impl<'a> PanelRow<'a> {
 
         // Value width decides how much room the text column has.
         let value_width = self.value_width(&painter, width);
-        let icon_block = if self.icon.is_some() {
+        // A pad glyph without an icon stands in the icon column, so every title starts on one edge.
+        let icon_block = if self.icon.is_some() || self.pad_glyph.is_some() {
             size::ROW_ICON_BOX + 14.0
         } else {
             0.0
         };
-        // `✕ Cross`: a painted controller glyph in front of the title.
-        let glyph_block = if self.pad_glyph.is_some() { 24.0 } else { 0.0 };
+        // `✕ Cross` with an icon as well: the glyph goes between icon and title.
+        let glyph_block = if self.pad_glyph.is_some() && self.icon.is_some() {
+            24.0
+        } else {
+            0.0
+        };
         let text_width =
             (width - 2.0 * pad - icon_block - glyph_block - value_width - 12.0).max(40.0);
         let title_style = ty::ROW_TITLE;
@@ -533,7 +535,8 @@ impl<'a> PanelRow<'a> {
         }
 
         // Background, glow and the 1.5 % scale.
-        let bg_rect = scale_rect(rect, lerp(1.0, 1.015, t));
+        // A fixed 3 dp grow: a proportional scale would push wide rows 8 dp past their column.
+        let bg_rect = rect.expand(lerp(0.0, 3.0, t));
         paint_shadow(&painter, bg_rect, radius::ROW, shadows::settings_row(t));
         let rest = if !focusable {
             Color32::TRANSPARENT
@@ -550,7 +553,7 @@ impl<'a> PanelRow<'a> {
         let mut x = rect.min.x + pad;
         if let Some(icon) = self.icon {
             let tint = if destructive {
-                mix(color::destructive_icon(), dim(0.85), t)
+                mix(color::destructive_icon(), color::destructive_on_focus(), t)
             } else {
                 dim(0.85)
             };
@@ -562,17 +565,26 @@ impl<'a> PanelRow<'a> {
                 tint,
             );
             x += icon_block;
+        } else if let Some(glyph) = self.pad_glyph {
+            glyph.paint(
+                &painter,
+                pos2(x + size::ROW_ICON_BOX * 0.5, rect.center().y),
+                16.0,
+                dim(0.85),
+            );
+            x += icon_block;
         }
         let top = rect.center().y - text_height * 0.5;
         let title_color = if destructive {
-            mix(color::destructive_text(), fg, t)
+            // A focused destructive row stays red on its white fill.
+            mix(color::destructive_text(), color::destructive_on_focus(), t)
         } else if focusable {
             fg
         } else {
             dim(0.62)
         };
         let title_h = title_galley.size().y;
-        if let Some(glyph) = self.pad_glyph {
+        if let (Some(glyph), Some(_)) = (self.pad_glyph, self.icon) {
             let first_line = title_galley.rows.first().map_or(title_h, |r| r.height());
             glyph.paint(
                 &painter,
@@ -981,7 +993,9 @@ pub fn side_panel<R>(
             child.add_space(0.0);
             let title_h = title_galley.size().y;
             let top = child.cursor().min.y;
-            painter.galley(pos2(inner.min.x, top), title_galley, Color32::WHITE);
+            // Title and subtitle start on the edge of the row cards below them.
+            let edge = inner.min.x + size::LIST_INSET;
+            painter.galley(pos2(edge, top), title_galley, Color32::WHITE);
             child.add_space(title_h + 8.0);
             if let Some(subtitle) = subtitle {
                 let top = child.cursor().min.y;
@@ -994,7 +1008,7 @@ pub fn side_panel<R>(
                     inner.width(),
                 );
                 let height = galley.size().y;
-                painter.galley(pos2(inner.min.x, top), galley, color::text_detail());
+                painter.galley(pos2(edge, top), galley, color::text_detail());
                 child.add_space(height + 8.0);
             }
             child.add_space(18.0);
@@ -1099,7 +1113,8 @@ pub fn toast(
                 rect,
                 radius::TOAST,
                 egui::epaint::Shadow {
-                    color: fade(shadows::toast().color, a),
+                    // Squared, so the shadow never shows through the fading glass.
+                    color: fade(shadows::toast().color, a * a),
                     ..shadows::toast()
                 },
             );

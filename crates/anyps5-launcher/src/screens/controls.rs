@@ -216,11 +216,12 @@ pub fn build_rows(
             action_title(action, language),
             Controls::sources(action, &changes),
             capturing == Some(action),
-        )
-        .icon(action_icon(action));
-        if let Some(glyph) = face_glyph(action) {
-            row = row.pad_glyph(glyph);
-        }
+        );
+        // A face button shows its own glyph; the other rows a glyph that is not a button shape.
+        row = match face_glyph(action) {
+            Some(glyph) => row.pad_glyph(glyph),
+            None => row.icon(action_icon(action)),
+        };
         rows.push(row);
     }
     rows.push(
@@ -283,8 +284,9 @@ pub fn action_icon(action: PadAction) -> Icon {
         PadAction::Cross | PadAction::Circle | PadAction::Square | PadAction::Triangle => {
             Icon::GAME_CONTROLLER
         }
-        PadAction::L1 | PadAction::R1 | PadAction::L2 | PadAction::R2 => Icon::RECTANGLE,
-        PadAction::L3 | PadAction::R3 => Icon::CIRCLE,
+        // Not RECTANGLE or CIRCLE: those read as the Square and Circle buttons.
+        PadAction::L1 | PadAction::R1 | PadAction::L2 | PadAction::R2 => Icon::GAME_CONTROLLER,
+        PadAction::L3 | PadAction::R3 => Icon::GAME_CONTROLLER,
         PadAction::Options => Icon::LIST,
         PadAction::TouchLeft | PadAction::TouchRight => Icon::HAND_POINTING,
         PadAction::Up | PadAction::Down | PadAction::Left | PadAction::Right => {

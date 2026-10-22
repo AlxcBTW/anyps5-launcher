@@ -12,25 +12,30 @@ use egui::{
 
 use crate::app::model::{GameState, Model, SizeState};
 use crate::screens::{
-    ScreenCx, StateLabel, paint_glass_card, paint_gradient_circle, paint_label, paint_spinner,
-    place, state_label, wrapped,
+    ScreenCx, StateLabel, paint_gradient_circle, paint_label, paint_spinner, place, state_label,
+    wrapped,
 };
 use crate::ui::anim::{AnimExt, Motion, lerp};
 use crate::ui::chrome::{self, TileImage, TileOverlay, TileStyle};
 use crate::ui::components::{
-    ConsoleButton, IconButton, IndeterminateLine, ProgressLine, hint_bar, key_string_width,
+    ConsoleButton, IconButton, IndeterminateLine, ProgressLine, hint_bar, hint_bar_size,
 };
 use crate::ui::focus::HomeFocus;
-use crate::ui::glass::GlassStyle;
 use crate::ui::i18n::{Key, Language, byte_text};
 use crate::ui::icons::Icon;
+use crate::ui::intro;
 use crate::ui::text;
 use crate::ui::theme::{self, Weight, color, pad, size, ty, white};
 
-/// Hero content slides in from this far below.
-const HERO_SWAP_OFFSET: f32 = 14.0;
 /// Gap between the stacked parts of the hero.
 const HERO_GAP: f32 = 22.0;
+/// Between the state line and the hero title.
+const STATE_GAP: f32 = 4.0;
+/// Space between the action row and the facts, and between two facts.
+const FACTS_ABOVE: f32 = 30.0;
+const FACTS_SPACING: f32 = 48.0;
+/// Between a fact's overline and its value.
+const FACT_GAP: f32 = 6.0;
 /// Height of the action row (the console button).
 const ACTION_ROW: f32 = size::BUTTON_MIN_HEIGHT;
 /// Longest a failure or diagnosis text gets.
@@ -53,15 +58,28 @@ struct HeroTrack {
 
 /// Paints the whole home screen and applies the presses.
 pub fn show(ui: &mut Ui, cx: &mut ScreenCx<'_>) {
-    let screen = cx.ctx.content_rect();
+    let ctx = cx.ctx.clone();
+    let screen = ctx.content_rect();
     let mut presses = Vec::new();
-    top_bar(ui, cx, screen, &mut presses);
+    // At launch the parts rise into place one after another (ui::intro).
+    staged(ui, &ctx, intro::TOP_BAR, screen, |ui, screen| {
+        top_bar(ui, cx, screen, &mut presses);
+    });
     if cx.model.games.is_empty() {
-        empty_library(ui, cx, screen, &mut presses);
+        staged(ui, &ctx, intro::HERO, screen, |ui, screen| {
+            empty_library(ui, cx, screen, &mut presses);
+        });
     } else {
-        tile_row(ui, cx, screen, &mut presses);
-        hero(ui, cx, screen, &mut presses);
-        hints(ui, cx.language(), screen);
+        staged(ui, &ctx, intro::TILES, screen, |ui, screen| {
+            tile_row(ui, cx, screen, &mut presses);
+        });
+        staged(ui, &ctx, intro::HERO, screen, |ui, screen| {
+            hero(ui, cx, screen, &mut presses);
+        });
+        let language = cx.language();
+        staged(ui, &ctx, intro::HINTS, screen, |ui, screen| {
+            hints(ui, language, screen);
+        });
     }
     for press in presses {
         match press {
@@ -70,6 +88,25 @@ pub fn show(ui: &mut Ui, cx: &mut ScreenCx<'_>) {
             Press::ChooseFolder => cx.model.request_folder_dialog(),
         }
     }
+}
+
+/// Draws one part of the screen at its intro stage: faded and lowered while it arrives, directly
+/// once it is in place.
+fn staged(
+    ui: &mut Ui,
+    ctx: &Context,
+    timing: (f32, f32),
+    screen: Rect,
+    add: impl FnOnce(&mut Ui, Rect),
+) {
+    let t = intro::stage(ctx, timing);
+    if t >= 1.0 {
+        add(ui, screen);
+        return;
+    }
+    let mut child = ui.new_child(UiBuilder::new().max_rect(screen));
+    child.multiply_opacity(t);
+    add(&mut child, intro::lift(screen, t));
 }
 
 /// Focus is only drawn while no overlay covers the home screen.
@@ -87,7 +124,8 @@ fn top_bar(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<P
     let painter = ui.painter().clone();
     let top = screen.min.y + pad::HOME_TOP;
     let mid = top + size::ICON_BUTTON * 0.5;
-    let gap = 22.0;
+    // 12 between the two buttons, 32 between the groups (title, buttons, profile, clock).
+    let (button_gap, group_gap) = (12.0, 32.0);
 
     let title = text::paint(
         &painter,
@@ -97,10 +135,11 @@ fn top_bar(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<P
         language.text(Key::Games),
         Color32::WHITE,
     );
-    if cx.model.scanning {
+    // An empty library shows its own scanning state in the middle.
+    if cx.model.scanning && !cx.model.games.is_empty() {
         paint_spinner(
             &painter,
-            pos2(title.max.x + gap + 8.0, mid),
+            pos2(title.max.x + group_gap * 0.5 + 8.0, mid),
             7.0,
             cx.ctx.clock(),
             Color32::WHITE,
@@ -119,7 +158,7 @@ fn top_bar(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<P
         &clock,
         white(0.92),
     );
-    x -= gap;
+    x -= group_gap;
 
     let name = cx.model.prefs.profile_name.as_str();
     let name_width = text::width(&painter, ty::PROFILE, name);
@@ -150,12 +189,12 @@ fn top_bar(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<P
         name,
         white(0.9),
     );
-    x -= gap;
+    x -= group_gap;
 
     let visible = focus_visible(cx.model);
     let buttons = [
         (1u8, Icon::GEAR_SIX, language.text(Key::Settings)),
-        (0u8, Icon::DOTS_NINE, language.text(Key::Library)),
+        (0u8, Icon::SQUARES_FOUR, language.text(Key::Library)),
     ];
     for (index, icon, label) in buttons {
         x -= size::ICON_BUTTON;
@@ -167,7 +206,7 @@ fn top_bar(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<P
         if response.clicked() {
             presses.push(Press::Focus(HomeFocus::Top(index)));
         }
-        x -= gap;
+        x -= button_gap;
     }
 }
 
@@ -260,7 +299,8 @@ fn tile_row(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<
             Motion::Layout,
         );
         let side = lerp(small, large, t);
-        let y = row_top + (large - small) * 0.18 * (1.0 - t);
+        // Small tiles share the large tile's centre line.
+        let y = row_top + (large - small) * 0.5 * (1.0 - t);
         let rect = Rect::from_min_size(pos2(x, y), vec2(side, side));
         if rect.max.x < screen.min.x || rect.min.x > screen.max.x || opacity <= 0.003 {
             continue;
@@ -268,6 +308,10 @@ fn tile_row(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<
 
         let ring_t = ctx.focus_t(key("tile-ring"), is_selected && ring_on);
         let mut style = tile_style(cx, &game, side, accent);
+        // Only the selected tile says it is locked; a row of padlocks is noise.
+        if !is_selected && matches!(style.overlay, TileOverlay::Locked) {
+            style.overlay = TileOverlay::None;
+        }
         style.focus = ring_t;
         style.ring = ring_t > 0.002;
         style.opacity = opacity.clamp(0.0, 1.0);
@@ -299,49 +343,6 @@ fn tile_row(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<
             }
         }
     }
-
-    // The name and state beside the selected tile fade with the selection.
-    for index in first..last {
-        let game = cx.model.games[index].clone();
-        let is_selected = index == selected;
-        let id = ("tile-label", game.id.as_str().to_owned());
-        if !is_selected && ctx.animation_value(id.clone()).is_none() {
-            continue;
-        }
-        let alpha = ctx
-            .animate_from_to(id, 0.0, if is_selected { 1.0 } else { 0.0 }, Motion::Layout)
-            .clamp(0.0, 1.0);
-        if alpha <= 0.003 {
-            continue;
-        }
-        let state = cx.model.state_of(&game);
-        let label = state_label(&state, language, accent);
-        let x = leading + large + gap * 1.4;
-        let y = row_top + large * 0.32;
-        let width = label_column - gap;
-        let name = wrapped(
-            &painter,
-            ty::TILE_NAME,
-            &game.name,
-            theme::fade(Color32::WHITE, alpha),
-            width,
-            2,
-        );
-        let name_height = name.size().y;
-        painter.galley(pos2(x, y), name, Color32::WHITE);
-        paint_label(
-            &painter,
-            pos2(
-                x,
-                y + name_height + 6.0 + ty::STATE_LABEL.line_height() * 0.5,
-            ),
-            &label,
-            ty::STATE_LABEL,
-            width,
-            2,
-            alpha,
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -350,7 +351,7 @@ fn tile_row(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<
 
 fn hints(ui: &mut Ui, language: Language, screen: Rect) {
     let painter = ui.painter().clone();
-    let (width, height) = hint_bar_size(&painter, language);
+    let (width, height) = hint_bar_size(&painter, language, true);
     let rect = Rect::from_min_size(
         pos2(
             screen.max.x - pad::HOME_X - width,
@@ -359,27 +360,6 @@ fn hints(ui: &mut Ui, language: Language, screen: Rect) {
         vec2(width, height),
     );
     place(ui, rect, |ui| hint_bar(ui, language, true));
-}
-
-/// Size of the hint bar (the components lay it out themselves; the screen needs it to right-align).
-fn hint_bar_size(painter: &egui::Painter, language: Language) -> (f32, f32) {
-    let cap_height = ty::HINT_KEY.line_height() + 6.0;
-    let height = cap_height.max(ty::HINT_LABEL.line_height());
-    let hints = [
-        ("← → ↑ ↓", Key::HintMove),
-        ("↩ / ✕", Key::HintSelect),
-        ("esc / ○", Key::HintBack),
-        ("O / △", Key::HintOptions),
-    ];
-    let mut width = 0.0;
-    for (i, (keys, key)) in hints.iter().enumerate() {
-        let cap = key_string_width(painter, ty::HINT_KEY, keys) + 14.0;
-        width += cap + size::HINT_GAP + text::width(painter, ty::HINT_LABEL, language.text(*key));
-        if i + 1 < hints.len() {
-            width += size::HINT_BAR_GAP;
-        }
-    }
-    (width, height)
 }
 
 fn hero(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<Press>) {
@@ -418,18 +398,9 @@ fn hero(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<Pres
     );
     if let Some(game) = cx.model.game(&selected).cloned() {
         paint_hero(
-            ui,
-            cx,
-            screen,
-            &game,
-            t,
-            if ctx.reduced_motion() {
-                0.0
-            } else {
-                (1.0 - t) * HERO_SWAP_OFFSET
-            },
-            true,
-            presses,
+            ui, cx, screen, &game, t,
+            // A crossfade only: the hero changes on every arrow press, so it must not travel.
+            0.0, true, presses,
         );
     }
     ctx.data_mut(|d| d.insert_temp(track_id, track));
@@ -440,18 +411,23 @@ struct HeroGeometry {
     x: f32,
     title_bottom: f32,
     actions_top: f32,
-    cards_top: f32,
+    facts_top: f32,
+}
+
+/// Overline, a small gap, then the value.
+fn facts_height() -> f32 {
+    ty::INFO_OVERLINE.line_height() + FACT_GAP + ty::INFO_VALUE.line_height()
 }
 
 fn hero_geometry(screen: Rect, hint_height: f32, dy: f32) -> HeroGeometry {
     let bottom = screen.max.y - pad::HINT_Y - hint_height - pad::HINT_Y + dy;
-    let cards_top = bottom - size::INFO_CARD.1;
-    let actions_top = cards_top - HERO_GAP - ACTION_ROW;
+    let facts_top = bottom - facts_height();
+    let actions_top = facts_top - FACTS_ABOVE - ACTION_ROW;
     HeroGeometry {
         x: screen.min.x + pad::HERO_X,
         title_bottom: actions_top - HERO_GAP,
         actions_top,
-        cards_top,
+        facts_top,
     }
 }
 
@@ -467,13 +443,13 @@ fn paint_hero(
     presses: &mut Vec<Press>,
 ) {
     let language = cx.language();
-    let accent = cx.accent();
     let state = cx.model.state_of(game);
     let mut child = ui.new_child(UiBuilder::new().max_rect(screen));
-    child.set_opacity(alpha.clamp(0.0, 1.0));
+    // Multiplied, so the hero also follows the intro and the onboarding cross-fade.
+    child.multiply_opacity(alpha.clamp(0.0, 1.0));
     let ui = &mut child;
     let painter = ui.painter().clone();
-    let (_, hint_height) = hint_bar_size(&painter, language);
+    let (_, hint_height) = hint_bar_size(&painter, language, true);
     let geometry = hero_geometry(screen, hint_height, dy);
     let x = geometry.x;
     let width = screen.width() - 2.0 * pad::HERO_X;
@@ -495,10 +471,11 @@ fn paint_hero(
         let style = text::scaled(ty::HERO_TITLE, 1.0 - 0.1 * step as f32);
         title = wrapped(&painter, style, &game.name, Color32::WHITE, width, 2);
     }
-    // A low window must not push a two-line title over the tile row.
+    // A low window must not push a two-line title (and the state above it) over the tile row.
+    let state_height = ty::STATE_LABEL.line_height() + STATE_GAP;
     let tiles_bottom =
         screen.min.y + pad::HOME_TOP + size::ICON_BUTTON + 34.0 + size::TILE_LARGE + 24.0;
-    if geometry.title_bottom - title.size().y < tiles_bottom {
+    if geometry.title_bottom - title.size().y - state_height < tiles_bottom {
         title = wrapped(
             &painter,
             ty::HERO_TITLE,
@@ -508,11 +485,21 @@ fn paint_hero(
             1,
         );
     }
-    let title_height = title.size().y;
-    painter.galley(
-        pos2(x, geometry.title_bottom - title_height),
-        title,
-        Color32::WHITE,
+    let title_top = geometry.title_bottom - title.size().y;
+    painter.galley(pos2(x, title_top), title, Color32::WHITE);
+
+    // The state, right above the title (the selected tile carries no label of its own).
+    paint_label(
+        &painter,
+        pos2(
+            x,
+            title_top - STATE_GAP - ty::STATE_LABEL.line_height() * 0.5,
+        ),
+        &state_label(&state, language, cx.accent()),
+        ty::STATE_LABEL,
+        width,
+        1,
+        1.0,
     );
 
     // 2. Action row.
@@ -560,40 +547,25 @@ fn paint_hero(
     }
     action_row_status(ui, cx, game, &state, after_buttons.x, geometry.actions_top);
 
-    // 3. Four info cards.
-    let status = state_label(&state, language, accent);
+    // 3. Facts: size, title ID, version. The state already stands next to the selected tile.
     let size_text = match cx.model.sizes.get(&game.id) {
         Some(SizeState::Known(bytes)) => byte_text(*bytes as i64, language),
         _ => byte_text(-1, language),
     };
-    let cards = [
-        (Icon::CIRCLE_DASHED, Key::Status),
-        (Icon::HARD_DRIVE, Key::Size),
-        (Icon::HASH, Key::TitleID),
-        (Icon::TAG, Key::Version),
+    let facts = [
+        (Key::Size, size_text.as_str()),
+        (Key::TitleID, game.title_id.as_str()),
+        (Key::Version, game.version.as_str()),
     ];
-    let values = [
-        String::new(),
-        size_text,
-        game.title_id.clone(),
-        game.version.clone(),
-    ];
-    for (i, ((icon, key), value)) in cards.iter().zip(values.iter()).enumerate() {
-        let rect = Rect::from_min_size(
-            pos2(
-                x + i as f32 * (size::INFO_CARD.0 + size::INFO_CARD_GAP),
-                geometry.cards_top,
-            ),
-            vec2(size::INFO_CARD.0, size::INFO_CARD.1),
-        );
-        place(ui, rect, |ui| {
-            let value = if i == 0 {
-                CardValue::State(&status)
-            } else {
-                CardValue::Text(value)
-            };
-            fact_card(ui, *icon, language.text(*key), value, language);
-        });
+    let mut left = x;
+    for (key, value) in facts {
+        left += fact(
+            ui,
+            pos2(left, geometry.facts_top),
+            language.text(key),
+            value,
+            language,
+        ) + FACTS_SPACING;
     }
 }
 
@@ -698,73 +670,39 @@ fn action_row_status(
     }
 }
 
-/// What an info card shows under its overline.
-enum CardValue<'a> {
-    Text(&'a str),
-    State(&'a StateLabel),
-}
-
-/// One 236 x 96 info card: overline with a glyph over the value, on glass over the artwork.
-fn fact_card(ui: &mut Ui, icon: Icon, title: &str, value: CardValue<'_>, language: Language) {
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(size::INFO_CARD.0, size::INFO_CARD.1), Sense::hover());
-    let shown = match &value {
-        CardValue::Text(text) => (*text).to_owned(),
-        CardValue::State(label) => label.text.clone(),
-    };
-    let name = format!("{title}: {shown}");
+/// One fact of the hero: a quiet overline over its value, with space and no card around it
+/// (DESIGN.md 3.7). Returns its width.
+fn fact(ui: &mut Ui, at: egui::Pos2, title: &str, value: &str, language: Language) -> f32 {
+    let painter = ui.painter().clone();
+    let overline = text::to_upper(title, language);
+    let width = text::width(&painter, ty::INFO_OVERLINE, &overline).max(text::width(
+        &painter,
+        ty::INFO_VALUE,
+        value,
+    ));
+    let rect = Rect::from_min_size(at, vec2(width, facts_height()));
+    let response = place(ui, rect, |ui| {
+        ui.allocate_exact_size(rect.size(), Sense::hover()).1
+    });
+    let name = format!("{title}: {value}");
     response.widget_info(|| WidgetInfo::labeled(Role::Label, true, name.as_str()));
-    let painter = ui.painter();
-    paint_glass_card(ui.ctx(), painter, rect, GlassStyle::card());
-    let pad = size::INFO_CARD_PADDING;
-    let overline_y = rect.min.y + pad;
-    painter.text(
-        pos2(
-            rect.min.x + pad,
-            overline_y + ty::INFO_OVERLINE.line_height() * 0.5,
-        ),
-        Align2::LEFT_CENTER,
-        icon.glyph(),
-        icon.font(12.0, false),
+    text::paint(
+        &painter,
+        at,
+        Align2::LEFT_TOP,
+        ty::INFO_OVERLINE,
+        &overline,
         color::text_overline(),
     );
     text::paint(
-        painter,
-        pos2(rect.min.x + pad + 18.0, overline_y),
+        &painter,
+        pos2(at.x, at.y + ty::INFO_OVERLINE.line_height() + FACT_GAP),
         Align2::LEFT_TOP,
-        ty::INFO_OVERLINE,
-        &text::to_upper(title, language),
-        color::text_overline(),
+        ty::INFO_VALUE,
+        value,
+        white(0.92),
     );
-    let value_y = overline_y + ty::INFO_OVERLINE.line_height() + 10.0;
-    let max = size::INFO_CARD.0 - 2.0 * pad;
-    match value {
-        CardValue::Text(text) => {
-            let truncated = text::middle_truncate(painter, ty::INFO_VALUE, text, max);
-            text::paint(
-                painter,
-                pos2(rect.min.x + pad, value_y),
-                Align2::LEFT_TOP,
-                ty::INFO_VALUE,
-                &truncated,
-                Color32::WHITE,
-            );
-        }
-        CardValue::State(label) => {
-            paint_label(
-                painter,
-                pos2(
-                    rect.min.x + pad,
-                    value_y + ty::STATE_LABEL.line_height() * 0.5,
-                ),
-                label,
-                ty::STATE_LABEL,
-                max,
-                1,
-                1.0,
-            );
-        }
-    }
+    width
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -776,6 +714,7 @@ fn empty_library(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut
     let painter = ui.painter().clone();
     let scanning = cx.model.scanning;
     let folder = cx.model.prefs.games_folder.clone();
+    let folder_set = folder.is_some();
     let title = language.text(if scanning {
         Key::Scanning
     } else {
@@ -811,14 +750,6 @@ fn empty_library(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut
         icon.font(icon_size, false),
         white(0.8),
     );
-    if !scanning {
-        // "square.stack.3d.up.slash": the stack struck through.
-        let d = icon_size * 0.36;
-        painter.line_segment(
-            [centre + vec2(-d, d), centre + vec2(d, -d)],
-            egui::Stroke::new(3.0, white(0.8)),
-        );
-    }
     y += icon_size + 18.0;
     text::paint(
         &painter,
@@ -829,17 +760,21 @@ fn empty_library(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut
         Color32::WHITE,
     );
     y += ty::EMPTY_TITLE.line_height() + 18.0;
-    let body_galley = crate::screens::wrapped_centered(
-        &painter,
-        theme::TextStyle::new(17.0, Weight::Regular),
-        body,
-        white(0.65),
-        (screen.width() - 2.0 * pad::HOME_X).min(720.0),
-        3,
-    );
-    let body_height = body_galley.size().y;
-    painter.galley(pos2(cx_mid, y), body_galley, white(0.65));
-    y += body_height.max(rows[2]) + 18.0;
+    // While the scan runs the advice to add dumps would contradict the title.
+    if !scanning {
+        let body_galley = crate::screens::wrapped_centered(
+            &painter,
+            theme::TextStyle::new(17.0, Weight::Regular),
+            body,
+            white(0.65),
+            (screen.width() - 2.0 * pad::HOME_X).min(720.0),
+            3,
+        );
+        let body_height = body_galley.size().y;
+        painter.galley(pos2(cx_mid, y), body_galley, white(0.65));
+        y += body_height.max(rows[2]);
+    }
+    y += 18.0;
     if let Some(folder) = folder {
         let shown = text::middle_truncate(
             &painter,
@@ -859,6 +794,11 @@ fn empty_library(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut
     }
     y += 10.0;
     let focused = cx.model.overlay.is_none();
+    let button_title = language.text(if folder_set {
+        Key::ChangeFolder
+    } else {
+        Key::PickFolder
+    });
     let button_width = 260.0;
     let rect = Rect::from_min_size(
         pos2(cx_mid - button_width * 0.5, y),
@@ -870,7 +810,7 @@ fn empty_library(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut
                 .max_rect(rect)
                 .layout(Layout::top_down(Align::Center)),
             |ui| {
-                ConsoleButton::new(language.text(Key::ChangeFolder))
+                ConsoleButton::new(button_title)
                     .icon(Icon::FOLDER)
                     .focused(focused)
                     .show(ui)
