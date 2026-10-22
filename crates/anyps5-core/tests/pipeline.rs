@@ -464,7 +464,7 @@ fn only_allowlisted_relink_flags_are_passed() {
     request.relink_flags = vec!["--windows-fixed-base".into(), "0x400000".into()];
     run(&request).0.unwrap();
     let copy = unlock::unlocked_copy("PPSA00015", &request.game, &w.root);
-    let args = args_of(&copy.join("eboot.exe"));
+    let args = args_of(&copy.join(EXECUTABLE));
     let at = args.iter().position(|a| a == "--windows-fixed-base");
     if cfg!(windows) {
         assert_eq!(args[at.expect("flag") + 1], "0x400000");
@@ -477,7 +477,7 @@ fn only_allowlisted_relink_flags_are_passed() {
     request.relink_flags = vec!["--autorun".into(), "x".into()];
     run(&request).0.unwrap();
     assert!(
-        !args_of(&copy.join("eboot.exe"))
+        !args_of(&copy.join(EXECUTABLE))
             .iter()
             .any(|a| a == "--autorun")
     );
