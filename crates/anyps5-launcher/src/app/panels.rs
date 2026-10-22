@@ -23,8 +23,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+use anyps5_core::community::{self, CommunityLayout};
 use anyps5_core::diagnosis::{self, Diagnosis};
 use anyps5_core::gamefiles::GameInput;
+use anyps5_core::issue;
 use anyps5_core::library::Game;
 use anyps5_core::linkreg::{self, Handler as LinkHandler};
 use anyps5_core::paths::{AppPaths, GameId};
@@ -48,9 +50,10 @@ use crate::screens::game_settings::{
 };
 use crate::screens::home::tile_overlay;
 use crate::screens::library::{LibraryAction, LibraryData, LibraryEntry, LibraryGrid, StateText};
-use crate::screens::log::{LogAction, LogData, LogView};
+use crate::screens::log::{LogAction, LogData, LogView, ReviewData};
 use crate::screens::rows::RowId;
 use crate::screens::settings::{Category, SettingsAction, SettingsEnv, SettingsPanel};
+use crate::screens::share_strings::Share;
 use crate::screens::strings::Extra;
 use crate::screens::trophies::{TrophyAction, TrophyData, TrophyListPanel};
 use crate::screens::{ToastRequest, state_label};
@@ -77,6 +80,13 @@ enum Work {
         game: GameId,
         input: GameInput,
     },
+    /// The report to AnyPS5 of a game, ready to be shown.
+    Upstream(issue::Prepared),
+    /// The layouts the community shares for a title (none when offline).
+    Community {
+        title_id: String,
+        layouts: Vec<CommunityLayout>,
+    },
 }
 
 pub struct PanelHost {
@@ -96,6 +106,12 @@ pub struct PanelHost {
     return_row: Option<RowId>,
     log_text: String,
     log_diagnosis: Option<Diagnosis>,
+    /// The report to AnyPS5 the log view is reviewing; `None` while it shows the log.
+    upstream: Option<issue::Prepared>,
+    /// Community layouts by title id; a title is looked up once per run. Never filled in the
+    /// demo and the tests.
+    community: HashMap<String, Vec<CommunityLayout>>,
+    online: bool,
     /// Resolutions of a title's patch by title id (reading the patch file once per title).
     resolutions: HashMap<String, Vec<String>>,
     /// The controls the game's files name, by game; `None` while they are being read.
@@ -135,6 +151,9 @@ impl PanelHost {
             return_row: None,
             log_text: String::new(),
             log_diagnosis: None,
+            upstream: None,
+            community: HashMap::new(),
+            online: !simulated,
             resolutions: HashMap::new(),
             game_inputs: HashMap::new(),
             work_tx,
@@ -372,6 +391,7 @@ impl PanelHost {
                 model.switch_overlay(Overlay::Log);
             }
             GameSettingsAction::MakeReport => self.make_report(model, game),
+            GameSettingsAction::ReportToUpstream => self.prepare_upstream(model, game),
             GameSettingsAction::ClearShaderCache => {
                 let cache = model.paths.game_cache_dir(&game.title_id);
                 let _ = anyps5_core::fsx::remove_tree(&cache);
@@ -445,13 +465,30 @@ impl PanelHost {
                 ctx.request_repaint();
             });
         }
+        if self.online && !self.community.contains_key(&game.title_id) {
+            // The gallery of the title, once per run: two small files from GitHub, off the frame.
+            self.community.insert(game.title_id.clone(), Vec::new());
+            let (tx, ctx) = (self.work_tx.clone(), self.ctx.clone());
+            let title_id = game.title_id.clone();
+            spawn("community", move || {
+                let layouts = community::fetch(&title_id);
+                let _ = tx.send(Work::Community { title_id, layouts });
+                ctx.request_repaint();
+            });
+        }
         let mut settings = cx.model.prefs.game_settings(&game.id);
+        let shared = self
+            .community
+            .get(&game.title_id)
+            .map_or(&[][..], Vec::as_slice);
         let mut data = ControlsData {
             title: &game.name,
+            title_id: &game.title_id,
             settings: &mut settings,
             language: cx.model.language(),
             accent: cx.shell.accent_color(),
             game_input: self.game_inputs.get(&game.id).and_then(Option::as_ref),
+            community: shared,
         };
         let out = self.controls.show(cx.shell, cx.ctx, &events, &mut data);
         if out.changed {
@@ -461,6 +498,7 @@ impl PanelHost {
             match action {
                 ControlsAction::Back => self.back_to_game_settings(cx.model, "controls"),
                 ControlsAction::Close => cx.model.dismiss_overlay(),
+                ControlsAction::Toast(ToastRequest { icon, text }) => cx.model.toast(text, icon),
             }
         }
     }
@@ -610,16 +648,38 @@ impl PanelHost {
         }
         let events = self.take_events(wanted);
         let game = cx.model.selected_game().cloned();
+        let language = cx.model.language();
+        let hint = match &self.upstream {
+            Some(prepared) if prepared.clipboard.is_some() => format!(
+                "{}\n{}",
+                Share::ReportHint.text(language),
+                Share::ReportPasteHint.text(language)
+            ),
+            _ => Share::ReportHint.text(language).to_owned(),
+        };
         let data = LogData {
             game_name: game.as_ref().map(|g| g.name.as_str()),
             diagnosis: self.log_diagnosis.as_ref(),
-            text: &self.log_text,
-            language: cx.model.language(),
+            text: self
+                .upstream
+                .as_ref()
+                .map_or(&self.log_text, |p| &p.preview),
+            language,
+            review: self.upstream.as_ref().map(|_| ReviewData { hint: &hint }),
         };
         let actions = self.log.show(cx.shell, cx.ctx, &events, &data);
         for action in actions {
             match action {
-                LogAction::Close => cx.model.dismiss_overlay(),
+                LogAction::Close => {
+                    self.upstream = None;
+                    cx.model.dismiss_overlay();
+                }
+                LogAction::OpenReport => {
+                    if let Some(prepared) = self.upstream.take() {
+                        open_upstream(cx.ctx, cx.model, &prepared);
+                    }
+                    cx.model.dismiss_overlay();
+                }
                 LogAction::MakeReport => {
                     if let Some(game) = &game {
                         self.make_report(cx.model, game);
@@ -633,6 +693,7 @@ impl PanelHost {
 
     /// The text of the log view (DESIGN.md 5.12): the failure message, then the end of the log file.
     fn prepare_log(&mut self, model: &Model, game: &Game) {
+        self.upstream = None;
         let mut text = String::new();
         if let Some(failure) = model.failures.get(&game.id) {
             text.push_str(failure);
@@ -655,8 +716,8 @@ impl PanelHost {
             .flatten();
     }
 
-    /// Writes the report on a worker thread, then shows it in Explorer (DESIGN.md 5.13).
-    fn make_report(&mut self, model: &Model, game: &Game) {
+    /// Everything a report says about `game`; run it on a worker thread (it reads the PC).
+    fn report_job(model: &Model, game: &Game) -> impl FnOnce() -> (AppPaths, ReportInput) + use<> {
         let paths: AppPaths = model.paths.clone();
         let settings =
             serde_json::to_value(model.prefs.game_settings(&game.id)).unwrap_or_default();
@@ -666,8 +727,7 @@ impl PanelHost {
             game.version.clone(),
         );
         let toolkit_version = model.toolkit.clone();
-        let (tx, ctx) = (self.work_tx.clone(), self.ctx.clone());
-        spawn("report", move || {
+        move || {
             let session = diagnosis::read_last_session(&paths.log_file(&title_id));
             let input = ReportInput {
                 game_name: name,
@@ -682,8 +742,29 @@ impl PanelHost {
                 session,
                 now: clock::rfc3339_utc(clock::unix_seconds()),
             };
+            (paths, input)
+        }
+    }
+
+    /// Writes the report on a worker thread, then shows it in Explorer (DESIGN.md 5.13).
+    fn make_report(&mut self, model: &Model, game: &Game) {
+        let job = Self::report_job(model, game);
+        let (tx, ctx) = (self.work_tx.clone(), self.ctx.clone());
+        spawn("report", move || {
+            let (paths, input) = job();
             let result = report::write_report(&paths, &input).map_err(|e| e.to_string());
             let _ = tx.send(Work::Report(result));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Builds the issue for AnyPS5 on a worker thread; the log view then shows it (DESIGN.md 5.19).
+    fn prepare_upstream(&mut self, model: &Model, game: &Game) {
+        let job = Self::report_job(model, game);
+        let (tx, ctx) = (self.work_tx.clone(), self.ctx.clone());
+        spawn("report", move || {
+            let (_, input) = job();
+            let _ = tx.send(Work::Upstream(issue::prepare(&input)));
             ctx.request_repaint();
         });
     }
@@ -717,6 +798,16 @@ impl PanelHost {
                 }
                 Work::GameInput { game, input } => {
                     self.game_inputs.insert(game, Some(input));
+                }
+                Work::Upstream(prepared) => {
+                    // Only while the player is still in the game's settings.
+                    if model.overlay == Some(Overlay::GameSettings) {
+                        self.upstream = Some(prepared);
+                        model.switch_overlay(Overlay::Log);
+                    }
+                }
+                Work::Community { title_id, layouts } => {
+                    self.community.insert(title_id, layouts);
                 }
                 Work::Uninstalled { game, result } => match result {
                     Ok(()) => {
@@ -882,6 +973,30 @@ impl OverlayHost for PanelHost {
 fn store_game_settings(model: &mut Model, id: &GameId, settings: GameSettings) {
     model.prefs.set_game_settings(id, settings);
     model.mark_prefs_dirty();
+}
+
+/// Opens the issue form of a report in the browser. A report too long for the link is copied
+/// first, to be pasted into the form; when the browser does not open, the link is copied instead.
+fn open_upstream(ctx: &Context, model: &mut Model, prepared: &issue::Prepared) {
+    let language = model.language();
+    if let Some(text) = &prepared.clipboard {
+        ctx.copy_text(text.clone());
+    }
+    match issue::open_url(&prepared.url) {
+        Ok(()) => {
+            let text = if prepared.clipboard.is_some() {
+                Share::ReportOpenedPaste
+            } else {
+                Share::ReportOpened
+            };
+            model.toast(text.text(language), Icon::CHECK_CIRCLE);
+        }
+        Err(error) => {
+            tracing::warn!("cannot open the browser: {error}");
+            ctx.copy_text(prepared.url.clone());
+            model.toast(Share::ReportOpenFailed.text(language), Icon::WARNING);
+        }
+    }
 }
 
 fn spawn(name: &str, work: impl FnOnce() + Send + 'static) {

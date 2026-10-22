@@ -1,5 +1,6 @@
 //! UI-free logic of the AnyPS5 launcher. The launcher binary depends on this crate; it never depends on the UI.
 
+pub mod community;
 pub mod controls;
 pub mod diagnosis;
 pub mod discord;
@@ -8,6 +9,7 @@ pub mod events;
 pub mod fsx;
 pub mod gamefiles;
 pub mod hostcpu;
+pub mod issue;
 pub mod launch;
 pub mod library;
 pub mod linkreg;

@@ -185,18 +185,19 @@ impl GameSettings {
         env
     }
 
-    /// The text of this game's `anyps5-input.ini`.
-    pub fn input_file_text(&self) -> String {
-        Controls::file(
+    /// The text of this game's `anyps5-input.ini` for the toolkit with this version or tag.
+    pub fn input_file_text(&self, toolkit: Option<&str>) -> String {
+        Controls::file_for(
             &self.controls.clone().unwrap_or_default(),
             &self.tuning.unwrap_or_default(),
+            toolkit,
         )
     }
 
     /// Writes the game's input file atomically, creating parent folders. On failure the caller
     /// starts the game without `ANYPS5_INPUT_CONFIG`.
-    pub fn write_input_file(&self, file: &Path) -> io::Result<()> {
-        write_atomic(file, self.input_file_text().as_bytes())
+    pub fn write_input_file(&self, file: &Path, toolkit: Option<&str>) -> io::Result<()> {
+        write_atomic(file, self.input_file_text(toolkit).as_bytes())
     }
 }
 
@@ -998,14 +999,16 @@ mod tests {
             }),
             ..Default::default()
         };
-        s.write_input_file(&file).unwrap();
+        s.write_input_file(&file, None).unwrap();
         let text = fs::read_to_string(&file).unwrap();
-        assert_eq!(text, s.input_file_text());
+        assert_eq!(text, s.input_file_text(None));
         assert!(text.starts_with("# Written by the AnyPS5 launcher"));
         assert!(text.contains("Circle = KEY:C\n") && text.ends_with("LeftStickDeadzone = 10\n"));
         assert!(!dir.path().join("Controls/PPSA1-abc.ini.tmp").exists());
         // rewriting replaces
-        GameSettings::default().write_input_file(&file).unwrap();
+        GameSettings::default()
+            .write_input_file(&file, None)
+            .unwrap();
         assert!(
             fs::read_to_string(&file)
                 .unwrap()
@@ -1020,7 +1023,7 @@ mod tests {
         fs::write(&blocker, "x").unwrap();
         assert!(
             GameSettings::default()
-                .write_input_file(&blocker.join("x.ini"))
+                .write_input_file(&blocker.join("x.ini"), None)
                 .is_err()
         );
     }

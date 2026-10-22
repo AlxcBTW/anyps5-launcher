@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "layouts": [
+    {
+      "titleId": "PPSA16064",
+      "name": "Keys from the game",
+      "author": "AlxcBTW",
+      "description": "Minecraft Dungeons II on the keys its own files name: Space jumps, the mouse attacks, 1 to 3 are the artifacts, E drinks a potion.",
+      "file": "PPSA16064/from-the-game.ini"
+    }
+  ]
+}

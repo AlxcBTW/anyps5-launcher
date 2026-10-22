@@ -7,6 +7,7 @@ use anyps5_core::settings::{ConsoleLanguage, GameSettings, Overlay};
 use egui::{Color32, Context};
 
 use crate::screens::rows::{self, Change, Row, RowId};
+use crate::screens::share_strings::Share;
 use crate::screens::side::{self, Output, SideState, SideView};
 use crate::screens::strings::Extra;
 use crate::ui::Shell;
@@ -31,6 +32,8 @@ pub enum GameSettingsAction {
     ShowInExplorer,
     OpenLog,
     MakeReport,
+    /// Build the issue for AnyPS5 and show it before the browser opens.
+    ReportToUpstream,
     ClearShaderCache,
     /// Open the confirmation ([`UninstallPanel`]).
     AskUninstall,
@@ -181,6 +184,7 @@ impl GameSettingsPanel {
             "finder" => Some(GameSettingsAction::ShowInExplorer),
             "log" => Some(GameSettingsAction::OpenLog),
             "report" => Some(GameSettingsAction::MakeReport),
+            "upstream" => Some(GameSettingsAction::ReportToUpstream),
             "cache" => Some(GameSettingsAction::ClearShaderCache),
             "uninstall" => Some(GameSettingsAction::AskUninstall),
             _ => None,
@@ -299,6 +303,11 @@ pub fn build_rows(data: &GameSettingsData<'_>) -> Vec<Row> {
         Row::command("report", t(Key::MakeReport))
             .detail(t(Key::MakeReportDetail))
             .icon(Icon::STETHOSCOPE),
+    );
+    rows.push(
+        Row::command("upstream", Share::Report.text(data.language))
+            .detail(Share::ReportDetail.text(data.language))
+            .icon(Icon::EXPORT),
     );
     rows.push(Row::command("cache", t(Key::ClearShaderCache)).icon(Icon::SPARKLE));
     rows[maintenance].group_start = true;
@@ -498,6 +507,7 @@ mod tests {
                 "finder",
                 "log",
                 "report",
+                "upstream",
                 "cache",
                 "uninstall"
             ],

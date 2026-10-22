@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! anyps5-launcher --gallery=settings|settings1..6|game-settings|confirm|controls|controls-capture|
-//!                           advanced|trophies|banner|start|unlocking|log|library
+//!                           controls-end|advanced|trophies|banner|start|unlocking|log|report|library
 //!                 [--screenshot=out.png] [--size=WxH] [--tr]
 //! ```
 //!
@@ -11,9 +11,11 @@
 //! Every page shows exactly one focused element and puts glass over artwork, never over the bare
 //! theme.
 
-use anyps5_core::controls::PadAction;
+use anyps5_core::community::CommunityLayout;
+use anyps5_core::controls::{PadAction, Preset};
 use anyps5_core::library::{ExecutableKind, Game};
 use anyps5_core::paths::GameId;
+use anyps5_core::report::{ReportInput, SystemInfo};
 use anyps5_core::settings::{GameSettings, Preferences};
 use anyps5_core::trophies::{Grade, Trophy, TrophySet};
 use egui::{
@@ -28,10 +30,11 @@ use crate::screens::game_settings::{
     GameSettingsData, GameSettingsPanel, TrophyProgress, UninstallPanel,
 };
 use crate::screens::library::{LibraryData, LibraryEntry, LibraryGrid, StateText};
-use crate::screens::log::{LogData, LogView};
+use crate::screens::log::{LogData, LogView, ReviewData};
 use crate::screens::settings::{
     LauncherUpdate, SettingsEnv, SettingsPanel, UpdateState, apply_preferences,
 };
+use crate::screens::share_strings::Share;
 use crate::screens::start::{StartData, StartScreen};
 use crate::screens::trophies::{IconCache, TrophyData, TrophyListPanel};
 use crate::screens::unlock::{UnlockProgress, UnlockStep, hero_progress};
@@ -56,12 +59,16 @@ pub enum ScreenPage {
     Confirm,
     Controls,
     ControlsCapture,
+    /// The last rows: import, export, reset.
+    ControlsEnd,
     Advanced,
     Trophies,
     Banner,
     Start,
     Unlocking,
     Log,
+    /// The review of a report to AnyPS5.
+    Report,
     Library,
 }
 
@@ -73,12 +80,14 @@ pub fn parse(name: &str) -> Option<ScreenPage> {
         "confirm" => ScreenPage::Confirm,
         "controls" => ScreenPage::Controls,
         "controls-capture" => ScreenPage::ControlsCapture,
+        "controls-end" => ScreenPage::ControlsEnd,
         "advanced" => ScreenPage::Advanced,
         "trophies" => ScreenPage::Trophies,
         "banner" => ScreenPage::Banner,
         "start" => ScreenPage::Start,
         "unlocking" => ScreenPage::Unlocking,
         "log" => ScreenPage::Log,
+        "report" => ScreenPage::Report,
         "library" => ScreenPage::Library,
         other => {
             let n: usize = other.strip_prefix("settings")?.parse().ok()?;
@@ -291,6 +300,8 @@ pub struct ScreenGallery {
     controls: ControlsPanel,
     /// A game whose files name its controls, for the controls page.
     game_input: GameInput,
+    /// Layouts the community shares for the invented game.
+    community: Vec<CommunityLayout>,
     advanced: AdvancedPanel,
     trophies: TrophyListPanel,
     library: LibraryGrid,
@@ -319,6 +330,7 @@ impl ScreenGallery {
             uninstall: UninstallPanel::default(),
             controls: ControlsPanel::default(),
             game_input: sample_game_input(),
+            community: sample_community(),
             advanced: AdvancedPanel::default(),
             trophies: TrophyListPanel::default(),
             library: LibraryGrid::default(),
@@ -424,6 +436,8 @@ impl ScreenGallery {
         {
             let mut data = ControlsData {
                 title: name,
+                title_id: "PPSA90001",
+                community: &self.community,
                 settings: &mut self.game_settings,
                 language,
                 accent,
@@ -466,6 +480,9 @@ impl ScreenGallery {
         );
         let diagnosis =
             anyps5_core::diagnosis::Diagnosis::Crashed("0xC0000005 (ACCESS_VIOLATION)".into());
+        let report = matches!(self.page, ScreenPage::Report);
+        let review = anyps5_core::issue::prepare(&sample_report());
+        let hint = Share::ReportHint.text(language);
         self.log.show(
             shell,
             &ctx,
@@ -473,8 +490,9 @@ impl ScreenGallery {
             &LogData {
                 game_name: Some(name),
                 diagnosis: Some(&diagnosis),
-                text: SAMPLE_LOG,
+                text: if report { &review.preview } else { SAMPLE_LOG },
                 language,
+                review: report.then_some(ReviewData { hint }),
             },
         );
         self.start.show(
@@ -507,7 +525,8 @@ impl ScreenGallery {
             ScreenPage::Advanced => self.advanced.open_row(4),
             ScreenPage::Trophies => self.trophies.open_at(1),
             ScreenPage::Library => self.library.open(1),
-            ScreenPage::Log => self.log.open(),
+            ScreenPage::ControlsEnd => self.controls.open_row(30),
+            ScreenPage::Log | ScreenPage::Report => self.log.open(),
             ScreenPage::Start => self.start.open_at(ctx.clock()),
             ScreenPage::Banner | ScreenPage::Unlocking => {}
         }
@@ -710,6 +729,42 @@ impl ScreenGallery {
             language,
         );
     }
+}
+
+/// A report for an invented game on an invented PC.
+fn sample_report() -> ReportInput {
+    ReportInput {
+        game_name: "Ember Drift".into(),
+        title_id: "PPSA90001".into(),
+        version: "01.002.000".into(),
+        system: SystemInfo {
+            cpu: "Generic CPU".into(),
+            threads: 16,
+            ram_gb: 32,
+            gpus: vec!["Generic GPU 8 GB".into()],
+            drivers: vec!["560.94".into()],
+            windows: "Windows 11 Home 25H2 (build 26200.1000)".into(),
+        },
+        launcher_version: env!("CARGO_PKG_VERSION").into(),
+        toolkit_version: Some("0.1.3".into()),
+        reason: Some("The game crashed (0xC0000005 (ACCESS_VIOLATION)).".into()),
+        settings: serde_json::json!({"fullscreen": true, "windowSize": 100, "controls": {"Cross": ["KEY:F"]}}),
+        crash: None,
+        session: SAMPLE_LOG.into(),
+        now: "2026-10-22T09:31:00Z".into(),
+    }
+}
+
+/// Layouts a community might share for the invented game.
+fn sample_community() -> Vec<CommunityLayout> {
+    let mouse = Preset::MouseAndKeyboard.changes();
+    vec![CommunityLayout {
+        name: "Mouse look".into(),
+        author: Some("mira".into()),
+        description: None,
+        changes: mouse,
+        tuning: None,
+    }]
 }
 
 const SAMPLE_LOG: &str = "[anyps5-launcher] start 2026-10-22T09:30:00Z PPSA90001

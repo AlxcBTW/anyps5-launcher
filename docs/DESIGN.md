@@ -685,6 +685,10 @@ The launcher keeps the port's structure but trims what read as noise next to the
   0.5) are bare text on the panel, as high as their text, not 58 dp rows. The settings rows start
   level with the first category, and the trophy rows and library grid stand on the title edge. The
   focused trophy is the white card (3 dp grow, dark ink, darker grade tones), not a ring.
+- **Sharing, quiet.** The layout export and import are two plain command rows above Reset
+  to Default Keys; community layouts are options of the Layout choice, not a page. The report to
+  AnyPS5 reuses the log view for its review, so no new surface exists: a plain sentence (no
+  warning box, it warns of nothing) above the text, the primary button on the right.
 - **Home polish.** Two soft scrims sit under the home UI so white text reads on bright artwork:
   black 0.30 fading out over the top 150 dp, and black 0.46 in the hero's bottom-left corner
   (72 % of the width, half the height at most 480 dp), both fading to nothing on every side. The
@@ -1135,6 +1139,93 @@ a 2D axis's keys stay (their direction is unknown).
 
 Each key row shows what the game calls the button as its detail ("Jump", "Ranged Attack";
 words split, the minus half of an axis marked "−", three names at most).
+
+### 5.18 Layout files and the community gallery (Windows addition)
+
+**The file format is the toolkit's own.** `anyps5-input.ini` is the file that upstream's
+`INPUT_MAPPING.md` (release asset of v0.1.1 and later) describes; the launcher writes a subset of it.
+A layout file is such a file, nothing else: `Action = KEY:Name | MOUSE:Left|Middle|Right|X1|X2 |
+WHEEL:Up|Down`, one line per source, `#` or `;` at the start of a line for a comment, tuning lines
+`Setting = Value`. `anyps5_core::controls` reads it as the engine does (`Controls::parse`): names
+without regard to case, the first line of an action replaces its keys and later ones add, repeats
+are dropped, UTF-8 with or without a byte-order mark. An action the file leaves out gets the engine's
+built-in keys (`upstream_default_sources`), not the launcher's, because that is what the engine does with
+the same file. `KEY:F24` alone stands for "no key". The first line the engine would refuse is the
+error: "Line 7: unknown action or setting "Jump"." Keys must be names the launcher's scan code
+table knows (F13 to F24 besides); `ToggleFullscreen`, `TogglePerformanceOverlay` and `Screenshot`
+take keyboard keys only.
+
+- Actions without a row here (`Shake`, `ToggleMouse`, `ToggleFullscreen`,
+  `TogglePerformanceOverlay`, `Screenshot`) are kept in the game's changes by name and written back, so a
+  shared layout survives a round trip. Importing one that has them says so in the toast.
+- Tuning lines are optional. A file with at least one replaces the game's tuning (the other values
+  are the defaults); a file with none leaves the tuning alone. Values finer than the launcher's
+  steps (tenths, percent) are rounded.
+- **Writing.** Only values that differ from the defaults are written (as before). `StickModifier`,
+  `KeyboardRampMs` and `TriggerRampMs` exist from toolkit v0.1.3 on, and a line the toolkit does not know
+  stops its input. `writes_v013_lines(toolkit)` is the one place that knows; an older toolkit gets
+  none of the three. An unbound `StickModifier` is never written (it has no built-in key).
+
+**Export Layout** and **Import Layout** are two command rows after the key rows, with Reset to
+Default Keys after them (import and export one group, reset its own, a double gap above each). Both use the native dialogs. The export
+lists every action of the launcher, so no omission can mean a different key, under two comment
+lines naming the game and the format. Import replaces the game's layout at once and answers with a
+toast.
+
+**The community gallery** is a folder of this repository, read at runtime:
+
+```
+community/layouts/index.json
+community/layouts/<TITLEID>/<name>.ini
+```
+
+```json
+{ "version": 1,
+  "layouts": [ { "titleId": "PPSA16064", "name": "Keys from the game", "author": "AlxcBTW",
+                 "description": "One sentence.", "file": "PPSA16064/from-the-game.ini" } ] }
+```
+
+The launcher fetches `index.json` from
+`https://raw.githubusercontent.com/AlxcBTW/anyps5-launcher/main/community/layouts` once per run and
+title, when the controls open, and then the files of that title (8 at most, 16 KiB each, 8 s for
+all). An entry is valid when the title ID is four capitals and five digits, the name has 1 to 40
+characters, and the file is `<folder>/<name>.ini` of letters, digits, `.`, `_` and `-`. A file that fails
+`Controls::parse` is left out. A newer `version` than 1, no network, no entry for the title: the
+gallery is empty and nothing shows. Nothing but those GETs is sent.
+
+The Layout choice lists them after the presets and the game's own keys as "Community: <name>";
+choosing one is choosing a preset (its tuning lines come along). `community/layouts/PPSA16064/from-the-game.ini`
+is what "From the Game" makes of the Minecraft Dungeons II keys that `gamefiles` reads from its IoStore
+containers; a test keeps the file equal to that output.
+
+### 5.19 Report to AnyPS5 (Windows addition)
+
+A row of the game sheet after "Make a Report" (which still writes the file). It builds the report of
+section 5.13 on a worker thread and shows the text that will be sent in the log view (the same
+full-screen panel: a sentence above it, "Cancel" and "Open GitHub" on the right, Select opens). Nothing
+is sent from the launcher and there is no token: "Open GitHub" opens the browser on
+`https://github.com/boykopovar/AnyPS5/issues/new?template=bug_report.yml` with the form's fields in
+the query (GitHub fills an issue form from the field ids `summary`, `commit`, `system`, `steps`, `log`,
+`notes`; `title` is the issue's title), and the player presses GitHub's own button. Upstream asks for
+game bring-up progress in Discussions and for bugs in the bug form; this is the bug form.
+
+| Field | Content |
+|---|---|
+| title | `<game> (<title id>) <content version>: <diagnosis>` (the form's own "Title" field has the same id and gets the same text) |
+| summary | the diagnosis sentence; empty when none was found |
+| commit | `AnyPS5 toolkit <version>, launcher <version>` |
+| system | Windows build, each GPU with its driver (`CheckInterfaceSupport`; NVIDIA also as the number of the download page) |
+| steps | how it was started, and the game's settings that are not at their defaults |
+| log | the last 30 lines, 2,000 characters at most |
+| notes | only when the report is long: "paste the full report here" |
+
+**Limits.** GitHub answers a link of about 7,000 characters with an error and one of 9,000 with
+414 (measured), so the link stays within 6,000 after percent-encoding (`issue::MAX_URL_BYTES`). The
+report is built in four tiers of detail (30, 8, 3 and 0 log lines); the first that fits is used.
+From the second tier on the full report text (the file's text, the log's last 400 KiB) is copied to the
+clipboard when the player continues, the notes field says to paste it, and the review says so. The
+player's account name is replaced by `<user>` in everything that leaves. A browser that does not open
+leaves the link on the clipboard.
 
 ---
 
