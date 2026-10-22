@@ -403,6 +403,7 @@ impl ScreenGallery {
             update: UpdateState::UpToDate,
             launcher: LauncherUpdate::None,
             default_screenshots: std::path::Path::new("C:\\Users\\mira\\Pictures\\AnyPS5"),
+            links: anyps5_core::linkreg::Handler::Absent,
         };
         let icon = Some(self.tile(1));
         self.settings

@@ -8,6 +8,8 @@
 
 use std::path::PathBuf;
 
+use anyps5_core::linkreg::Handler;
+use anyps5_core::links::SettingsPage;
 use anyps5_core::settings::{Backdrop, CpuConversion, Preferences};
 use egui::{Align2, Color32, Context, Rect, Sense, Ui, UiBuilder, pos2, vec2};
 
@@ -52,6 +54,19 @@ impl Category {
         Category::Advanced,
         Category::About,
     ];
+
+    /// The category a link names.
+    pub fn from_link(page: SettingsPage) -> Category {
+        match page {
+            SettingsPage::Appearance => Category::Appearance,
+            SettingsPage::Library => Category::Library,
+            SettingsPage::Language => Category::Language,
+            SettingsPage::Behavior => Category::Behaviour,
+            SettingsPage::Toolkit => Category::Toolkit,
+            SettingsPage::Advanced => Category::Advanced,
+            SettingsPage::About => Category::About,
+        }
+    }
 
     pub fn title(self, language: Language) -> &'static str {
         match self {
@@ -115,6 +130,8 @@ pub struct SettingsEnv<'a> {
     pub launcher: LauncherUpdate,
     /// The folder screenshots go to when the preference is unset.
     pub default_screenshots: &'a std::path::Path,
+    /// Who answers `anyps5://` links on this PC.
+    pub links: Handler,
 }
 
 /// What the host has to do after a frame.
@@ -133,6 +150,8 @@ pub enum SettingsAction {
     AdoptToolkitFolder(PathBuf),
     /// "Restart Now" on the About page: close, and start the staged launcher.
     RestartNow,
+    /// "Open AnyPS5 Links with This Launcher" was switched: write or remove the registration.
+    SetLinks(bool),
     Quit,
 }
 
@@ -261,7 +280,7 @@ pub fn build_categories(
     ];
 
     // Behaviour
-    let behaviour = vec![
+    let mut behaviour = vec![
         Row::text("name", t(Key::ProfileName), prefs.profile_name.clone()).icon(Icon::USER_CIRCLE),
         Row::toggle("sounds", t(Key::Sounds), prefs.sounds).icon(Icon::SPEAKER_HIGH),
         Row::toggle("music", Extra::HomeMusic.text(language), prefs.music)
@@ -277,6 +296,22 @@ pub fn build_categories(
         Row::toggle("hide", t(Key::HideWhilePlaying), prefs.hide_while_playing)
             .icon(Icon::EYE_SLASH),
     ];
+    // The registration lives in the registry, so only Windows has the row.
+    if cfg!(windows) {
+        let detail = match env.links {
+            Handler::Other(_) => Extra::LinksDetailOther,
+            _ => Extra::LinksDetail,
+        };
+        behaviour.push(
+            Row::toggle(
+                "links",
+                Extra::Links.text(language),
+                env.links == Handler::ThisExe,
+            )
+            .detail(detail.text(language))
+            .icon(Icon::LINK),
+        );
+    }
 
     // Toolkit
     let toolkit_value = env.toolkit_version.map_or_else(
@@ -704,6 +739,7 @@ impl SettingsPanel {
                     out.actions.push(SettingsAction::AdoptToolkitFolder(folder));
                 }
             }
+            Change::Toggle { row: "links", on } => out.actions.push(SettingsAction::SetLinks(*on)),
             Change::Run { row: "quit" } => out.actions.push(SettingsAction::Quit),
             _ => {}
         }
@@ -868,6 +904,7 @@ mod tests {
             update,
             launcher: LauncherUpdate::None,
             default_screenshots: std::path::Path::new("C:\\Users\\me\\Pictures\\AnyPS5"),
+            links: Handler::Absent,
         }
     }
 

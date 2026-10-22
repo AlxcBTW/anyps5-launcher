@@ -67,6 +67,23 @@ pub enum Extra {
     LauncherReadOnly,
     /// Toast when "Restart Now" or the swap on exit fails.
     LauncherUpdateFailed,
+    /// Settings row: the launcher answers anyps5:// links and folders.
+    Links,
+    LinksDetail,
+    LinksDetailOther,
+    LinksFailed,
+    /// Toast: a link or folder the launcher cannot use.
+    LinkInvalid,
+    /// Toast: `%@` = the title ID.
+    LinkNoGame,
+    /// Toast: the folder of a link or of the folder menu holds no game.
+    LinkNotADump,
+    /// Toast: `%@` = the game name.
+    LinkOutside,
+    /// Toast: `%@` = the game name.
+    LinkUnlock,
+    /// Toast: `%@` = the game name.
+    LinkUnlocked,
 }
 
 impl Extra {
@@ -130,6 +147,22 @@ impl Extra {
             Extra::LauncherUpdateFailed => {
                 "Could not install the launcher update. Download it from GitHub instead."
             }
+            Extra::Links => "Open AnyPS5 Links with This Launcher",
+            Extra::LinksDetail => {
+                "Links on websites and in messages open here, and folders get an \"Open with AnyPS5\" entry."
+            }
+            Extra::LinksDetailOther => {
+                "Another copy of the launcher opens them now. Turn this on to use this one."
+            }
+            Extra::LinksFailed => "Could not change the link settings. Try again.",
+            Extra::LinkInvalid => "This is not a valid AnyPS5 link.",
+            Extra::LinkNoGame => "%@ is not in your library. Check the games folder in Settings.",
+            Extra::LinkNotADump => {
+                "This folder is not a game dump. Open the folder that holds eboot.bin."
+            }
+            Extra::LinkOutside => "%@ is outside your games folder. Move it there to add it.",
+            Extra::LinkUnlock => "Select Unlock to prepare %@.",
+            Extra::LinkUnlocked => "%@ is already unlocked.",
         }
     }
 
@@ -189,6 +222,20 @@ impl Extra {
             Extra::LauncherUpdateFailed => {
                 "Başlatıcı güncellemesi kurulamadı. Bunun yerine GitHub'dan indir."
             }
+            Extra::Links => "AnyPS5 bağlantılarını bu başlatıcıyla aç",
+            Extra::LinksDetail => {
+                "Web sitelerindeki ve mesajlardaki bağlantılar burada açılır, klasörlere \"AnyPS5 ile aç\" girişi eklenir."
+            }
+            Extra::LinksDetailOther => {
+                "Şu an bunları başka bir başlatıcı kopyası açıyor. Bunu kullanmak için aç."
+            }
+            Extra::LinksFailed => "Bağlantı ayarları değiştirilemedi. Yeniden dene.",
+            Extra::LinkInvalid => "Bu geçerli bir AnyPS5 bağlantısı değil.",
+            Extra::LinkNoGame => "%@ kitaplığında yok. Ayarlar'daki oyun klasörünü denetle.",
+            Extra::LinkNotADump => "Bu klasör bir oyun dökümü değil. eboot.bin içeren klasörü aç.",
+            Extra::LinkOutside => "%@ oyun klasörünün dışında. Eklemek için oraya taşı.",
+            Extra::LinkUnlock => "%@ oyununu hazırlamak için Kilidi Aç'ı seç.",
+            Extra::LinkUnlocked => "%@ zaten açık.",
         }
     }
 
@@ -203,7 +250,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 42] = [
+    pub const ALL: [Extra; 52] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -246,6 +293,16 @@ impl Extra {
         Extra::RestartNow,
         Extra::LauncherReadOnly,
         Extra::LauncherUpdateFailed,
+        Extra::Links,
+        Extra::LinksDetail,
+        Extra::LinksDetailOther,
+        Extra::LinksFailed,
+        Extra::LinkInvalid,
+        Extra::LinkNoGame,
+        Extra::LinkNotADump,
+        Extra::LinkOutside,
+        Extra::LinkUnlock,
+        Extra::LinkUnlocked,
     ];
 }
 

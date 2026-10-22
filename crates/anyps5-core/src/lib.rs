@@ -10,6 +10,8 @@ pub mod gamefiles;
 pub mod hostcpu;
 pub mod launch;
 pub mod library;
+pub mod linkreg;
+pub mod links;
 pub mod patches;
 pub mod paths;
 pub mod process;

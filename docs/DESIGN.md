@@ -1677,6 +1677,31 @@ No counterpart in the macOS launcher (Sparkle there). Core module `anyps5_core::
 - **About.** The *Version* row reads "<v>" and, with a staged update, "<v> ready" with a *Restart Now* row above *Quit*. It closes the launcher, swaps, and starts the new exe with the same arguments.
 - **Not done.** The exe is not code-signed and the checksum list comes from the same release as the exe, so it guards against a damaged or substituted download, not against a compromised release.
 
+### 9.6 Deep links, single instance and folder entry
+
+The launcher answers `anyps5://` links and runs once per user. The grammar (`crates/anyps5-core/src/links.rs`):
+
+| Link | Shows |
+|---|---|
+| `anyps5://game/<TITLEID>` | the game on the home screen |
+| `anyps5://game/<TITLEID>/unlock` | the game, with its Unlock button focused and a hint; the unlock starts only when the player presses it |
+| `anyps5://settings[/<page>]` | the settings, on `appearance`, `library`, `language`, `behavior`, `toolkit`, `advanced` or `about` |
+| `anyps5://open?path=<folder>` | a dump folder: selected when it is in the games folder, otherwise the launcher says it is outside and opens the library page |
+
+`<TITLEID>` is `PPSA` or `CUSA` and five digits. Websites should write the version as the first segment, `anyps5://v1/game/PPSA16064`; the short form is the same link, any other version is refused. A folder path alone (as Explorer passes it for the folder entry) is the same as `open?path=`.
+
+Safety rules, all in the one parser:
+
+- A link never starts a game, never unlocks, never deletes and never writes. It selects, focuses and opens. There is no `play`, `uninstall` or `env` action.
+- The closed vocabulary above; unknown actions, unknown query keys, extra segments and a second `path` are errors. An error shows "This is not a valid AnyPS5 link" and does nothing else.
+- At most 2048 bytes. No control characters, quotes, backticks or carets (a quote could add arguments to the registered command line). Of all arguments only the first counts.
+- A folder path must be an absolute drive path: no `..` or `.`, no network or device paths (`\`, `\?\`), no stream names, no empty parts, no names that end in a dot or space, no `CON`/`NUL`/`COM1`, at most 1024 bytes. It must then be a dump (`library::inspect`), and a dump outside the games folder is not added.
+- A link that arrives before the first-run setup or the first scan waits (at most eight) and is shown when the library is ready.
+
+Single instance (`crates/anyps5-launcher/src/instance.rs`): the first launcher takes the mutex `Local\AnyPS5Launcher-main` and serves the pipe `\.\pipe\AnyPS5Launcher-main-<user>` (message mode, remote clients refused, default security so only the user can write). A later launch, with a link or without, allows foreground activation, writes its arguments, waits up to 3 s for "ok" and exits; the running launcher restores and focuses its window and acts on the link. If nobody answers the later launch starts normally. Previews and `--gallery` take no part; `ANYPS5_INSTANCE=<name>` gives a test run its own mutex and pipe, so the demo can be the receiving instance without touching a real launcher, and `ANYPS5_LINK_SCHEME=anyps5-test...` makes a test run answer another scheme name.
+
+Registration (`anyps5_core::linkreg`): `HKCU\Software\Classes\anyps5` with `URL Protocol` and `shell\open\command` = `"<exe>" "%1"`, and `HKCU\Software\Classes\Directory\shell\AnyPS5\command` for the "Open with AnyPS5" entry (folders only). The installer writes both (`HKA`, removed on uninstall); the portable exe writes and removes the same keys with the Behavior toggle "Open AnyPS5 Links with This Launcher", which shows whether the keys point at this exe.
+
 ---
 
 ## 10. Asset list
