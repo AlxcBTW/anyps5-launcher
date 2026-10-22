@@ -1,10 +1,10 @@
-//! Window chrome on Windows (DESIGN.md 9.2): the native title bar stays (snap layouts, resize
-//! borders, accessibility) and is recoloured through DWM so it merges with the black backdrop.
+//! Window chrome on Windows (DESIGN.md 9.2): the window has no title bar (the launcher draws its
+//! own caption, `ui::caption`); DWM still gives it a shadow, a dark system menu, a black border and
+//! round corners.
 //!
-//! * `DWMWA_USE_IMMERSIVE_DARK_MODE`: dark caption buttons and menus (Windows 10 1809 and later;
-//!   attribute 19 on builds before 20H1).
-//! * `DWMWA_CAPTION_COLOR` black, `DWMWA_TEXT_COLOR` white, `DWMWA_BORDER_COLOR` black
-//!   (Windows 11 only; older builds refuse the attributes and keep the dark caption).
+//! * `DWMWA_USE_IMMERSIVE_DARK_MODE`: dark system menu (Alt+Space) and snap flyouts (Windows 10
+//!   1809 and later; attribute 19 on builds before 20H1).
+//! * `DWMWA_BORDER_COLOR` black (Windows 11 only; older builds refuse it).
 //! * `DWMWA_WINDOW_CORNER_PREFERENCE` round (Windows 11; the window is not maximised by default
 //!   on every PC, so the corners are asked for explicitly).
 //!
@@ -15,7 +15,7 @@
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Applied {
     pub dark_mode: bool,
-    pub caption_colors: bool,
+    pub border_color: bool,
     pub round_corners: bool,
 }
 
@@ -29,8 +29,8 @@ mod imp {
     use super::{Applied, colorref};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use windows_sys::Win32::Graphics::Dwm::{
-        DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
-        DWMWA_WINDOW_CORNER_PREFERENCE, DwmSetWindowAttribute,
+        DWMWA_BORDER_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE,
+        DwmSetWindowAttribute,
     };
 
     /// `DWMWA_USE_IMMERSIVE_DARK_MODE` before Windows 10 20H1.
@@ -82,17 +82,12 @@ mod imp {
         let on: u32 = 1;
         let dark_mode =
             set(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &on) || set(hwnd, DARK_MODE_BEFORE_20H1, &on);
-        // Windows high contrast keeps the system caption colours.
-        let colors = !high_contrast();
-        let black = colorref(0, 0, 0);
-        let white = colorref(255, 255, 255);
-        let caption = colors && set(hwnd, DWMWA_CAPTION_COLOR, &black);
-        let text = colors && set(hwnd, DWMWA_TEXT_COLOR, &white);
-        let border = colors && set(hwnd, DWMWA_BORDER_COLOR, &black);
+        // Windows high contrast keeps the system border colour.
+        let border_color = !high_contrast() && set(hwnd, DWMWA_BORDER_COLOR, &colorref(0, 0, 0));
         let round_corners = set(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &CORNER_ROUND);
         let applied = Applied {
             dark_mode,
-            caption_colors: caption && text && border,
+            border_color,
             round_corners,
         };
         tracing::debug!("window chrome: {applied:?}");
@@ -100,13 +95,13 @@ mod imp {
     }
 }
 
-/// Recolours the title bar of `window` (once, after the window exists).
+/// Styles the frame of `window` (once, after the window exists).
 #[cfg(windows)]
 pub fn apply(window: &impl raw_window_handle::HasWindowHandle) -> Applied {
     imp::apply(window)
 }
 
-/// Other platforms keep their own title bar.
+/// Other platforms keep their own frame.
 #[cfg(not(windows))]
 pub fn apply<W>(_window: &W) -> Applied {
     Applied::default()

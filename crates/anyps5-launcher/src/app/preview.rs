@@ -502,6 +502,8 @@ pub fn run(options: Options) -> eframe::Result {
     let mut native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("AnyPS5 preview")
+            // Frameless like the launcher, so the demo shows its caption as users see it.
+            .with_decorations(false)
             .with_inner_size([options.size.0, options.size.1])
             .with_resizable(options.scene.is_none()),
         ..Default::default()
