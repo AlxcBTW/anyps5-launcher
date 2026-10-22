@@ -692,15 +692,25 @@ pub fn run(inbox: Option<crate::instance::Inbox>, arguments: Vec<String>) -> efr
     }
 }
 
-/// Starts this program again with the Vulkan backend and the same arguments, and waits for it.
+/// Starts this program again with the Vulkan backend and the same arguments, then ends. This process
+/// holds the single instance, so the new one waits for it to end (`--after-update=<pid>`) instead
+/// of handing itself over to it.
 fn relaunch_on_vulkan() -> eframe::Result {
-    let status = std::env::current_exe().and_then(|exe| {
+    let mut args: Vec<std::ffi::OsString> = std::env::args_os()
+        .skip(1)
+        .filter(|a| {
+            !a.to_string_lossy()
+                .starts_with(crate::instance::AFTER_UPDATE)
+        })
+        .collect();
+    args.push(format!("{}{}", crate::instance::AFTER_UPDATE, std::process::id()).into());
+    let started = std::env::current_exe().and_then(|exe| {
         std::process::Command::new(exe)
-            .args(std::env::args_os().skip(1))
+            .args(args)
             .env(crate::ui::GPU_ENV, "vulkan")
-            .status()
+            .spawn()
     });
-    if let Err(error) = status {
+    if let Err(error) = started {
         tracing::error!("cannot start again: {error}");
     }
     Ok(())
