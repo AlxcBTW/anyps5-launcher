@@ -3,9 +3,12 @@
 //! the gamepad key it uses and, when the developers kept them, the PC keys too. Pairing the two
 //! gives a keyboard layout in the game's own words ("Jump: ✕ and Space").
 //!
+//! Games on Unreal's Enhanced Input bind keys in Input Mapping Context assets instead; those are
+//! read from the IoStore containers next to the paks (`iostore`), the gamepad and keyboard
+//! contexts paired through the Input Action both name.
+//!
 //! Only unencrypted pak indexes are read (versions 8 to 11); entries may be stored raw, with
-//! Oodle (`oozextract`) or with Zlib. Games that bind input inside assets (Unreal's Enhanced
-//! Input) are recognised and reported as such.
+//! Oodle (`oozextract`) or with Zlib.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -13,6 +16,8 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::controls::{Changes, Controls, PadAction, scancode_of};
+
+mod iostore;
 
 /// What reading a pak can run into.
 #[derive(Debug, thiserror::Error)]
@@ -320,13 +325,13 @@ pub struct GameAction {
 /// What the game's files told us.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GameInput {
-    /// Actions and axes from `DefaultInput.ini`.
+    /// Actions and axes from `DefaultInput.ini` or from Enhanced Input mapping contexts.
     Bindings {
         actions: Vec<GameAction>,
-        /// The pak the ini came from, for the "read from" note.
+        /// The pak, or the folder of the containers, the bindings came from.
         source: PathBuf,
     },
-    /// The game binds its input inside assets (Enhanced Input): nothing to read here.
+    /// The game binds its input inside assets (Enhanced Input) this reader cannot decode.
     InAssets,
     /// Unreal paks we cannot read (encrypted index).
     Encrypted,
@@ -334,14 +339,15 @@ pub enum GameInput {
     Unknown,
 }
 
-/// Looks through the dump's `.pak` files for the project's `Config/DefaultInput.ini`.
+/// Looks through the dump's `.pak` files for the project's `Config/DefaultInput.ini` and, for
+/// an Enhanced Input game, through the IoStore containers beside them.
 pub fn read_game_input(dump: &Path) -> GameInput {
     let mut paks = Vec::new();
     collect_paks(dump, 0, &mut paks);
     paks.sort();
     let mut encrypted = false;
-    for path in paks {
-        let mut pak = match Pak::open(&path) {
+    for path in &paks {
+        let mut pak = match Pak::open(path) {
             Ok(pak) => pak,
             Err(PakError::Encrypted) => {
                 encrypted = true;
@@ -365,11 +371,11 @@ pub fn read_game_input(dump: &Path) -> GameInput {
                 let text = String::from_utf8_lossy(&bytes);
                 let actions = parse_input_ini(&text);
                 if actions.is_empty() && uses_enhanced_input(&text) {
-                    return GameInput::InAssets;
+                    return read_mapping_contexts(&paks);
                 }
                 return GameInput::Bindings {
                     actions,
-                    source: path,
+                    source: path.clone(),
                 };
             }
             Ok(None) => {}
@@ -382,6 +388,27 @@ pub fn read_game_input(dump: &Path) -> GameInput {
     } else {
         GameInput::Unknown
     }
+}
+
+/// The Enhanced Input bindings of the containers in the paks' folders.
+fn read_mapping_contexts(paks: &[PathBuf]) -> GameInput {
+    let mut folders: Vec<&Path> = paks.iter().filter_map(|p| p.parent()).collect();
+    folders.dedup();
+    for folder in folders {
+        match iostore::read_iostore_mappings(folder) {
+            Ok(contexts) => {
+                let actions = actions_from_contexts(&contexts);
+                if !actions.is_empty() {
+                    return GameInput::Bindings {
+                        actions,
+                        source: folder.to_path_buf(),
+                    };
+                }
+            }
+            Err(err) => tracing::debug!("{}: {err}", folder.display()),
+        }
+    }
+    GameInput::InAssets
 }
 
 /// `.pak` files under the dump, a few levels deep, outside the launcher's own store.
@@ -603,50 +630,157 @@ fn launcher_source(key: &str) -> Option<String> {
     scancode_of(&name).map(|_| format!("KEY:{name}"))
 }
 
-/// The layout the game's own PC keys give: every PS5 button an action uses gets that action's
-/// keys, taken away from whatever else had them. Buttons the game says nothing about keep
-/// their current keys. Returns the new changes and how many buttons got the game's keys.
+/// The layout the game's own PC keys give, on top of `changes`. Each key the game names moves to
+/// the PS5 button of its action (the first action naming a key wins, at most three per button)
+/// and leaves every other button; a button keeps its other keys after the game's. Two things
+/// stay put: the keys that walk (the left stick's) unless the game itself puts keys on the left
+/// stick, and the keys of an action on several stick directions (a 2D axis, whose keys cannot be
+/// told apart by direction). Returns the new changes and how many buttons got a key of the game.
 pub fn game_layout(actions: &[GameAction], changes: &Changes) -> (Changes, usize) {
+    use PadAction::*;
+    let walks = |a: PadAction| {
+        matches!(
+            a,
+            LeftStickUp | LeftStickDown | LeftStickLeft | LeftStickRight
+        )
+    };
+    let stick = |a: PadAction| {
+        walks(a)
+            || matches!(
+                a,
+                RightStickUp | RightStickDown | RightStickLeft | RightStickRight
+            )
+    };
+    let moved = |a: &&GameAction| !(a.pad.len() > 1 && a.pad.iter().all(|p| stick(*p)));
+    let game_walks = actions
+        .iter()
+        .filter(moved)
+        .any(|a| !a.keys.is_empty() && a.pad.iter().any(|p| walks(*p)));
+    let kept: Vec<String> = if game_walks {
+        Vec::new()
+    } else {
+        PadAction::ALL
+            .into_iter()
+            .filter(|a| walks(*a))
+            .flat_map(|a| Controls::sources(a, changes))
+            .collect()
+    };
     let mut wanted: Vec<(PadAction, Vec<String>)> = Vec::new();
-    let mut taken: Vec<String> = Vec::new();
-    for action in actions.iter().filter(|a| !a.keys.is_empty()) {
+    let mut claimed: Vec<String> = Vec::new();
+    for action in actions.iter().filter(moved) {
         for &pad in &action.pad {
-            let keys: Vec<String> = action
-                .keys
-                .iter()
-                .filter(|k| !taken.contains(k))
-                .take(3)
-                .cloned()
-                .collect();
-            if keys.is_empty() || wanted.iter().any(|(p, _)| *p == pad) {
-                continue;
+            for key in &action.keys {
+                if claimed.contains(key) || kept.contains(key) {
+                    continue;
+                }
+                let index = match wanted.iter().position(|(p, _)| *p == pad) {
+                    Some(index) => index,
+                    None => {
+                        wanted.push((pad, Vec::new()));
+                        wanted.len() - 1
+                    }
+                };
+                if wanted[index].1.len() < 3 {
+                    wanted[index].1.push(key.clone());
+                    claimed.push(key.clone());
+                }
             }
-            taken.extend(keys.iter().cloned());
-            wanted.push((pad, keys));
         }
     }
     let mut result = changes.clone();
     for action in PadAction::ALL {
-        if wanted.iter().any(|(p, _)| *p == action) {
-            continue;
-        }
         let current = Controls::sources(action, changes);
-        let kept: Vec<String> = current
+        let mut next: Vec<String> = wanted
             .iter()
-            .filter(|s| !taken.contains(s))
-            .cloned()
-            .collect();
-        if kept.len() != current.len() {
-            result.insert(action.name().to_string(), kept);
+            .find(|(p, _)| *p == action)
+            .map(|(_, keys)| keys.clone())
+            .unwrap_or_default();
+        next.extend(current.iter().filter(|s| !claimed.contains(s)).cloned());
+        if next != current {
+            result.insert(action.name().to_string(), next);
         }
-    }
-    for (pad, keys) in &wanted {
-        result.insert(pad.name().to_string(), keys.clone());
     }
     result.retain(|name, value| {
         PadAction::from_name(name).is_some_and(|a| Controls::default_sources(a) != value.as_slice())
     });
     (result, wanted.len())
+}
+
+/// Enhanced Input mapping contexts as actions: one per Input Action, named without its `IA_` and
+/// device prefixes, so a gamepad context's `IA_Gamepad_Interact` and a keyboard one's
+/// `IA_Interact` meet. Contexts of other platforms and of tests are left out.
+fn actions_from_contexts(contexts: &[iostore::MappingContext]) -> Vec<GameAction> {
+    const LEFT_OUT: [&str; 5] = ["switch", "joycon", "test", "debug", "cheat"];
+    let mut actions: Vec<GameAction> = Vec::new();
+    for context in contexts {
+        let lower = context.name.to_ascii_lowercase();
+        if LEFT_OUT.iter().any(|word| lower.contains(word)) {
+            continue;
+        }
+        for (asset, key) in &context.mappings {
+            let pad = pad_button(key)
+                .map(|p| vec![p])
+                .or_else(|| pad_stick(key))
+                .unwrap_or_default();
+            let source = launcher_source(key);
+            if pad.is_empty() && source.is_none() {
+                continue;
+            }
+            let name = action_name(asset);
+            let index = match actions.iter().position(|a| a.name == name) {
+                Some(index) => index,
+                None => {
+                    actions.push(GameAction {
+                        name,
+                        pad: Vec::new(),
+                        keys: Vec::new(),
+                    });
+                    actions.len() - 1
+                }
+            };
+            let action = &mut actions[index];
+            for p in pad {
+                if !action.pad.contains(&p) {
+                    action.pad.push(p);
+                }
+            }
+            if let Some(source) = source
+                && !action.keys.contains(&source)
+            {
+                action.keys.push(source);
+            }
+        }
+    }
+    actions
+}
+
+/// `IA_Gamepad_MeleeAttack` → `MeleeAttack`, `IA_OpenUI_WorldMap` → `WorldMap`.
+fn action_name(asset: &str) -> String {
+    let mut name = asset.strip_prefix("IA_").unwrap_or(asset);
+    for prefix in ["Gamepad_", "KBM_", "Keyboard_", "Mouse_", "PC_", "OpenUI_"] {
+        name = name.strip_prefix(prefix).unwrap_or(name);
+    }
+    name.to_string()
+}
+
+/// The stick directions of an Enhanced Input 2D or 1D stick key.
+fn pad_stick(key: &str) -> Option<Vec<PadAction>> {
+    use PadAction::*;
+    match key {
+        "Gamepad_Left2D" => Some(vec![
+            LeftStickUp,
+            LeftStickDown,
+            LeftStickLeft,
+            LeftStickRight,
+        ]),
+        "Gamepad_Right2D" => Some(vec![
+            RightStickUp,
+            RightStickDown,
+            RightStickLeft,
+            RightStickRight,
+        ]),
+        _ => pad_axis(key).map(|(positive, negative)| vec![positive, negative]),
+    }
 }
 
 #[cfg(test)]
@@ -717,20 +851,30 @@ mod tests {
         let actions = parse_input_ini(INI);
         let (layout, count) = game_layout(&actions, &Changes::new());
         assert_eq!(count, 8);
+        // The game's keys come first; the button keeps the rest of its own.
         assert_eq!(
             Controls::sources(PadAction::Cross, &layout),
-            vec!["KEY:Space".to_string()]
+            vec![
+                "KEY:Space".to_string(),
+                "KEY:K".to_string(),
+                "KEY:Return".to_string()
+            ]
         );
         assert_eq!(
             Controls::sources(PadAction::Square, &layout),
-            vec!["KEY:E".to_string()]
+            vec!["KEY:E".to_string(), "KEY:J".to_string()],
+            "the left mouse button went to R2"
         );
         assert_eq!(
             Controls::sources(PadAction::R2, &layout),
-            vec!["MOUSE:Left".to_string()]
+            vec![
+                "MOUSE:Left".to_string(),
+                "KEY:O".to_string(),
+                "MOUSE:Right".to_string()
+            ]
         );
-        // E was R1's default key: it is gone there now. Space left Cross's old keys.
-        assert!(!Controls::sources(PadAction::R1, &layout).contains(&"KEY:E".to_string()));
+        // E was R1's default key: it is gone there now.
+        assert!(Controls::sources(PadAction::R1, &layout).is_empty());
         // Untouched buttons keep their defaults (Triangle: I).
         assert_eq!(
             Controls::sources(PadAction::Triangle, &layout),
@@ -743,6 +887,105 @@ mod tests {
                 assert!(seen.insert(source.clone()), "{source} twice");
             }
         }
+    }
+
+    #[test]
+    fn walking_keys_and_2d_axes_stay_put() {
+        let actions = vec![
+            // A menu on S, as some PC layouts have it, must not take S from walking.
+            GameAction {
+                name: "Wheel".into(),
+                pad: vec![PadAction::Options],
+                keys: vec!["KEY:S".into(), "KEY:K".into()],
+            },
+            // A 2D dodge on the right stick: its keys cannot be told apart by direction.
+            GameAction {
+                name: "Dodge".into(),
+                pad: vec![
+                    PadAction::RightStickUp,
+                    PadAction::RightStickDown,
+                    PadAction::RightStickLeft,
+                    PadAction::RightStickRight,
+                ],
+                keys: vec!["KEY:R".into()],
+            },
+        ];
+        let (layout, count) = game_layout(&actions, &Changes::new());
+        assert_eq!(count, 1);
+        assert_eq!(
+            Controls::sources(PadAction::Options, &layout),
+            vec!["KEY:K".to_string(), "KEY:Escape".to_string()]
+        );
+        assert_eq!(
+            Controls::sources(PadAction::LeftStickDown, &layout),
+            vec!["KEY:S".to_string()]
+        );
+        assert_eq!(
+            Controls::sources(PadAction::RightStickUp, &layout),
+            vec!["KEY:T".to_string()]
+        );
+        assert_eq!(
+            Controls::sources(PadAction::Cross, &layout),
+            vec!["KEY:Space".to_string(), "KEY:Return".to_string()],
+            "K moved to Options"
+        );
+    }
+
+    #[test]
+    fn mapping_contexts_pair_through_the_input_action() {
+        let context = |name: &str, mappings: &[(&str, &str)]| iostore::MappingContext {
+            name: name.into(),
+            package: format!("Game/Input/{name}.uasset"),
+            mappings: mappings
+                .iter()
+                .map(|(a, k)| ((*a).to_string(), (*k).to_string()))
+                .collect(),
+        };
+        let contexts = [
+            context(
+                "IMC_DefaultGamepad",
+                &[
+                    ("IA_Jump", "Gamepad_FaceButton_Bottom"),
+                    ("IA_Gamepad_Move", "Gamepad_Left2D"),
+                    ("IA_OpenUI_WorldMap", "Gamepad_Special_Left"),
+                    ("IA_Gamepad_Interact", "Gamepad_FaceButton_Bottom"),
+                ],
+            ),
+            context(
+                "IMC_DefaultKBM",
+                &[
+                    ("IA_Jump", "SpaceBar"),
+                    ("IA_OpenUI_WorldMap", "M"),
+                    ("IA_KBM_Interact", "F"),
+                ],
+            ),
+            context(
+                "IMC_SwitchGamepad",
+                &[("IA_Jump", "Gamepad_FaceButton_Right")],
+            ),
+        ];
+        let actions = actions_from_contexts(&contexts);
+        let find = |name: &str| actions.iter().find(|a| a.name == name).unwrap();
+        assert_eq!(
+            find("Jump").pad,
+            vec![PadAction::Cross],
+            "Switch is left out"
+        );
+        assert_eq!(find("Jump").keys, vec!["KEY:Space".to_string()]);
+        assert_eq!(find("WorldMap").pad, vec![PadAction::TouchLeft]);
+        assert_eq!(find("WorldMap").keys, vec!["KEY:M".to_string()]);
+        assert_eq!(find("Interact").keys, vec!["KEY:F".to_string()]);
+        assert_eq!(find("Move").pad.len(), 4);
+        let (layout, _) = game_layout(&actions, &Changes::new());
+        assert_eq!(
+            Controls::sources(PadAction::Cross, &layout),
+            vec![
+                "KEY:Space".to_string(),
+                "KEY:F".to_string(),
+                "KEY:K".to_string(),
+                "KEY:Return".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -887,6 +1130,22 @@ mod tests {
     #[ignore = "needs a real dump"]
     fn real_dump() {
         let dump = std::env::var_os("ANYPS5_TEST_DUMP").expect("ANYPS5_TEST_DUMP");
-        println!("{:?}", read_game_input(Path::new(&dump)));
+        let input = read_game_input(Path::new(&dump));
+        let GameInput::Bindings { actions, source } = &input else {
+            panic!("{input:?}");
+        };
+        println!("{}", source.display());
+        for action in actions {
+            println!("{:<28} {:?} {:?}", action.name, action.pad, action.keys);
+        }
+        let (layout, count) = game_layout(actions, &Changes::new());
+        println!("{count} buttons");
+        for action in PadAction::ALL {
+            println!(
+                "{:<16} {:?}",
+                action.name(),
+                Controls::sources(action, &layout)
+            );
+        }
     }
 }

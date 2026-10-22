@@ -5,16 +5,22 @@
 //! Capture: choosing a row sets `shell.input.capture_keys`; the next key press (physical position,
 //! like SDL scancodes) replaces the row's keyboard keys, keeps its mouse sources and is taken away
 //! from every other action. Esc cancels. Modifier keys count when pressed.
+//!
+//! Layout (docs/DESIGN.md 5.17): a choice above the keys swaps the whole layout at once, the
+//! launcher's, a mouse-and-keyboard one, or the PC keys the game's own files name. Rows of a game
+//! whose files name its actions show them under the button ("Jump").
 
-use anyps5_core::controls::{Controls, PadAction};
+use anyps5_core::controls::{Changes, Controls, PadAction, Preset};
+use anyps5_core::gamefiles::{GameAction, GameInput, game_layout};
 use anyps5_core::settings::GameSettings;
 use egui::{Color32, Context, Key as EKey};
 
 use crate::screens::rows::{self, Change, Row};
 use crate::screens::side::{self, Output, SideState, SideView};
+use crate::screens::strings::Extra;
 use crate::ui::Shell;
 use crate::ui::components::PadGlyph;
-use crate::ui::i18n::{Key, Language};
+use crate::ui::i18n::{Arg, Key, Language};
 use crate::ui::icons::Icon;
 use crate::ui::input::InputEvent;
 use crate::ui::sound::Cue;
@@ -34,6 +40,8 @@ pub struct ControlsData<'a> {
     pub settings: &'a mut GameSettings,
     pub language: Language,
     pub accent: Color32,
+    /// What the game's files say about its controls; `None` while they are being read.
+    pub game_input: Option<&'a GameInput>,
 }
 
 /// State of the controls panel.
@@ -44,7 +52,7 @@ pub struct ControlsPanel {
 }
 
 impl ControlsPanel {
-    /// Opens on the first key row (the hint above it is not focusable).
+    /// Opens on the layout row (the hint above it is not focusable).
     pub fn open(&mut self) {
         self.side.open_at(1);
         self.capturing = None;
@@ -100,7 +108,12 @@ impl ControlsPanel {
         if self.side.is_open() {
             self.handle_events(shell, events, data, &mut out);
         }
-        let mut rows = build_rows(data.settings, data.language, self.capturing);
+        let mut rows = build_rows(
+            data.settings,
+            data.language,
+            self.capturing,
+            data.game_input,
+        );
         let view = SideView {
             title: data.title,
             subtitle: Some(data.language.text(Key::Controls)),
@@ -164,7 +177,7 @@ impl ControlsPanel {
                 }
                 (InputEvent::Command(_), Some(_)) => {}
                 (InputEvent::Command(command), None) => {
-                    let rows = build_rows(data.settings, data.language, None);
+                    let rows = build_rows(data.settings, data.language, None, data.game_input);
                     let driven = rows::drive(shell, &mut self.side.nav, &rows, &[*command]);
                     for change in &driven.changes {
                         self.apply(shell, data, change, out);
@@ -197,20 +210,136 @@ impl ControlsPanel {
             Change::Run { row: "reset" } if data.settings.controls.take().is_some() => {
                 out.changed = true;
             }
+            Change::Choice {
+                row: "layout",
+                index,
+            } => {
+                let next = match layouts(data.game_input).get(*index) {
+                    Some(Layout::Preset(preset)) => preset.changes(),
+                    Some(Layout::Game(actions)) => game_layout(actions, &Changes::new()).0,
+                    None => return,
+                };
+                data.settings.controls = (!next.is_empty()).then_some(next);
+                out.changed = true;
+            }
             _ => {}
         }
     }
 }
 
-/// The rows: the hint, one per pad action, reset.
+/// A layout the layout row offers.
+enum Layout<'a> {
+    Preset(Preset),
+    /// The PC keys the game's files name.
+    Game(&'a [GameAction]),
+}
+
+/// The layouts in the order of the choice: the presets, then the game's own when its files name
+/// PC keys for at least one button.
+fn layouts(game: Option<&GameInput>) -> Vec<Layout<'_>> {
+    let mut layouts: Vec<Layout> = Preset::ALL.into_iter().map(Layout::Preset).collect();
+    if let Some(actions) = game_actions(game)
+        && game_layout(actions, &Changes::new()).1 > 0
+    {
+        layouts.push(Layout::Game(actions));
+    }
+    layouts
+}
+
+fn game_actions(game: Option<&GameInput>) -> Option<&[GameAction]> {
+    match game {
+        Some(GameInput::Bindings { actions, .. }) => Some(actions),
+        _ => None,
+    }
+}
+
+/// The layout row: the layout the changes are, or "Custom" (an extra, last option) after the
+/// user moved keys.
+fn layout_row(changes: &Changes, language: Language, game: Option<&GameInput>) -> Row {
+    let layouts = layouts(game);
+    let mut options: Vec<String> = layouts
+        .iter()
+        .map(|layout| {
+            match layout {
+                Layout::Preset(Preset::Classic) => Extra::LayoutLauncher,
+                Layout::Preset(Preset::MouseAndKeyboard) => Extra::LayoutMouse,
+                Layout::Game(_) => Extra::LayoutGame,
+            }
+            .text(language)
+            .to_string()
+        })
+        .collect();
+    let selected = layouts.iter().position(|layout| match layout {
+        Layout::Preset(preset) => preset.changes() == *changes,
+        Layout::Game(actions) => game_layout(actions, &Changes::new()).0 == *changes,
+    });
+    let selected = selected.unwrap_or_else(|| {
+        options.push(Extra::LayoutCustom.text(language).to_string());
+        options.len() - 1
+    });
+    let mut row =
+        Row::choice("layout", Extra::Layout.text(language), options, selected).icon(Icon::KEYBOARD);
+    if let Some(actions) = game_actions(game) {
+        let count = game_layout(actions, &Changes::new()).1;
+        if count > 0 {
+            row = row.detail(Extra::LayoutGameDetail.format(language, &[Arg::Int(count as i64)]));
+        }
+    }
+    row
+}
+
+/// What the game calls a button: the names of its actions on it, words split ("MoveForward" →
+/// "Move Forward"), the minus half of an axis marked "−". `None` when the files say nothing.
+fn game_names(actions: &[GameAction], button: PadAction) -> Option<String> {
+    let mut names: Vec<String> = Vec::new();
+    for action in actions.iter().filter(|a| a.pad.contains(&button)) {
+        let (base, sign) = match action.name.rsplit_once(' ') {
+            Some((base, "+")) => (base, ""),
+            Some((base, "-")) => (base, " −"),
+            _ => (action.name.as_str(), ""),
+        };
+        let name = format!("{}{sign}", words(base));
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    (!names.is_empty()).then(|| names.into_iter().take(3).collect::<Vec<_>>().join(", "))
+}
+
+/// `MoveForward` → `Move Forward`, `Use_Item` → `Use Item`, `Artifact1` → `Artifact 1`.
+fn words(name: &str) -> String {
+    let mut out = String::new();
+    let mut previous: Option<char> = None;
+    for c in name.chars() {
+        if c == '_' {
+            out.push(' ');
+        } else {
+            let starts_word = (c.is_ascii_uppercase()
+                && previous.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit()))
+                || (c.is_ascii_digit() && previous.is_some_and(|p| p.is_ascii_alphabetic()));
+            if starts_word {
+                out.push(' ');
+            }
+            out.push(c);
+        }
+        previous = Some(c);
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The rows: the hint, the layout, one per pad action, reset.
 pub fn build_rows(
     settings: &GameSettings,
     language: Language,
     capturing: Option<PadAction>,
+    game: Option<&GameInput>,
 ) -> Vec<Row> {
     let changes = settings.controls.clone().unwrap_or_default();
-    let mut rows = vec![Row::info("hint", language.text(Key::ControlsHint), None)];
-    for action in PadAction::ALL {
+    let mut rows = vec![
+        Row::info("hint", language.text(Key::ControlsHint), None),
+        layout_row(&changes, language, game),
+    ];
+    for (index, action) in PadAction::ALL.into_iter().enumerate() {
         let mut row = Row::keys(
             action.name(),
             action_title(action, language),
@@ -222,6 +351,12 @@ pub fn build_rows(
             Some(glyph) => row.pad_glyph(glyph),
             None => row.icon(action_icon(action)),
         };
+        if let Some(names) = game_actions(game).and_then(|a| game_names(a, action)) {
+            row = row.detail(names);
+        }
+        if index == 0 {
+            row = row.group_start();
+        }
         rows.push(row);
     }
     rows.push(
@@ -475,10 +610,15 @@ mod tests {
     #[test]
     fn the_default_layout_shows_in_the_rows() {
         let settings = GameSettings::default();
-        let rows = build_rows(&settings, Language::English, None);
-        assert_eq!(rows.len(), 1 + 26 + 1, "hint, 26 actions, reset");
+        let rows = build_rows(&settings, Language::English, None, None);
+        assert_eq!(
+            rows.len(),
+            1 + 1 + 26 + 1,
+            "hint, layout, 26 actions, reset"
+        );
         assert_eq!(rows[0].id, "hint");
-        let cross = &rows[1];
+        assert_eq!(rows[1].id, "layout");
+        let cross = &rows[2];
         assert_eq!(cross.id, "Cross");
         let rows::Control::Keys { sources, capturing } = &cross.control else {
             panic!("keys row");
@@ -494,7 +634,7 @@ mod tests {
         // Square has J and the left mouse button; give it K (Cross's key).
         let next = Controls::assign("KEY:K", PadAction::Square, &Default::default());
         settings.controls = Some(next);
-        let rows = build_rows(&settings, Language::English, Some(PadAction::Square));
+        let rows = build_rows(&settings, Language::English, Some(PadAction::Square), None);
         let square = rows.iter().find(|r| r.id == "Square").unwrap();
         let rows::Control::Keys { sources, capturing } = &square.control else {
             panic!("keys row");
@@ -510,6 +650,63 @@ mod tests {
             &["KEY:Space", "KEY:Return"],
             "K was taken from Cross"
         );
+    }
+
+    #[test]
+    fn the_game_names_its_buttons() {
+        use anyps5_core::gamefiles::parse_input_ini;
+        assert_eq!(words("MoveForward"), "Move Forward");
+        assert_eq!(words("Track_Quest"), "Track Quest");
+        assert_eq!(words("Artifact1"), "Artifact 1");
+        assert_eq!(words("OpenUI"), "Open UI");
+        let ini = "+ActionMappings=(ActionName=\"Jump\",Key=SpaceBar)
+                   +ActionMappings=(ActionName=\"Jump\",Key=Gamepad_FaceButton_Bottom)
+                   +AxisMappings=(AxisName=\"MoveForward\",Scale=1.0,Key=Gamepad_LeftY)
+";
+        let input = GameInput::Bindings {
+            actions: parse_input_ini(ini),
+            source: Default::default(),
+        };
+        let rows = build_rows(
+            &GameSettings::default(),
+            Language::English,
+            None,
+            Some(&input),
+        );
+        let detail = |id: &str| rows.iter().find(|r| r.id == id).unwrap().detail.clone();
+        assert_eq!(detail("Cross").as_deref(), Some("Jump"));
+        assert_eq!(detail("LeftStickUp").as_deref(), Some("Move Forward"));
+        assert_eq!(detail("LeftStickDown").as_deref(), Some("Move Forward −"));
+        assert_eq!(detail("Circle"), None);
+        let rows::Control::Choice { options, selected } = &rows[1].control else {
+            panic!("layout row");
+        };
+        assert_eq!(
+            options,
+            &["Launcher", "Mouse and Keyboard", "From the Game"]
+        );
+        assert_eq!(*selected, 0);
+        // The game's layout picked: the row says so; one key moved by hand: Custom.
+        let mut settings = GameSettings {
+            controls: Some(game_layout(game_actions(Some(&input)).unwrap(), &Changes::new()).0),
+            ..Default::default()
+        };
+        let rows = build_rows(&settings, Language::English, None, Some(&input));
+        let rows::Control::Choice { selected, .. } = &rows[1].control else {
+            panic!("layout row");
+        };
+        assert_eq!(*selected, 2);
+        let moved = Controls::assign(
+            "KEY:Z",
+            PadAction::Triangle,
+            settings.controls.as_ref().unwrap(),
+        );
+        settings.controls = Some(moved);
+        let rows = build_rows(&settings, Language::English, None, Some(&input));
+        let rows::Control::Choice { options, selected } = &rows[1].control else {
+            panic!("layout row");
+        };
+        assert_eq!(options[*selected], "Custom");
     }
 
     #[test]

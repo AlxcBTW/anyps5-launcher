@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use anyps5_core::diagnosis::{self, Diagnosis};
+use anyps5_core::gamefiles::GameInput;
 use anyps5_core::library::Game;
 use anyps5_core::paths::{AppPaths, GameId};
 use anyps5_core::report::{self, ReportInput, SystemInfo};
@@ -68,6 +69,11 @@ enum Work {
         game: GameId,
         result: Result<(), String>,
     },
+    /// What a game's files say about its controls.
+    GameInput {
+        game: GameId,
+        input: GameInput,
+    },
 }
 
 pub struct PanelHost {
@@ -89,6 +95,8 @@ pub struct PanelHost {
     log_diagnosis: Option<Diagnosis>,
     /// Resolutions of a title's patch by title id (reading the patch file once per title).
     resolutions: HashMap<String, Vec<String>>,
+    /// The controls the game's files name, by game; `None` while they are being read.
+    game_inputs: HashMap<GameId, Option<GameInput>>,
     work_tx: Sender<Work>,
     work_rx: Receiver<Work>,
     ctx: Context,
@@ -115,6 +123,7 @@ impl PanelHost {
             log_text: String::new(),
             log_diagnosis: None,
             resolutions: HashMap::new(),
+            game_inputs: HashMap::new(),
             work_tx,
             work_rx,
             ctx: ctx.clone(),
@@ -357,12 +366,24 @@ impl PanelHost {
             }
             return;
         };
+        if !self.game_inputs.contains_key(&game.id) {
+            // Read once per game and run, off the frame: a pak index can take a moment.
+            self.game_inputs.insert(game.id.clone(), None);
+            let (tx, ctx) = (self.work_tx.clone(), self.ctx.clone());
+            let (id, folder) = (game.id.clone(), game.folder.clone());
+            spawn("game-input", move || {
+                let input = anyps5_core::gamefiles::read_game_input(&folder);
+                let _ = tx.send(Work::GameInput { game: id, input });
+                ctx.request_repaint();
+            });
+        }
         let mut settings = cx.model.prefs.game_settings(&game.id);
         let mut data = ControlsData {
             title: &game.name,
             settings: &mut settings,
             language: cx.model.language(),
             accent: cx.shell.accent_color(),
+            game_input: self.game_inputs.get(&game.id).and_then(Option::as_ref),
         };
         let out = self.controls.show(cx.shell, cx.ctx, &events, &mut data);
         if out.changed {
@@ -625,6 +646,9 @@ impl PanelHost {
                 Work::Report(Err(error)) => {
                     tracing::warn!("cannot write the report: {error}");
                     model.toast(language.text(Key::ReportFailed), Icon::WARNING);
+                }
+                Work::GameInput { game, input } => {
+                    self.game_inputs.insert(game, Some(input));
                 }
                 Work::Uninstalled { game, result } => match result {
                     Ok(()) => {

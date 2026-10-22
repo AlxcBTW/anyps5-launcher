@@ -48,6 +48,16 @@ pub enum Extra {
     EmptyLog,
     /// The button of the removal confirmation (its title already says what is removed).
     Remove,
+    /// Controls row: the keyboard layout and its choices.
+    Layout,
+    LayoutLauncher,
+    LayoutMouse,
+    /// The PC keys the game's own files name.
+    LayoutGame,
+    /// The layout after the user moved keys.
+    LayoutCustom,
+    /// `%@` = how many buttons the game's files give a PC key.
+    LayoutGameDetail,
 }
 
 impl Extra {
@@ -96,6 +106,12 @@ impl Extra {
             Extra::ToolkitFolderInvalid => {
                 "This folder is not a toolkit. Pick the folder that holds relinker.exe and libs."
             }
+            Extra::Layout => "Layout",
+            Extra::LayoutLauncher => "Launcher",
+            Extra::LayoutMouse => "Mouse and Keyboard",
+            Extra::LayoutGame => "From the Game",
+            Extra::LayoutCustom => "Custom",
+            Extra::LayoutGameDetail => "Found the game's own PC keys for %@ buttons.",
         }
     }
 
@@ -142,6 +158,12 @@ impl Extra {
             Extra::ToolkitFolderInvalid => {
                 "Bu klasör bir araç seti değil. relinker.exe ve libs içeren klasörü seç."
             }
+            Extra::Layout => "Düzen",
+            Extra::LayoutLauncher => "Başlatıcı",
+            Extra::LayoutMouse => "Fare ve klavye",
+            Extra::LayoutGame => "Oyundan",
+            Extra::LayoutCustom => "Özel",
+            Extra::LayoutGameDetail => "Oyunun kendi PC tuşları %@ düğme için bulundu.",
         }
     }
 
@@ -156,7 +178,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 31] = [
+    pub const ALL: [Extra; 37] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -188,6 +210,12 @@ impl Extra {
         Extra::DiscordPresenceDetail,
         Extra::EmptyLog,
         Extra::Remove,
+        Extra::Layout,
+        Extra::LayoutLauncher,
+        Extra::LayoutMouse,
+        Extra::LayoutGame,
+        Extra::LayoutCustom,
+        Extra::LayoutGameDetail,
     ];
 }
 

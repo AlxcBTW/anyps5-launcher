@@ -43,6 +43,7 @@ use crate::ui::icons::Icon;
 use crate::ui::input::InputEvent;
 use crate::ui::text;
 use crate::ui::theme::{color, size, ty, white};
+use anyps5_core::gamefiles::{GameInput, parse_input_ini};
 
 /// The page to show.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -286,6 +287,8 @@ pub struct ScreenGallery {
     game_panel: GameSettingsPanel,
     uninstall: UninstallPanel,
     controls: ControlsPanel,
+    /// A game whose files name its controls, for the controls page.
+    game_input: GameInput,
     advanced: AdvancedPanel,
     trophies: TrophyListPanel,
     library: LibraryGrid,
@@ -313,6 +316,7 @@ impl ScreenGallery {
             game_panel: GameSettingsPanel::default(),
             uninstall: UninstallPanel::default(),
             controls: ControlsPanel::default(),
+            game_input: sample_game_input(),
             advanced: AdvancedPanel::default(),
             trophies: TrophyListPanel::default(),
             library: LibraryGrid::default(),
@@ -419,6 +423,7 @@ impl ScreenGallery {
                 settings: &mut self.game_settings,
                 language,
                 accent,
+                game_input: Some(&self.game_input),
             };
             self.controls.show(shell, &ctx, &events, &mut data);
         }
@@ -713,3 +718,35 @@ const SAMPLE_LOG: &str = "[anyps5-launcher] start 2026-10-22T09:30:00Z PPSA90001
 [engine] sceNpTrophy2: 8 trophies registered
 [engine] unhandled exception 0xC0000005 at 0x00007FF6A1B2C3D4
 The game crashed (0xC0000005 (ACCESS_VIOLATION)).";
+
+/// The bindings an Unreal game's `DefaultInput.ini` might hold.
+fn sample_game_input() -> GameInput {
+    let ini = r#"
++ActionMappings=(ActionName="Jump",Key=SpaceBar)
++ActionMappings=(ActionName="Jump",Key=Gamepad_FaceButton_Bottom)
++ActionMappings=(ActionName="Dodge",Key=LeftAlt)
++ActionMappings=(ActionName="Dodge",Key=Gamepad_FaceButton_Right)
++ActionMappings=(ActionName="Interact",Key=E)
++ActionMappings=(ActionName="Interact",Key=Gamepad_FaceButton_Left)
++ActionMappings=(ActionName="UsePotion",Key=Q)
++ActionMappings=(ActionName="UsePotion",Key=Gamepad_FaceButton_Top)
++ActionMappings=(ActionName="MeleeAttack",Key=LeftMouseButton)
++ActionMappings=(ActionName="MeleeAttack",Key=Gamepad_RightShoulder)
++ActionMappings=(ActionName="RangedAttack",Key=RightMouseButton)
++ActionMappings=(ActionName="RangedAttack",Key=Gamepad_RightTrigger)
++ActionMappings=(ActionName="Map",Key=M)
++ActionMappings=(ActionName="Map",Key=Gamepad_Special_Left)
++ActionMappings=(ActionName="Pause",Key=Escape)
++ActionMappings=(ActionName="Pause",Key=Gamepad_Special_Right)
++AxisMappings=(AxisName="MoveForward",Scale=1.0,Key=W)
++AxisMappings=(AxisName="MoveForward",Scale=-1.0,Key=S)
++AxisMappings=(AxisName="MoveForward",Scale=1.0,Key=Gamepad_LeftY)
++AxisMappings=(AxisName="MoveRight",Scale=1.0,Key=D)
++AxisMappings=(AxisName="MoveRight",Scale=-1.0,Key=A)
++AxisMappings=(AxisName="MoveRight",Scale=1.0,Key=Gamepad_LeftX)
+"#;
+    GameInput::Bindings {
+        actions: parse_input_ini(ini),
+        source: std::path::PathBuf::from("pakchunk0-ps5.pak"),
+    }
+}
