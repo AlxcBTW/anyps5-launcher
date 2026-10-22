@@ -497,7 +497,7 @@ pub mod size {
     pub const TILE_SMALL: f32 = 118.0;
     pub const TILE_LARGE: f32 = 176.0;
     pub const TILE_GAP: f32 = 16.0;
-    pub const TILE_LABEL_COLUMN: f32 = 0.0;
+    pub const TILE_LABEL_COLUMN: f32 = 10.0;
     pub const LIBRARY_TILE: f32 = 196.0;
     pub const SPLASH_TILE: f32 = 200.0;
     pub const ONBOARDING_TILE: f32 = 84.0;
@@ -542,7 +542,7 @@ pub mod size {
     pub const THEME_CARD_WIDTH: f32 = 330.0;
     pub const THEME_CARD_PREVIEW: (f32, f32) = (330.0, 186.0);
     pub const PROGRESS_HEIGHT: f32 = 4.0;
-    pub const HERO_PROGRESS_WIDTH: f32 = 340.0;
+    pub const HERO_PROGRESS_WIDTH: f32 = 260.0;
     pub const TOAST_TOP: f32 = 28.0;
     pub const HINT_BAR_GAP: f32 = 28.0;
     pub const HINT_GAP: f32 = 8.0;

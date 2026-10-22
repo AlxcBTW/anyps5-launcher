@@ -145,7 +145,7 @@ fn draw(ui: &mut Ui, data: &StartData<'_>, since: f64) {
         ty::DETAIL_LARGE,
         language.text(Key::StartingText),
         white(0.6),
-        column_w,
+        column_w + 80.0,
         usize::MAX,
     );
     let status_h = ty::CHOICE_VALUE.line_height();
