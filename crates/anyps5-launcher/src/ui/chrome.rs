@@ -1017,6 +1017,9 @@ pub fn side_panel<R>(
         .fixed_pos(screen.min)
         .interactable(true)
         .show(ctx, |ui| {
+            // The area covers the screen, so egui finds it under the pointer: the list scrolls
+            // with the wheel and nothing behind the scrim reacts.
+            ui.expand_to_include_rect(screen);
             let painter = ui.painter().clone();
             // Scrim over the rest of the screen.
             let scrim = Rect::from_min_max(screen.min, pos2(panel.min.x, screen.max.y));
@@ -1109,6 +1112,8 @@ pub fn fullscreen_panel<R>(
         .fixed_pos(screen.min)
         .interactable(true)
         .show(ctx, |ui| {
+            // Covers the screen so the panel's lists get the wheel (see the side panel).
+            ui.expand_to_include_rect(screen);
             let painter = ui.painter().clone();
             let faded = GlassStyle {
                 black: style.black * v.clamp(0.0, 1.0),

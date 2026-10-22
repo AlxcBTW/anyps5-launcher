@@ -299,7 +299,7 @@ impl LauncherApp {
             }
             InputEvent::ToggleFullscreen => {
                 let fullscreen = ctx.input(|i| i.viewport().fullscreen).unwrap_or(false);
-                ctx.send_viewport_cmd(ViewportCommand::Fullscreen(!fullscreen));
+                self.set_fullscreen(ctx, !fullscreen);
             }
             InputEvent::CapturedKey {
                 key,
@@ -435,11 +435,22 @@ impl LauncherApp {
             ctx: &ctx,
         };
         self.panels.frame(&mut cx);
-        crate::ui::caption::show(&ctx);
+        if let Some(fullscreen) = crate::ui::caption::show(&ctx) {
+            self.set_fullscreen(&ctx, fullscreen);
+        }
         crate::ui::intro::paint_curtain(&ctx);
         self.run_effects(&ctx);
         self.save_preferences();
         self.schedule_repaints(&ctx);
+    }
+
+    /// Switches between filling the screen and a maximised window, and remembers the choice.
+    fn set_fullscreen(&mut self, ctx: &Context, fullscreen: bool) {
+        ctx.send_viewport_cmd(ViewportCommand::Fullscreen(fullscreen));
+        if !fullscreen {
+            ctx.send_viewport_cmd(ViewportCommand::Maximized(true));
+        }
+        self.model.edit_prefs(|p| p.fullscreen = fullscreen);
     }
 
     /// The launch splash (the panels module's `StartScreen`) follows the model's `starting`.
@@ -604,6 +615,10 @@ impl LauncherApp {
 
 /// Runs the launcher.
 pub fn run() -> eframe::Result {
+    // Read before the window exists: it opens filling its screen unless the player chose a window.
+    let fullscreen = AppPaths::from_env()
+        .map(|paths| Preferences::load(&paths).fullscreen)
+        .unwrap_or(true);
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("AnyPS5")
@@ -625,6 +640,8 @@ pub fn run() -> eframe::Result {
             Ok(Box::new(App {
                 app: LauncherApp::new(cc, Config::from_environment(&cc.egui_ctx)),
                 chrome_applied: false,
+                frames: 0,
+                start_fullscreen: fullscreen,
             }))
         }),
     )
@@ -635,6 +652,10 @@ pub struct App {
     pub app: LauncherApp,
     /// The window frame is styled once, on the first frame (the window exists by then).
     chrome_applied: bool,
+    frames: u32,
+    /// Fill the screen once the window is shown: asked for at creation, while eframe still keeps
+    /// the window hidden, Windows ignores it (and egui would believe it took).
+    start_fullscreen: bool,
 }
 
 impl eframe::App for App {
@@ -644,6 +665,10 @@ impl eframe::App for App {
             window_chrome::apply(frame);
         }
         let ctx = ui.ctx().clone();
+        self.frames = self.frames.saturating_add(1);
+        if self.start_fullscreen && self.frames == 2 {
+            ctx.send_viewport_cmd(ViewportCommand::Fullscreen(true));
+        }
         self.app.step(&ctx);
         self.app.paint(ui);
     }

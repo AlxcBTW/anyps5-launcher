@@ -426,6 +426,9 @@ pub struct Preferences {
     pub discord_presence: bool,
     #[serde(default)]
     pub hide_while_playing: bool,
+    /// The launcher fills its screen, like a console; off, it is a maximised window (F11).
+    #[serde(default = "yes")]
+    pub fullscreen: bool,
     #[serde(default = "default_profile_name")]
     pub profile_name: String,
     /// The games folder; `None` until the player picks one.
@@ -473,6 +476,7 @@ impl Default for Preferences {
             music: true,
             discord_presence: true,
             hide_while_playing: false,
+            fullscreen: true,
             profile_name: default_profile_name(),
             games_folder: None,
             screenshots_folder: None,
@@ -926,6 +930,7 @@ mod tests {
         assert!(prefs.onboarded);
         assert_eq!(prefs.theme, Theme::Sunset);
         assert!(prefs.sounds && prefs.music && prefs.discord_presence && prefs.game_artwork);
+        assert!(prefs.fullscreen);
         assert!(prefs.check_for_updates);
         assert_eq!(prefs.profile_name, "Player");
         assert_eq!(prefs.toolkit_repository, "boykopovar/AnyPS5");
