@@ -79,6 +79,11 @@ impl GameSettingsPanel {
         self.side.open_at(0);
     }
 
+    /// Opens on a row (previews).
+    pub fn open_row(&mut self, row: usize) {
+        self.side.open_at(row);
+    }
+
     /// Opens on the row with this id (coming back from controls or advanced).
     pub fn open_on(&mut self, data: &GameSettingsData<'_>, id: RowId) {
         let rows = build_rows(data);
@@ -117,12 +122,7 @@ impl GameSettingsPanel {
         }
         if self.side.is_open() {
             let rows = build_rows(data);
-            let driven = rows::drive(
-                shell,
-                &mut self.side.nav,
-                &rows,
-                &side::commands(events),
-            );
+            let driven = rows::drive(shell, &mut self.side.nav, &rows, &side::commands(events));
             for change in &driven.changes {
                 self.apply(data, change, &mut out);
             }
@@ -206,7 +206,10 @@ pub fn build_rows(data: &GameSettingsData<'_>) -> Vec<Row> {
             .as_ref()
             .and_then(|r| data.resolutions.iter().position(|c| c == r))
             .map_or(0, |i| i + 1);
-        rows.push(Row::choice("resolution", t(Key::Resolution), options, selected).icon(Icon::FRAME_CORNERS));
+        rows.push(
+            Row::choice("resolution", t(Key::Resolution), options, selected)
+                .icon(Icon::FRAME_CORNERS),
+        );
     }
     rows.push(
         Row::choice(
@@ -256,17 +259,30 @@ pub fn build_rows(data: &GameSettingsData<'_>) -> Vec<Row> {
                 t(Key::OverlayBottomLeft),
                 t(Key::OverlayBottomRight),
             ],
-            Overlay::ALL.iter().position(|o| *o == s.overlay).unwrap_or(0),
+            Overlay::ALL
+                .iter()
+                .position(|o| *o == s.overlay)
+                .unwrap_or(0),
         )
         .icon(Icon::GAUGE),
     );
     let mut languages = vec![t(Key::FollowLauncher)];
-    languages.extend(ConsoleLanguage::ALL.iter().map(|(_, name)| (*name).to_owned()));
+    languages.extend(
+        ConsoleLanguage::ALL
+            .iter()
+            .map(|(_, name)| (*name).to_owned()),
+    );
     let selected = s
         .language
-        .and_then(|n| ConsoleLanguage::ALL.iter().position(|(number, _)| *number == n))
+        .and_then(|n| {
+            ConsoleLanguage::ALL
+                .iter()
+                .position(|(number, _)| *number == n)
+        })
         .map_or(0, |i| i + 1);
-    rows.push(Row::choice("language", t(Key::GameLanguage), languages, selected).icon(Icon::TRANSLATE));
+    rows.push(
+        Row::choice("language", t(Key::GameLanguage), languages, selected).icon(Icon::TRANSLATE),
+    );
     if data.installed {
         rows.push(Row::action("reinstall", t(Key::Reinstall)).icon(Icon::ARROWS_CLOCKWISE));
     }
@@ -292,21 +308,33 @@ pub fn build_rows(data: &GameSettingsData<'_>) -> Vec<Row> {
 pub fn apply_change(settings: &mut GameSettings, change: &Change, resolutions: &[String]) -> bool {
     let before = settings.clone();
     match change {
-        Change::Choice { row: "resolution", index } => {
+        Change::Choice {
+            row: "resolution",
+            index,
+        } => {
             settings.resolution = index
                 .checked_sub(1)
                 .and_then(|i| resolutions.get(i))
                 .cloned();
         }
-        Change::Choice { row: "display", index } => settings.fullscreen = *index == 1,
+        Change::Choice {
+            row: "display",
+            index,
+        } => settings.fullscreen = *index == 1,
         Change::Stepper { row: "size", value } => {
             settings.window_size = (*value).clamp(WINDOW_SIZE.0, WINDOW_SIZE.1) as u32;
         }
         Change::Toggle { row: "vsync", on } => settings.vsync = *on,
-        Change::Choice { row: "overlay", index } => {
+        Change::Choice {
+            row: "overlay",
+            index,
+        } => {
             settings.overlay = Overlay::ALL.get(*index).copied().unwrap_or(Overlay::Off);
         }
-        Change::Choice { row: "language", index } => {
+        Change::Choice {
+            row: "language",
+            index,
+        } => {
             settings.language = index
                 .checked_sub(1)
                 .and_then(|i| ConsoleLanguage::ALL.get(i))
@@ -351,6 +379,17 @@ impl UninstallPanel {
         self.side.is_active()
     }
 
+    fn handle(&mut self, change: &Change, actions: &mut Vec<UninstallAction>) {
+        if let Change::Run { row } = change {
+            self.side.close();
+            actions.push(if *row == "uninstall" {
+                UninstallAction::Confirm
+            } else {
+                UninstallAction::Cancel
+            });
+        }
+    }
+
     pub fn show(
         &mut self,
         shell: &mut Shell,
@@ -371,21 +410,11 @@ impl UninstallPanel {
                 Row::action("cancel", language.text(Key::Cancel)),
             ]
         };
-        let mut handle = |this: &mut Self, change: &Change| {
-            if let Change::Run { row } = change {
-                this.side.close();
-                actions.push(if *row == "uninstall" {
-                    UninstallAction::Confirm
-                } else {
-                    UninstallAction::Cancel
-                });
-            }
-        };
         if self.side.is_open() {
             let rows = build();
             let driven = rows::drive(shell, &mut self.side.nav, &rows, &side::commands(events));
             for change in &driven.changes {
-                handle(self, change);
+                self.handle(change, &mut actions);
             }
             if driven.close {
                 self.side.close();
@@ -407,7 +436,7 @@ impl UninstallPanel {
                 let (changes, _) =
                     rows::apply_mouse(shell, &mut self.side.nav, &rows, drawn.events);
                 for change in &changes {
-                    handle(self, change);
+                    self.handle(change, &mut actions);
                 }
                 if drawn.scrim_clicked {
                     self.side.close();
@@ -448,8 +477,19 @@ mod tests {
         assert_eq!(
             ids(&rows),
             [
-                "display", "size", "vsync", "controls", "advanced", "overlay", "language",
-                "reinstall", "finder", "log", "report", "cache", "uninstall"
+                "display",
+                "size",
+                "vsync",
+                "controls",
+                "advanced",
+                "overlay",
+                "language",
+                "reinstall",
+                "finder",
+                "log",
+                "report",
+                "cache",
+                "uninstall"
             ],
             "no resolution row without a patch, no trophies row without a list"
         );
@@ -471,33 +511,107 @@ mod tests {
         assert_eq!(rows[0].id, "resolution");
         let trophies = rows.iter().find(|r| r.id == "trophies").unwrap();
         assert_eq!(trophies.detail.as_deref(), Some("8/34 · 8%"));
-        assert!(rows.iter().all(|r| r.id != "reinstall" && r.id != "uninstall"));
+        assert!(
+            rows.iter()
+                .all(|r| r.id != "reinstall" && r.id != "uninstall")
+        );
         d.settings.fullscreen = true;
-        assert!(build_rows(&d).iter().all(|r| r.id != "size"), "no size when fullscreen");
+        assert!(
+            build_rows(&d).iter().all(|r| r.id != "size"),
+            "no size when fullscreen"
+        );
     }
 
     #[test]
     fn values_land_in_the_settings() {
         let mut s = GameSettings::default();
         let res = vec!["1920x1080".to_owned()];
-        assert!(apply_change(&mut s, &Change::Choice { row: "display", index: 1 }, &res));
+        assert!(apply_change(
+            &mut s,
+            &Change::Choice {
+                row: "display",
+                index: 1
+            },
+            &res
+        ));
         assert!(s.fullscreen);
-        assert!(apply_change(&mut s, &Change::Stepper { row: "size", value: 55 }, &res));
+        assert!(apply_change(
+            &mut s,
+            &Change::Stepper {
+                row: "size",
+                value: 55
+            },
+            &res
+        ));
         assert_eq!(s.window_size, 55);
-        assert!(apply_change(&mut s, &Change::Toggle { row: "vsync", on: false }, &res));
+        assert!(apply_change(
+            &mut s,
+            &Change::Toggle {
+                row: "vsync",
+                on: false
+            },
+            &res
+        ));
         assert!(!s.vsync);
-        assert!(apply_change(&mut s, &Change::Choice { row: "overlay", index: 2 }, &res));
+        assert!(apply_change(
+            &mut s,
+            &Change::Choice {
+                row: "overlay",
+                index: 2
+            },
+            &res
+        ));
         assert_eq!(s.overlay, Overlay::TopRight);
-        assert!(apply_change(&mut s, &Change::Choice { row: "language", index: 4 }, &res));
+        assert!(apply_change(
+            &mut s,
+            &Change::Choice {
+                row: "language",
+                index: 4
+            },
+            &res
+        ));
         assert_eq!(s.language, Some(4), "Deutsch is console language 4");
-        assert!(apply_change(&mut s, &Change::Choice { row: "language", index: 0 }, &res));
+        assert!(apply_change(
+            &mut s,
+            &Change::Choice {
+                row: "language",
+                index: 0
+            },
+            &res
+        ));
         assert_eq!(s.language, None, "follow the launcher");
-        assert!(apply_change(&mut s, &Change::Choice { row: "resolution", index: 1 }, &res));
+        assert!(apply_change(
+            &mut s,
+            &Change::Choice {
+                row: "resolution",
+                index: 1
+            },
+            &res
+        ));
         assert_eq!(s.resolution.as_deref(), Some("1920x1080"));
-        assert!(apply_change(&mut s, &Change::Choice { row: "resolution", index: 0 }, &res));
+        assert!(apply_change(
+            &mut s,
+            &Change::Choice {
+                row: "resolution",
+                index: 0
+            },
+            &res
+        ));
         assert_eq!(s.resolution, None);
-        assert!(!apply_change(&mut s, &Change::Choice { row: "display", index: 1 }, &res) || s.fullscreen);
-        assert!(!apply_change(&mut s, &Change::Run { row: "log" }, &res), "actions change no value");
+        assert!(
+            !apply_change(
+                &mut s,
+                &Change::Choice {
+                    row: "display",
+                    index: 1
+                },
+                &res
+            ) || s.fullscreen
+        );
+        assert!(
+            !apply_change(&mut s, &Change::Run { row: "log" }, &res),
+            "actions change no value"
+        );
     }
 
     #[test]
@@ -529,7 +643,11 @@ mod tests {
         for language in Language::ALL {
             let mut d = data(&mut s);
             d.language = language;
-            d.trophies = Some(TrophyProgress { unlocked: 1, total: 2, percent: 50 });
+            d.trophies = Some(TrophyProgress {
+                unlocked: 1,
+                total: 2,
+                percent: 50,
+            });
             for row in build_rows(&d) {
                 assert!(!row.title.is_empty());
             }

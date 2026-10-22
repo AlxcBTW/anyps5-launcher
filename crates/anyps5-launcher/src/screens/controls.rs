@@ -50,6 +50,12 @@ impl ControlsPanel {
         self.capturing = None;
     }
 
+    /// Opens on a row (previews).
+    pub fn open_row(&mut self, row: usize) {
+        self.side.open_at(row);
+        self.capturing = None;
+    }
+
     pub fn close(&mut self, shell: &mut Shell) {
         self.end_capture(shell);
         self.side.close();
@@ -133,7 +139,12 @@ impl ControlsPanel {
         for event in events {
             match (event, self.capturing) {
                 // Waiting for a key: the key press binds, Esc and a pad's back cancel.
-                (InputEvent::CapturedKey { key, physical_key, .. }, Some(action)) => {
+                (
+                    InputEvent::CapturedKey {
+                        key, physical_key, ..
+                    },
+                    Some(action),
+                ) => {
                     if *key == EKey::Escape {
                         shell.play(Cue::Back);
                         self.end_capture(shell);
@@ -183,10 +194,8 @@ impl ControlsPanel {
                     self.begin_capture(shell, action);
                 }
             }
-            Change::Run { row: "reset" } => {
-                if data.settings.controls.take().is_some() {
-                    out.changed = true;
-                }
+            Change::Run { row: "reset" } if data.settings.controls.take().is_some() => {
+                out.changed = true;
             }
             _ => {}
         }
@@ -200,11 +209,7 @@ pub fn build_rows(
     capturing: Option<PadAction>,
 ) -> Vec<Row> {
     let changes = settings.controls.clone().unwrap_or_default();
-    let mut rows = vec![Row::info(
-        "hint",
-        language.text(Key::ControlsHint),
-        None,
-    )];
+    let mut rows = vec![Row::info("hint", language.text(Key::ControlsHint), None)];
     for action in PadAction::ALL {
         let mut row = Row::keys(
             action.name(),
@@ -402,15 +407,58 @@ mod tests {
     fn every_capturable_key_is_a_name_the_core_knows() {
         use EKey::*;
         let keys = [
-            A, Z, Num0, Num9, Minus, Equals, OpenBracket, CloseBracket, Backslash, Semicolon,
-            Quote, Backtick, Comma, Period, Slash, Enter, Space, Tab, Backspace, Escape, Insert,
-            Delete, Home, End, PageUp, PageDown, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, F1,
-            F12, ShiftLeft, ShiftRight, ControlLeft, ControlRight, AltLeft, AltRight, SuperLeft,
-            SuperRight, CapsLock, NumLock, ScrollLock, PrintScreen, Menu,
+            A,
+            Z,
+            Num0,
+            Num9,
+            Minus,
+            Equals,
+            OpenBracket,
+            CloseBracket,
+            Backslash,
+            Semicolon,
+            Quote,
+            Backtick,
+            Comma,
+            Period,
+            Slash,
+            Enter,
+            Space,
+            Tab,
+            Backspace,
+            Escape,
+            Insert,
+            Delete,
+            Home,
+            End,
+            PageUp,
+            PageDown,
+            ArrowLeft,
+            ArrowRight,
+            ArrowUp,
+            ArrowDown,
+            F1,
+            F12,
+            ShiftLeft,
+            ShiftRight,
+            ControlLeft,
+            ControlRight,
+            AltLeft,
+            AltRight,
+            SuperLeft,
+            SuperRight,
+            CapsLock,
+            NumLock,
+            ScrollLock,
+            PrintScreen,
+            Menu,
         ];
         for key in keys {
             let name = key_name(key).unwrap_or_else(|| panic!("{key:?} has no name"));
-            assert!(scancode_of(name).is_some(), "{key:?} -> {name} is not a scancode name");
+            assert!(
+                scancode_of(name).is_some(),
+                "{key:?} -> {name} is not a scancode name"
+            );
         }
     }
 
@@ -454,13 +502,19 @@ mod tests {
         let rows::Control::Keys { sources, .. } = &cross.control else {
             panic!("keys row");
         };
-        assert_eq!(sources, &["KEY:Space", "KEY:Return"], "K was taken from Cross");
+        assert_eq!(
+            sources,
+            &["KEY:Space", "KEY:Return"],
+            "K was taken from Cross"
+        );
     }
 
     #[test]
     fn titles_localise_the_directions() {
         assert_eq!(action_title(PadAction::Up, Language::English), "D-pad · Up");
         assert_eq!(action_title(PadAction::Cross, Language::Turkish), "Cross");
-        assert!(action_title(PadAction::LeftStickLeft, Language::English).starts_with("Left Stick"));
+        assert!(
+            action_title(PadAction::LeftStickLeft, Language::English).starts_with("Left Stick")
+        );
     }
 }

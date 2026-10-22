@@ -13,8 +13,8 @@ use std::collections::VecDeque;
 
 use egui::epaint::{PathShape, PathStroke, Shadow};
 use egui::{
-    Align2, Color32, Context, Painter, Pos2, Rect, Shape, Ui, ViewportBuilder, ViewportClass,
-    ViewportId, pos2, vec2,
+    Align2, Color32, Context, Pos2, Rect, Shape, Ui, ViewportBuilder, ViewportClass, ViewportId,
+    pos2, vec2,
 };
 
 use crate::screens::trophies::IconCache;
@@ -159,7 +159,9 @@ impl BannerQueue {
 
     /// Advances to `now` (seconds, any clock) and returns the card to draw, if any.
     pub fn update(&mut self, now: f64, reduced: bool) -> Option<BannerFrame<'_>> {
-        let dt = self.last.map_or(0.0, |last| (now - last).clamp(0.0, 0.1) as f32);
+        let dt = self
+            .last
+            .map_or(0.0, |last| (now - last).clamp(0.0, 0.1) as f32);
         self.last = Some(now);
         let mut spawned = false;
         if self.current.is_none() {
@@ -187,9 +189,14 @@ impl BannerQueue {
                 bezier: Bezier::EASE_IN,
                 duration: OUT_DURATION,
             };
-            showing
-                .slide
-                .advance(if showing.leaving { out_curve } else { slide_curve }, dt);
+            showing.slide.advance(
+                if showing.leaving {
+                    out_curve
+                } else {
+                    slide_curve
+                },
+                dt,
+            );
             showing.pop.advance(pop_curve, dt);
             finished = showing.leaving && showing.age >= HOLD + NEXT_AFTER;
         }
@@ -303,7 +310,7 @@ pub fn paint_card(
             spread: 0,
         }
         .as_shape(
-            Rect::from_center_size(glow_centre, vec2(64.0, 64.0) * k * 0.5),
+            Rect::from_center_size(glow_centre, vec2(64.0, 64.0) * k * 0.75),
             corner(16.0 * k),
         ),
     );
@@ -349,10 +356,24 @@ pub fn paint_card(
         trophy.name.clone()
     };
     let shown = text::middle_truncate(&painter, name_style, &name, max_w);
-    text::paint(&painter, pos2(x, y), Align2::LEFT_TOP, name_style, &shown, fade(Color32::WHITE, alpha));
+    text::paint(
+        &painter,
+        pos2(x, y),
+        Align2::LEFT_TOP,
+        name_style,
+        &shown,
+        fade(Color32::WHITE, alpha),
+    );
     y += name_style.line_height() + 4.0 * k;
     let detail = text::middle_truncate(&painter, detail_style, &trophy.detail, max_w);
-    text::paint(&painter, pos2(x, y), Align2::LEFT_TOP, detail_style, &detail, fade(white(0.6), alpha));
+    text::paint(
+        &painter,
+        pos2(x, y),
+        Align2::LEFT_TOP,
+        detail_style,
+        &detail,
+        fade(white(0.6), alpha),
+    );
 
     // The big trophy on the trailing edge, with a vertical gradient from the grade colour down.
     let big = Icon::TROPHY.font(26.0 * k, true);
@@ -363,12 +384,22 @@ pub fn paint_card(
         let t0 = band as f32 / bands as f32;
         let clip = Rect::from_min_max(
             pos2(centre.x - span, centre.y - span * 0.5 + span * t0),
-            pos2(centre.x + span, centre.y - span * 0.5 + span * (t0 + 1.0 / bands as f32)),
+            pos2(
+                centre.x + span,
+                centre.y - span * 0.5 + span * (t0 + 1.0 / bands as f32),
+            ),
         );
-        let c = fade(grade, lerp(1.0, 0.6, (t0 + 0.5 / bands as f32).min(1.0)) * alpha);
-        painter
-            .with_clip_rect(clip)
-            .text(centre, Align2::CENTER_CENTER, Icon::TROPHY.glyph(), big.clone(), c);
+        let c = fade(
+            grade,
+            lerp(1.0, 0.6, (t0 + 0.5 / bands as f32).min(1.0)) * alpha,
+        );
+        painter.with_clip_rect(clip).text(
+            centre,
+            Align2::CENTER_CENTER,
+            Icon::TROPHY.glyph(),
+            big.clone(),
+            c,
+        );
     }
 }
 
@@ -432,9 +463,12 @@ impl BannerHost {
         }
         let trophy = frame.trophy.clone();
         let look = frame.look;
-        let texture = self
-            .icons
-            .get(ctx, &format!("banner/{}", trophy.id), trophy.icon.as_deref(), true);
+        let texture = self.icons.get(
+            ctx,
+            &format!("banner/{}", trophy.id),
+            trophy.icon.as_deref(),
+            true,
+        );
         let k = 1.0 / shell.scale().max(0.1);
         ctx.show_viewport_immediate(
             viewport_id(),
@@ -469,7 +503,11 @@ mod tests {
     }
 
     /// Runs the queue at 60 fps and records `(time, id, look)` per frame.
-    fn run(queue: &mut BannerQueue, seconds: f64, reduced: bool) -> Vec<(f64, String, BannerLook, bool)> {
+    fn run(
+        queue: &mut BannerQueue,
+        seconds: f64,
+        reduced: bool,
+    ) -> Vec<(f64, String, BannerLook, bool)> {
         let mut frames = Vec::new();
         let mut t = 0.0;
         while t <= seconds {
@@ -490,7 +528,10 @@ mod tests {
         assert!(first.3, "the first frame is the spawn");
         assert!(first.2.slide < 0.05, "starts above the window");
         let rest = frames.iter().find(|f| f.0 > 1.5).unwrap();
-        assert!((rest.2.slide - 1.0).abs() < 0.02, "at rest after the spring");
+        assert!(
+            (rest.2.slide - 1.0).abs() < 0.02,
+            "at rest after the spring"
+        );
         assert!((rest.2.offset_y() - REST_OFFSET).abs() < 1.0);
         let at_4 = frames.iter().find(|f| f.0 > 4.0).unwrap();
         assert!((at_4.2.slide - 1.0).abs() < 0.02, "still holding at 4 s");
@@ -540,7 +581,10 @@ mod tests {
         // No two banners at once: ids never interleave.
         let spawns: Vec<f64> = frames.iter().filter(|f| f.3).map(|f| f.0).collect();
         assert_eq!(spawns.len(), 3);
-        assert!(spawns[1] - spawns[0] >= (HOLD + NEXT_AFTER) as f64 - 0.05, "{spawns:?}");
+        assert!(
+            spawns[1] - spawns[0] >= (HOLD + NEXT_AFTER) as f64 - 0.05,
+            "{spawns:?}"
+        );
         assert!(queue.is_idle());
     }
 
@@ -556,7 +600,10 @@ mod tests {
 
     #[test]
     fn the_look_maps_to_the_numbers_of_the_design() {
-        let away = BannerLook { slide: 0.0, pop: 0.0 };
+        let away = BannerLook {
+            slide: 0.0,
+            pop: 0.0,
+        };
         assert_eq!(away.offset_y(), -150.0);
         assert_eq!(away.opacity(), 0.0);
         assert_eq!(away.icon_scale(), 0.6);

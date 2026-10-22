@@ -30,8 +30,8 @@ pub mod controls;
 pub mod convert;
 pub mod dialogs;
 pub mod format;
-pub mod game_settings;
 pub mod gallery;
+pub mod game_settings;
 pub mod library;
 pub mod log;
 pub mod rows;
@@ -64,6 +64,32 @@ pub fn clamped(
     job.wrap.max_rows = max_rows;
     job.sections[0].format.line_height = Some(style.line_height());
     painter.layout_job(job)
+}
+
+/// Draws the hint bar (Move, Select, Back) right-aligned inside `rect`, vertically centred.
+pub fn right_aligned_hints(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    language: crate::ui::i18n::Language,
+) {
+    use egui::{Align, Layout, UiBuilder, pos2};
+    let mut probe = ui.new_child(
+        UiBuilder::new()
+            .max_rect(rect)
+            .layout(Layout::left_to_right(Align::Center))
+            .invisible(),
+    );
+    crate::ui::components::hint_bar(&mut probe, language, false);
+    let width = probe.min_rect().width();
+    let mut bar = ui.new_child(
+        UiBuilder::new()
+            .max_rect(egui::Rect::from_min_max(
+                pos2(rect.max.x - width, rect.min.y),
+                rect.max,
+            ))
+            .layout(Layout::left_to_right(Align::Center)),
+    );
+    crate::ui::components::hint_bar(&mut bar, language, false);
 }
 
 /// A message for the host's toast (section 5.6): a glyph and a sentence.

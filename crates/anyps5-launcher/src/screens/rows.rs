@@ -8,6 +8,8 @@
 use egui::containers::scroll_area::ScrollBarVisibility;
 use egui::{Color32, Margin, ScrollArea, Ui};
 
+use crate::screens::scroll::Follow;
+use crate::ui::Shell;
 use crate::ui::chrome::{KeyCapSpec, PanelRow, RowControl};
 use crate::ui::components::{Force, PadGlyph};
 use crate::ui::focus::{PanelEffect, PanelNav, RowKind};
@@ -16,8 +18,6 @@ use crate::ui::icons::Icon;
 use crate::ui::input::Command;
 use crate::ui::sound::Cue;
 use crate::ui::theme::size;
-use crate::screens::scroll::Follow;
-use crate::ui::Shell;
 
 use anyps5_core::controls::Controls;
 
@@ -167,13 +167,26 @@ pub fn kinds(rows: &[Row]) -> Vec<RowKind> {
 /// What a command or click does to a row's value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Change {
-    Choice { row: RowId, index: usize },
-    Toggle { row: RowId, on: bool },
-    Stepper { row: RowId, value: i32 },
+    Choice {
+        row: RowId,
+        index: usize,
+    },
+    Toggle {
+        row: RowId,
+        on: bool,
+    },
+    Stepper {
+        row: RowId,
+        value: i32,
+    },
     /// An action row ran.
-    Run { row: RowId },
+    Run {
+        row: RowId,
+    },
     /// A keys row asks for a key.
-    Capture { row: RowId },
+    Capture {
+        row: RowId,
+    },
 }
 
 impl Change {
@@ -241,10 +254,7 @@ pub fn resolve(rows: &[Row], effect: PanelEffect) -> Option<Change> {
                         index: (selected + 1) % options.len(),
                     })
                 }
-                Control::Toggle(on) => Some(Change::Toggle {
-                    row: r.id,
-                    on: !on,
-                }),
+                Control::Toggle(on) => Some(Change::Toggle { row: r.id, on: !on }),
                 Control::Stepper {
                     value,
                     min,
@@ -253,7 +263,11 @@ pub fn resolve(rows: &[Row], effect: PanelEffect) -> Option<Change> {
                     ..
                 } => Some(Change::Stepper {
                     row: r.id,
-                    value: if value + step > *max { *min } else { value + step },
+                    value: if value + step > *max {
+                        *min
+                    } else {
+                        value + step
+                    },
                 }),
                 Control::Action => Some(Change::Run { row: r.id }),
                 Control::Keys { .. } => Some(Change::Capture { row: r.id }),
@@ -303,9 +317,15 @@ pub fn drive(shell: &mut Shell, nav: &mut PanelNav, rows: &[Row], commands: &[Co
 pub enum ListEvent {
     /// A row was clicked or its control used: it takes the focus.
     Focus(usize),
-    Effect { row: usize, effect: PanelEffect },
+    Effect {
+        row: usize,
+        effect: PanelEffect,
+    },
     /// The text field of a row changed.
-    Text { row: usize, value: String },
+    Text {
+        row: usize,
+        value: String,
+    },
 }
 
 /// How [`list`] draws.
@@ -369,7 +389,7 @@ fn key_caps(sources: &[String], language: Language) -> Vec<KeyCapSpec> {
 /// the focus spring. Returns what the mouse did.
 pub fn list(
     ui: &mut Ui,
-    id_salt: impl std::hash::Hash,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
     rows: &mut [Row],
     options: &ListOptions,
 ) -> Vec<ListEvent> {
@@ -405,7 +425,7 @@ pub fn list(
         geometry,
         output.content_size.y,
         output.inner_rect.height(),
-        output.state.offset.y,
+        output.state.clamped_offset().y,
     );
     events
 }
@@ -514,13 +534,13 @@ fn show_row(
         if out.response.hovered() && ui.input(|i| i.pointer.primary_pressed()) {
             events.push(ListEvent::Focus(index));
         }
-        if out.text_changed {
-            if let Control::Text(value) = control {
-                events.push(ListEvent::Text {
-                    row: index,
-                    value: value.clone(),
-                });
-            }
+        if out.text_changed
+            && let Control::Text(value) = control
+        {
+            events.push(ListEvent::Text {
+                row: index,
+                value: value.clone(),
+            });
         }
     }
     Shown { rect }
@@ -570,7 +590,12 @@ mod tests {
     fn rows() -> Vec<Row> {
         vec![
             Row::info("head", "Section", None),
-            Row::choice("choice", "Choice", vec!["a".into(), "b".into(), "c".into()], 1),
+            Row::choice(
+                "choice",
+                "Choice",
+                vec!["a".into(), "b".into(), "c".into()],
+                1,
+            ),
             Row::toggle("toggle", "Toggle", true),
             Row::stepper("step", "Step", 90, (40, 100), 5, "90%"),
             Row::action("act", "Action"),
@@ -587,11 +612,17 @@ mod tests {
         let rows = rows();
         assert_eq!(
             resolve(&rows, adjust(1, -1)),
-            Some(Change::Choice { row: "choice", index: 0 })
+            Some(Change::Choice {
+                row: "choice",
+                index: 0
+            })
         );
         assert_eq!(
             resolve(&rows, adjust(1, 1)),
-            Some(Change::Choice { row: "choice", index: 2 })
+            Some(Change::Choice {
+                row: "choice",
+                index: 2
+            })
         );
         let mut at_end = rows.clone();
         at_end[1].control = Control::Choice {
@@ -602,11 +633,17 @@ mod tests {
         assert_eq!(resolve(&rows, adjust(2, 1)), None, "already on");
         assert_eq!(
             resolve(&rows, adjust(2, -1)),
-            Some(Change::Toggle { row: "toggle", on: false })
+            Some(Change::Toggle {
+                row: "toggle",
+                on: false
+            })
         );
         assert_eq!(
             resolve(&rows, adjust(3, 1)),
-            Some(Change::Stepper { row: "step", value: 95 })
+            Some(Change::Stepper {
+                row: "step",
+                value: 95
+            })
         );
         assert_eq!(resolve(&rows, adjust(4, 1)), None, "actions do not adjust");
     }
@@ -617,7 +654,10 @@ mod tests {
         let activate = |row| PanelEffect::Activate { row };
         assert_eq!(
             resolve(&rows, activate(1)),
-            Some(Change::Choice { row: "choice", index: 2 })
+            Some(Change::Choice {
+                row: "choice",
+                index: 2
+            })
         );
         let mut last = rows.clone();
         last[1].control = Control::Choice {
@@ -626,16 +666,25 @@ mod tests {
         };
         assert_eq!(
             resolve(&last, activate(1)),
-            Some(Change::Choice { row: "choice", index: 0 }),
+            Some(Change::Choice {
+                row: "choice",
+                index: 0
+            }),
             "select wraps"
         );
         assert_eq!(
             resolve(&rows, activate(2)),
-            Some(Change::Toggle { row: "toggle", on: false })
+            Some(Change::Toggle {
+                row: "toggle",
+                on: false
+            })
         );
         assert_eq!(
             resolve(&rows, activate(3)),
-            Some(Change::Stepper { row: "step", value: 95 })
+            Some(Change::Stepper {
+                row: "step",
+                value: 95
+            })
         );
         let mut top = rows.clone();
         top[3].control = Control::Stepper {
@@ -647,11 +696,20 @@ mod tests {
         };
         assert_eq!(
             resolve(&top, activate(3)),
-            Some(Change::Stepper { row: "step", value: 40 }),
+            Some(Change::Stepper {
+                row: "step",
+                value: 40
+            }),
             "a stepper wraps to its minimum"
         );
-        assert_eq!(resolve(&rows, activate(4)), Some(Change::Run { row: "act" }));
-        assert_eq!(resolve(&rows, activate(5)), Some(Change::Capture { row: "keys" }));
+        assert_eq!(
+            resolve(&rows, activate(4)),
+            Some(Change::Run { row: "act" })
+        );
+        assert_eq!(
+            resolve(&rows, activate(5)),
+            Some(Change::Capture { row: "keys" })
+        );
         assert_eq!(resolve(&rows, activate(0)), None, "info rows do nothing");
     }
 
@@ -673,7 +731,7 @@ mod tests {
         assert_eq!(source_label("KEY:K", en), "K");
         assert_eq!(source_label("MOUSE:Left", en), "Left Click");
         assert_eq!(source_label("MOUSE:X1", en), "Mouse 4");
-        assert_eq!(source_label("WHEEL:Up", en), "Wheel Up");
+        assert_eq!(source_label("WHEEL:Up", en), "Wheel ↑");
     }
 
     #[test]

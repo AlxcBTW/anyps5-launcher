@@ -3,7 +3,7 @@
 //! close. The host decides what each tile shows (icon, state overlay, state label) and what picking
 //! means.
 
-use egui::{Align, Align2, Color32, Context, Layout, Rect, Sense, Ui, UiBuilder, pos2, vec2};
+use egui::{Align2, Color32, Context, Rect, Sense, Ui, UiBuilder, pos2, vec2};
 
 use crate::screens::clamped;
 use crate::screens::scroll::Follow;
@@ -11,7 +11,6 @@ use crate::screens::side::commands;
 use crate::ui::Shell;
 use crate::ui::anim::AnimExt;
 use crate::ui::chrome::{TileImage, TileOverlay, TileStyle, fullscreen_panel, paint_tile};
-use crate::ui::components::hint_bar;
 use crate::ui::glass::GlassStyle;
 use crate::ui::i18n::{Key, Language};
 use crate::ui::icons::Icon;
@@ -168,9 +167,7 @@ fn draw(ui: &mut Ui, data: &LibraryData<'_>, focus: usize, clicked: &mut Option<
     let ctx = ui.ctx().clone();
     let painter = ui.painter().clone();
     let language = data.language;
-    let area = ui
-        .max_rect()
-        .shrink2(vec2(pad::LIBRARY.0, pad::LIBRARY.1));
+    let area = ui.max_rect().shrink2(vec2(pad::LIBRARY.0, pad::LIBRARY.1));
 
     // Header: the title, the count, the hints on the right.
     let title_h = ty::SCREEN_TITLE.line_height();
@@ -191,12 +188,7 @@ fn draw(ui: &mut Ui, data: &LibraryData<'_>, focus: usize, clicked: &mut Option<
         color::text_count(),
     );
     let header = Rect::from_min_size(area.min, vec2(area.width(), title_h));
-    let mut hints = ui.new_child(
-        UiBuilder::new()
-            .max_rect(header)
-            .layout(Layout::right_to_left(Align::Center)),
-    );
-    hint_bar(&mut hints, language, false);
+    crate::screens::right_aligned_hints(ui, header, language);
 
     // The grid.
     let list = Rect::from_min_max(pos2(area.min.x, header.max.y + 26.0), area.max);
@@ -245,7 +237,7 @@ fn draw(ui: &mut Ui, data: &LibraryData<'_>, focus: usize, clicked: &mut Option<
             let y = top + row as f32 * (cell_h + ROW_GAP);
             let cell = Rect::from_min_size(pos2(x, y), vec2(tile, cell_h));
             let focused = i == focus;
-            let response = ui.interact(cell, ui.id().with(("cell", i)), Sense::click());
+            let response = ui.interact(cell, id.with(("cell", i)), Sense::click());
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(
                     egui::Role::Button,
@@ -270,7 +262,11 @@ fn draw(ui: &mut Ui, data: &LibraryData<'_>, focus: usize, clicked: &mut Option<
             style.focus = t;
             style.ring = true;
             style.time = ui.ctx().clock();
-            paint_tile(&painter, Rect::from_min_size(cell.min, vec2(tile, tile)), &style);
+            paint_tile(
+                &painter,
+                Rect::from_min_size(cell.min, vec2(tile, tile)),
+                &style,
+            );
             // Name (1 line, truncated) and the state line.
             let ns = name_style(focused);
             let ink = if focused { Color32::WHITE } else { white(0.75) };
@@ -279,7 +275,10 @@ fn draw(ui: &mut Ui, data: &LibraryData<'_>, focus: usize, clicked: &mut Option<
             painter.galley(pos2(cell.min.x, ny), name_g, ink);
             let sy = ny + 15.0 * 1.2 + 10.0;
             painter.text(
-                pos2(cell.min.x + 6.0, sy + ty::STATE_LABEL_SMALL.line_height() * 0.5),
+                pos2(
+                    cell.min.x + 6.0,
+                    sy + ty::STATE_LABEL_SMALL.line_height() * 0.5,
+                ),
                 Align2::CENTER_CENTER,
                 entry.state.icon.glyph(),
                 entry.state.icon.font(12.0, true),
@@ -301,7 +300,7 @@ fn draw(ui: &mut Ui, data: &LibraryData<'_>, focus: usize, clicked: &mut Option<
         geometry,
         output.content_size.y,
         output.inner_rect.height(),
-        output.state.offset.y,
+        output.state.clamped_offset().y,
     );
 }
 
@@ -316,7 +315,11 @@ mod tests {
         assert_eq!(move_index(1, Command::Down, 9), 7);
         assert_eq!(move_index(7, Command::Up, 9), 1);
         assert_eq!(move_index(8, Command::Down, 9), 8, "last tile stays");
-        assert_eq!(move_index(4, Command::Down, 9), 8, "clamped to the last tile");
+        assert_eq!(
+            move_index(4, Command::Down, 9),
+            8,
+            "clamped to the last tile"
+        );
         assert_eq!(move_index(8, Command::Right, 9), 8);
         assert_eq!(move_index(0, Command::Right, 0), 0, "empty grid");
     }

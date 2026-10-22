@@ -12,67 +12,59 @@ use crate::ui::i18n::{Key, Language};
 use crate::ui::text;
 use crate::ui::theme::{size, ty, white};
 
-/// One step of the unlock.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum UnlockStep {
-    Unwrap,
-    Relink,
-    Copy,
-    /// The original's "bundle": assembling the playable copy.
-    Bundle,
-    Finish,
+/// One step of the unlock: the pipeline's own enum (`Unwrap, Relink, Copy, Assemble, Finish`;
+/// the original calls Assemble "bundle").
+pub use anyps5_core::unlock::Step as UnlockStep;
+
+/// The steps in order.
+pub const STEPS: [UnlockStep; 5] = [
+    UnlockStep::Unwrap,
+    UnlockStep::Relink,
+    UnlockStep::Copy,
+    UnlockStep::Assemble,
+    UnlockStep::Finish,
+];
+
+/// Where a step starts on the overall bar.
+pub const fn step_start(step: UnlockStep) -> f32 {
+    match step {
+        UnlockStep::Unwrap => 0.0,
+        UnlockStep::Relink => 0.12,
+        UnlockStep::Copy => 0.62,
+        UnlockStep::Assemble => 0.88,
+        UnlockStep::Finish => 0.96,
+    }
 }
 
-impl UnlockStep {
-    pub const ALL: [UnlockStep; 5] = [
-        UnlockStep::Unwrap,
-        UnlockStep::Relink,
-        UnlockStep::Copy,
-        UnlockStep::Bundle,
-        UnlockStep::Finish,
-    ];
-
-    /// Where the step starts on the overall bar.
-    pub const fn start(self) -> f32 {
-        match self {
-            UnlockStep::Unwrap => 0.0,
-            UnlockStep::Relink => 0.12,
-            UnlockStep::Copy => 0.62,
-            UnlockStep::Bundle => 0.88,
-            UnlockStep::Finish => 0.96,
-        }
+/// How much of the overall bar a step covers.
+pub const fn step_length(step: UnlockStep) -> f32 {
+    match step {
+        UnlockStep::Unwrap => 0.12,
+        UnlockStep::Relink => 0.50,
+        UnlockStep::Copy => 0.26,
+        UnlockStep::Assemble => 0.08,
+        UnlockStep::Finish => 0.04,
     }
+}
 
-    /// How much of the overall bar the step covers.
-    pub const fn length(self) -> f32 {
-        match self {
-            UnlockStep::Unwrap => 0.12,
-            UnlockStep::Relink => 0.50,
-            UnlockStep::Copy => 0.26,
-            UnlockStep::Bundle => 0.08,
-            UnlockStep::Finish => 0.04,
-        }
+/// The text key of a step's title.
+pub const fn step_key(step: UnlockStep) -> Key {
+    match step {
+        UnlockStep::Unwrap => Key::StepUnwrap,
+        UnlockStep::Relink => Key::StepRelink,
+        UnlockStep::Copy => Key::StepCopy,
+        UnlockStep::Assemble => Key::StepBundle,
+        UnlockStep::Finish => Key::StepFinish,
     }
+}
 
-    /// The text key of the step's title.
-    pub const fn key(self) -> Key {
-        match self {
-            UnlockStep::Unwrap => Key::StepUnwrap,
-            UnlockStep::Relink => Key::StepRelink,
-            UnlockStep::Copy => Key::StepCopy,
-            UnlockStep::Bundle => Key::StepBundle,
-            UnlockStep::Finish => Key::StepFinish,
-        }
-    }
+pub fn step_title(step: UnlockStep, language: Language) -> &'static str {
+    language.text(step_key(step))
+}
 
-    pub fn title(self, language: Language) -> &'static str {
-        language.text(self.key())
-    }
-
-    /// `start + length * fraction`
-    pub fn overall(self, fraction: f32) -> f32 {
-        self.start() + self.length() * fraction.clamp(0.0, 1.0)
-    }
+/// `start + length * fraction`
+pub fn step_overall(step: UnlockStep, fraction: f32) -> f32 {
+    step_start(step) + step_length(step) * fraction.clamp(0.0, 1.0)
 }
 
 /// Where an unlock stands.
@@ -89,7 +81,7 @@ impl UnlockProgress {
     }
 
     pub fn overall(&self) -> f32 {
-        self.step.overall(self.fraction)
+        step_overall(self.step, self.fraction)
     }
 
     /// `Int(overall * 100)`: the percentage the hero shows.
@@ -119,7 +111,7 @@ pub fn hero_progress(
     accent: egui::Color32,
 ) -> Response {
     let width = size::HERO_PROGRESS_WIDTH;
-    let title = progress.step.title(language);
+    let title = step_title(progress.step, language);
     let percent = format!("{}%", progress.percent());
     let label_h = ty::PROGRESS_LABEL.line_height();
     let (rect, response) = ui.allocate_exact_size(
@@ -182,19 +174,22 @@ mod tests {
     #[test]
     fn the_steps_cover_the_whole_bar_without_gaps() {
         let mut at = 0.0_f32;
-        for step in UnlockStep::ALL {
-            assert!((step.start() - at).abs() < 1e-6, "{step:?} starts at {at}");
-            at += step.length();
+        for step in STEPS {
+            assert!(
+                (step_start(step) - at).abs() < 1e-6,
+                "{step:?} starts at {at}"
+            );
+            at += step_length(step);
         }
         assert!((at - 1.0).abs() < 1e-6);
     }
 
     #[test]
     fn overall_is_start_plus_length_times_fraction() {
-        assert_eq!(UnlockStep::Copy.overall(0.0), 0.62);
-        assert!((UnlockStep::Copy.overall(0.4) - 0.724).abs() < 1e-6);
-        assert!((UnlockStep::Finish.overall(1.0) - 1.0).abs() < 1e-6);
-        assert_eq!(UnlockStep::Relink.overall(2.0), 0.62, "clamped");
+        assert_eq!(step_overall(UnlockStep::Copy, 0.0), 0.62);
+        assert!((step_overall(UnlockStep::Copy, 0.4) - 0.724).abs() < 1e-6);
+        assert!((step_overall(UnlockStep::Finish, 1.0) - 1.0).abs() < 1e-6);
+        assert_eq!(step_overall(UnlockStep::Relink, 2.0), 0.62, "clamped");
     }
 
     #[test]
@@ -221,18 +216,21 @@ mod tests {
     fn events_are_coalesced() {
         let a = UnlockProgress::new(UnlockStep::Copy, 0.10);
         assert!(!a.should_replace(&UnlockProgress::new(UnlockStep::Copy, 0.103)));
-        assert!(a.should_replace(&UnlockProgress::new(UnlockStep::Copy, 0.105)));
-        assert!(a.should_replace(&UnlockProgress::new(UnlockStep::Bundle, 0.10)));
+        assert!(a.should_replace(&UnlockProgress::new(UnlockStep::Copy, 0.11)));
+        assert!(a.should_replace(&UnlockProgress::new(UnlockStep::Assemble, 0.10)));
         assert!(a.should_replace(&UnlockProgress::new(UnlockStep::Copy, 1.0)));
     }
 
     #[test]
     fn titles_exist_in_both_languages() {
-        for step in UnlockStep::ALL {
+        for step in STEPS {
             for language in Language::ALL {
-                assert!(!step.title(language).is_empty());
+                assert!(!step_title(step, language).is_empty());
             }
         }
-        assert_eq!(UnlockStep::Relink.title(Language::English), "Converting for Windows");
+        assert_eq!(
+            step_title(UnlockStep::Relink, Language::English),
+            "Converting for Windows"
+        );
     }
 }

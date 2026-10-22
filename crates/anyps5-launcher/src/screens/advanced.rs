@@ -244,9 +244,13 @@ pub fn build_rows(settings: &GameSettings, language: Language) -> Vec<Row> {
         tune("keyboardRamp"),
         tune("triggerRamp"),
         Row::info("graphicsSection", t(Key::SectionGraphics), None),
-        Row::toggle("shaderCache", t(Key::ShaderCache), settings.shader_cache.unwrap_or(true))
-            .detail(t(Key::ShaderCacheDetail))
-            .icon(Icon::STACK),
+        Row::toggle(
+            "shaderCache",
+            t(Key::ShaderCache),
+            settings.shader_cache.unwrap_or(true),
+        )
+        .detail(t(Key::ShaderCacheDetail))
+        .icon(Icon::STACK),
         Row::info("shareSection", t(Key::SectionShare), None),
         Row::action("export", t(Key::ExportSettings))
             .detail(t(Key::ExportSettingsDetail))
@@ -269,10 +273,15 @@ pub fn apply_change(settings: &mut GameSettings, change: &Change) -> bool {
                 settings.tuning = (tuning != InputTuning::default()).then_some(tuning);
             }
         }
-        Change::Toggle { row: "shaderCache", on } => {
+        Change::Toggle {
+            row: "shaderCache",
+            on,
+        } => {
             settings.shader_cache = (!*on).then_some(false);
         }
-        Change::Run { row: "resetAdvanced" } => {
+        Change::Run {
+            row: "resetAdvanced",
+        } => {
             settings.tuning = None;
             settings.shader_cache = None;
         }
@@ -333,6 +342,11 @@ impl AdvancedPanel {
         self.side.open_at(1);
     }
 
+    /// Opens on a row (previews).
+    pub fn open_row(&mut self, row: usize) {
+        self.side.open_at(row);
+    }
+
     pub fn close(&mut self) {
         self.side.close();
     }
@@ -358,12 +372,7 @@ impl AdvancedPanel {
         }
         if self.side.is_open() {
             let rows = build_rows(data.settings, data.language);
-            let driven = rows::drive(
-                shell,
-                &mut self.side.nav,
-                &rows,
-                &side::commands(events),
-            );
+            let driven = rows::drive(shell, &mut self.side.nav, &rows, &side::commands(events));
             for change in &driven.changes {
                 self.apply(shell, data, change, &mut out);
             }
@@ -455,7 +464,10 @@ fn import_flow(shell: &mut Shell, data: &mut AdvancedData<'_>) -> Option<(ToastR
         None,
     )?;
     let Some(imported) = import_settings(&path, data.game, data.resolutions) else {
-        return Some((ToastRequest::warning(language.text(Key::SettingsFileFailed)), false));
+        return Some((
+            ToastRequest::warning(language.text(Key::SettingsFileFailed)),
+            false,
+        ));
     };
     let changed = *data.settings != imported.settings;
     *data.settings = imported.settings;
@@ -496,10 +508,27 @@ mod tests {
         assert_eq!(
             ids,
             [
-                "sticksSection", "leftDeadzone", "rightDeadzone", "mouseSection", "sensitivity",
-                "vertical", "curve", "offset", "maxSpeed", "smoothing", "decay",
-                "keyboardSection", "modifier", "keyboardRamp", "triggerRamp", "graphicsSection",
-                "shaderCache", "shareSection", "export", "import", "resetAdvanced"
+                "sticksSection",
+                "leftDeadzone",
+                "rightDeadzone",
+                "mouseSection",
+                "sensitivity",
+                "vertical",
+                "curve",
+                "offset",
+                "maxSpeed",
+                "smoothing",
+                "decay",
+                "keyboardSection",
+                "modifier",
+                "keyboardRamp",
+                "triggerRamp",
+                "graphicsSection",
+                "shaderCache",
+                "shareSection",
+                "export",
+                "import",
+                "resetAdvanced"
             ]
         );
         assert!(!rows[0].kind().focusable(), "headers are not focusable");
@@ -524,33 +553,88 @@ mod tests {
     #[test]
     fn only_changed_values_are_kept_and_the_group_resets_to_none() {
         let mut s = GameSettings::default();
-        assert!(apply_change(&mut s, &Change::Stepper { row: "sensitivity", value: 25 }));
+        assert!(apply_change(
+            &mut s,
+            &Change::Stepper {
+                row: "sensitivity",
+                value: 25
+            }
+        ));
         assert_eq!(s.tuning.unwrap().mouse_sensitivity, 25);
         // Back to the default: the whole group disappears again.
-        assert!(apply_change(&mut s, &Change::Stepper { row: "sensitivity", value: 10 }));
+        assert!(apply_change(
+            &mut s,
+            &Change::Stepper {
+                row: "sensitivity",
+                value: 10
+            }
+        ));
         assert_eq!(s.tuning, None);
         // Values are clamped to the row's range.
-        assert!(apply_change(&mut s, &Change::Stepper { row: "leftDeadzone", value: 500 }));
+        assert!(apply_change(
+            &mut s,
+            &Change::Stepper {
+                row: "leftDeadzone",
+                value: 500
+            }
+        ));
         assert_eq!(s.tuning.unwrap().left_deadzone, 90);
     }
 
     #[test]
     fn the_shader_cache_toggle_stores_false_only_when_off() {
         let mut s = GameSettings::default();
-        assert!(apply_change(&mut s, &Change::Toggle { row: "shaderCache", on: false }));
+        assert!(apply_change(
+            &mut s,
+            &Change::Toggle {
+                row: "shaderCache",
+                on: false
+            }
+        ));
         assert_eq!(s.shader_cache, Some(false));
-        assert!(apply_change(&mut s, &Change::Toggle { row: "shaderCache", on: true }));
+        assert!(apply_change(
+            &mut s,
+            &Change::Toggle {
+                row: "shaderCache",
+                on: true
+            }
+        ));
         assert_eq!(s.shader_cache, None, "on is the default");
     }
 
     #[test]
     fn reset_clears_tuning_and_cache() {
         let mut s = GameSettings::default();
-        apply_change(&mut s, &Change::Stepper { row: "decay", value: 200 });
-        apply_change(&mut s, &Change::Toggle { row: "shaderCache", on: false });
-        assert!(apply_change(&mut s, &Change::Run { row: "resetAdvanced" }));
+        apply_change(
+            &mut s,
+            &Change::Stepper {
+                row: "decay",
+                value: 200,
+            },
+        );
+        apply_change(
+            &mut s,
+            &Change::Toggle {
+                row: "shaderCache",
+                on: false,
+            },
+        );
+        assert!(apply_change(
+            &mut s,
+            &Change::Run {
+                row: "resetAdvanced"
+            }
+        ));
         assert_eq!((s.tuning, s.shader_cache), (None, None));
-        assert!(!apply_change(&mut s, &Change::Run { row: "resetAdvanced" }), "nothing to reset");
+        assert!(
+            !apply_change(
+                &mut s,
+                &Change::Run {
+                    row: "resetAdvanced"
+                }
+            ),
+            "nothing to reset"
+        );
     }
 
     #[test]
@@ -559,9 +643,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("Stray - AnyPS5.json");
         let stray = game("PPSA02100", "Stray");
-        let mut settings = GameSettings::default();
-        settings.vsync = false;
-        settings.resolution = Some("2560x1440".into());
+        let settings = GameSettings {
+            vsync: false,
+            resolution: Some("2560x1440".into()),
+            ..GameSettings::default()
+        };
         export_settings(&file, &stray, &settings).unwrap();
 
         let same = import_settings(&file, &stray, &["2560x1440".to_owned()]).unwrap();
@@ -570,7 +656,10 @@ mod tests {
 
         let other = game("PPSA99999", "Other");
         let imported = import_settings(&file, &other, &[]).unwrap();
-        assert_eq!(imported.settings.resolution, None, "this title has no such patch");
+        assert_eq!(
+            imported.settings.resolution, None,
+            "this title has no such patch"
+        );
         assert!(!imported.settings.vsync);
         assert_eq!(imported.other_game.as_deref(), Some("Stray"));
 

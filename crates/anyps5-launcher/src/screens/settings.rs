@@ -28,7 +28,7 @@ use crate::ui::icons::Icon;
 use crate::ui::input::InputEvent;
 use crate::ui::sound::Cue;
 use crate::ui::text;
-use crate::ui::theme::{self, Accent, Theme, color, fade, mix, pad, radius, size, ty, white};
+use crate::ui::theme::{Accent, Theme, color, mix, pad, radius, size, ty, white};
 
 /// The categories, in the order of the list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,7 +159,10 @@ pub fn build_categories(
         Row::choice(
             "theme",
             t(Key::Theme),
-            Theme::ALL.iter().map(|x| x.title(language).to_owned()).collect(),
+            Theme::ALL
+                .iter()
+                .map(|x| x.title(language).to_owned())
+                .collect(),
             Theme::ALL
                 .iter()
                 .position(|x| *x == convert::theme(prefs.theme))
@@ -169,7 +172,10 @@ pub fn build_categories(
         Row::choice(
             "accent",
             t(Key::Accent),
-            Accent::ALL.iter().map(|x| x.title(language).to_owned()).collect(),
+            Accent::ALL
+                .iter()
+                .map(|x| x.title(language).to_owned())
+                .collect(),
             Accent::ALL.iter().position(|x| *x == accent).unwrap_or(0),
         )
         .icon(Icon::CIRCLE_HALF),
@@ -197,7 +203,8 @@ pub fn build_categories(
         }
         appearance.push(row);
     }
-    appearance.push(Row::toggle("artwork", t(Key::GameArtwork), prefs.game_artwork).icon(Icon::IMAGE));
+    appearance
+        .push(Row::toggle("artwork", t(Key::GameArtwork), prefs.game_artwork).icon(Icon::IMAGE));
     appearance.push(
         Row::choice(
             "motion",
@@ -220,28 +227,35 @@ pub fn build_categories(
     ];
 
     // Language
-    let languages = vec![Row::choice(
-        "language",
-        t(Key::Language),
-        Language::ALL.iter().map(|l| l.display_name().to_owned()).collect(),
-        Language::ALL
-            .iter()
-            .position(|l| *l == convert::language(prefs.language))
-            .unwrap_or(0),
-    )
-    .icon(Icon::GLOBE)];
+    let languages = vec![
+        Row::choice(
+            "language",
+            t(Key::Language),
+            Language::ALL
+                .iter()
+                .map(|l| l.display_name().to_owned())
+                .collect(),
+            Language::ALL
+                .iter()
+                .position(|l| *l == convert::language(prefs.language))
+                .unwrap_or(0),
+        )
+        .icon(Icon::GLOBE),
+    ];
 
     // Behaviour
     let behaviour = vec![
         Row::text("name", t(Key::ProfileName), prefs.profile_name.clone()).icon(Icon::USER_CIRCLE),
         Row::toggle("sounds", t(Key::Sounds), prefs.sounds).icon(Icon::SPEAKER_HIGH),
-        Row::toggle("hide", t(Key::HideWhilePlaying), prefs.hide_while_playing).icon(Icon::EYE_SLASH),
+        Row::toggle("hide", t(Key::HideWhilePlaying), prefs.hide_while_playing)
+            .icon(Icon::EYE_SLASH),
     ];
 
     // Toolkit
-    let toolkit_value = env
-        .toolkit_version
-        .map_or_else(|| Extra::ToolkitMissing.text(language).to_owned(), str::to_owned);
+    let toolkit_value = env.toolkit_version.map_or_else(
+        || Extra::ToolkitMissing.text(language).to_owned(),
+        str::to_owned,
+    );
     let update_value = match &env.update {
         UpdateState::Unknown => None,
         UpdateState::Checking => Some(Extra::Checking.text(language).to_owned()),
@@ -255,20 +269,30 @@ pub fn build_categories(
         .unwrap_or_else(|| Extra::NeverChecked.text(language).to_owned());
     let mut toolkit = vec![
         Row::info("toolkit", t(Key::ToolkitVersion), Some(toolkit_value)),
-        Row::info("lastChecked", Extra::LastChecked.text(language), Some(last_checked)),
+        Row::info(
+            "lastChecked",
+            Extra::LastChecked.text(language),
+            Some(last_checked),
+        ),
     ];
     if let Some(value) = update_value {
-        toolkit.push(Row::info("updateState", Extra::UpdateCheck.text(language), Some(value)));
+        toolkit.push(Row::info("updateState", t(Key::Status), Some(value)));
     }
     toolkit.push(
-        Row::toggle("updateCheck", Extra::UpdateCheck.text(language), prefs.check_for_updates)
-            .detail(Extra::UpdateCheckDetail.text(language))
-            .icon(Icon::ARROWS_CLOCKWISE),
+        Row::toggle(
+            "updateCheck",
+            Extra::UpdateCheck.text(language),
+            prefs.check_for_updates,
+        )
+        .detail(Extra::UpdateCheckDetail.text(language))
+        .icon(Icon::ARROWS_CLOCKWISE),
     );
-    toolkit.push(Row::action("checkNow", Extra::CheckNow.text(language)).icon(Icon::ARROW_CLOCKWISE));
+    toolkit
+        .push(Row::action("checkNow", Extra::CheckNow.text(language)).icon(Icon::ARROW_CLOCKWISE));
     match (&env.toolkit_version, &env.update) {
         (None, _) => toolkit.push(
-            Row::action("install", Extra::ToolkitInstall.text(language)).icon(Icon::DOWNLOAD_SIMPLE),
+            Row::action("install", Extra::ToolkitInstall.text(language))
+                .icon(Icon::DOWNLOAD_SIMPLE),
         ),
         (Some(_), UpdateState::Available(_)) => toolkit.push(
             Row::action("install", Extra::ToolkitInstallUpdate.text(language))
@@ -313,7 +337,7 @@ pub fn build_categories(
                 prefs
                     .fonts_folder
                     .as_deref()
-                    .map_or_else(|| t(Key::FontsNone), &abbreviated),
+                    .map_or_else(|| t(Key::FontsNone), abbreviated),
             )
             .icon(Icon::TEXT_AA),
     ];
@@ -331,7 +355,9 @@ pub fn build_categories(
             t(Key::ToolkitVersion),
             Some(env.toolkit_version.unwrap_or("—").to_owned()),
         ),
-        Row::action("quit", t(Key::Quit)).icon(Icon::POWER).destructive(),
+        Row::action("quit", t(Key::Quit))
+            .icon(Icon::POWER)
+            .destructive(),
     ];
 
     [
@@ -360,26 +386,41 @@ pub fn apply_preferences(shell: &mut Shell, ctx: &Context, prefs: &Preferences) 
 pub fn apply_value(prefs: &mut Preferences, change: &Change) -> bool {
     let before = prefs.clone();
     match change {
-        Change::Choice { row: "theme", index } => {
+        Change::Choice {
+            row: "theme",
+            index,
+        } => {
             if let Some(theme) = Theme::ALL.get(*index) {
                 prefs.theme = convert::theme_to_core(*theme);
             }
         }
-        Change::Choice { row: "accent", index } => {
+        Change::Choice {
+            row: "accent",
+            index,
+        } => {
             if let Some(accent) = Accent::ALL.get(*index) {
                 prefs.accent = Some(convert::accent_to_core(*accent));
             }
         }
         Change::Toggle { row: "artwork", on } => prefs.game_artwork = *on,
-        Change::Choice { row: "motion", index } => prefs.reduced_motion = *index == 1,
-        Change::Choice { row: "language", index } => {
+        Change::Choice {
+            row: "motion",
+            index,
+        } => prefs.reduced_motion = *index == 1,
+        Change::Choice {
+            row: "language",
+            index,
+        } => {
             if let Some(language) = Language::ALL.get(*index) {
                 prefs.language = convert::language_to_core(*language);
             }
         }
         Change::Toggle { row: "sounds", on } => prefs.sounds = *on,
         Change::Toggle { row: "hide", on } => prefs.hide_while_playing = *on,
-        Change::Toggle { row: "updateCheck", on } => prefs.check_for_updates = *on,
+        Change::Toggle {
+            row: "updateCheck",
+            on,
+        } => prefs.check_for_updates = *on,
         Change::Choice { row: "cpu", index } => {
             prefs.cpu_conversion = match index {
                 1 => CpuConversion::None,
@@ -387,7 +428,10 @@ pub fn apply_value(prefs: &mut Preferences, change: &Change) -> bool {
                 _ => CpuConversion::Auto,
             };
         }
-        Change::Choice { row: "backdrop", index: 0 } => prefs.backdrop = Backdrop::Theme,
+        Change::Choice {
+            row: "backdrop",
+            index: 0,
+        } => prefs.backdrop = Backdrop::Theme,
         Change::Run { row: "fontsReset" } => prefs.fonts_folder = None,
         _ => {}
     }
@@ -545,8 +589,15 @@ impl SettingsPanel {
         let language = convert::language(prefs.language);
         let mut changed = apply_value(prefs, change);
         match change {
-            Change::Choice { row: "backdrop", index } if *index >= 1 => {
-                let kind = if *index == 2 { Backdrop::Video } else { Backdrop::Image };
+            Change::Choice {
+                row: "backdrop",
+                index,
+            } if *index >= 1 => {
+                let kind = if *index == 2 {
+                    Backdrop::Video
+                } else {
+                    Backdrop::Image
+                };
                 // Choosing a picture asks for one unless it is already the choice with a file.
                 if prefs.backdrop_file.is_none() || prefs.backdrop != kind {
                     changed |= choose_backdrop(shell, prefs, language);
@@ -555,11 +606,9 @@ impl SettingsPanel {
             Change::Run { row: "file" } => changed |= choose_backdrop(shell, prefs, language),
             Change::Run { row: "folder" } => {
                 let start = prefs.games_folder.clone();
-                if let Some(folder) = dialogs::pick_folder(
-                    shell,
-                    language.text(Key::PickFolder),
-                    start.as_deref(),
-                ) {
+                if let Some(folder) =
+                    dialogs::pick_folder(shell, language.text(Key::PickFolder), start.as_deref())
+                {
                     prefs.games_folder = Some(folder.clone());
                     changed = true;
                     out.actions.push(SettingsAction::GamesFolderChosen(folder));
@@ -577,29 +626,32 @@ impl SettingsPanel {
                     changed = true;
                 }
             }
-            Change::Run { row: "showScreenshots" } => out.actions.push(SettingsAction::ShowScreenshots),
+            Change::Run {
+                row: "showScreenshots",
+            } => out.actions.push(SettingsAction::ShowScreenshots),
             Change::Run { row: "fonts" } => {
                 let start = prefs.fonts_folder.clone();
-                if let Some(folder) = dialogs::pick_folder(
-                    shell,
-                    language.text(Key::FontsFolder),
-                    start.as_deref(),
-                ) {
+                if let Some(folder) =
+                    dialogs::pick_folder(shell, language.text(Key::FontsFolder), start.as_deref())
+                {
                     prefs.fonts_folder = Some(folder);
                     changed = true;
                 }
             }
             Change::Run { row: "checkNow" } => out.actions.push(SettingsAction::CheckForUpdates),
-            Change::Toggle { row: "updateCheck", on: true } => {
+            Change::Toggle {
+                row: "updateCheck",
+                on: true,
+            } => {
                 out.actions.push(SettingsAction::CheckForUpdates);
             }
             Change::Run { row: "install" } => out.actions.push(SettingsAction::InstallToolkit),
-            Change::Run { row: "toolkitFolder" } => {
-                if let Some(folder) = dialogs::pick_folder(
-                    shell,
-                    Extra::ToolkitChooseFolder.text(language),
-                    None,
-                ) {
+            Change::Run {
+                row: "toolkitFolder",
+            } => {
+                if let Some(folder) =
+                    dialogs::pick_folder(shell, Extra::ToolkitChooseFolder.text(language), None)
+                {
                     out.actions.push(SettingsAction::AdoptToolkitFolder(folder));
                 }
             }
@@ -649,8 +701,14 @@ fn draw(
     let ctx = ui.ctx().clone();
     let painter = ui.painter().clone();
     let area = Rect::from_min_max(
-        pos2(ui.max_rect().min.x + pad::SETTINGS.0, ui.max_rect().min.y + pad::SETTINGS.1),
-        pos2(ui.max_rect().max.x - pad::SETTINGS.0, ui.max_rect().max.y - pad::SETTINGS.2),
+        pos2(
+            ui.max_rect().min.x + pad::SETTINGS.0,
+            ui.max_rect().min.y + pad::SETTINGS.1,
+        ),
+        pos2(
+            ui.max_rect().max.x - pad::SETTINGS.0,
+            ui.max_rect().max.y - pad::SETTINGS.2,
+        ),
     );
 
     // Title and the category list.
@@ -662,7 +720,7 @@ fn draw(
         language.text(Key::Settings),
         Color32::WHITE,
     );
-    let mut y = title.max.y + 26.0;
+    let mut y = title.max.y + 31.0;
     let column_w = size::SETTINGS_CATEGORY_WIDTH;
     for (index, cat) in cats.iter().enumerate() {
         let rect = Rect::from_min_size(
@@ -672,7 +730,11 @@ fn draw(
         y += size::SETTINGS_CATEGORY_ROW + 6.0;
         let selected = index == nav.category;
         let focused = selected && !nav.in_rows;
-        let response = ui.interact(rect, ui.id().with(("category", index)), Sense::click());
+        let response = ui.interact(
+            rect,
+            ui.make_persistent_id(("category", index)),
+            Sense::click(),
+        );
         let title_text = cat.category.title(language);
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::Role::Tab, true, selected, title_text)
@@ -685,8 +747,16 @@ fn draw(
         }
         let t_focus = ctx.focus_t(("category-focus", index), focused);
         let t_sel = ctx.focus_t(("category-selected", index), selected);
-        let rest = if response.hovered() && !selected { white(0.06) } else { Color32::TRANSPARENT };
-        let fill = mix(mix(rest, color::selected_category(), t_sel), Color32::WHITE, t_focus);
+        let rest = if response.hovered() && !selected {
+            white(0.06)
+        } else {
+            Color32::TRANSPARENT
+        };
+        let fill = mix(
+            mix(rest, color::selected_category(), t_sel),
+            Color32::WHITE,
+            t_focus,
+        );
         painter.rect_filled(rect, corner(radius::ROW), fill);
         let ink = mix(white(lerp(0.7, 1.0, t_sel)), Color32::BLACK, t_focus);
         painter.text(
@@ -696,7 +766,11 @@ fn draw(
             cat.category.icon().font(18.0, false),
             ink,
         );
-        let style = if selected { ty::CATEGORY_SELECTED } else { ty::CATEGORY };
+        let style = if selected {
+            ty::CATEGORY_SELECTED
+        } else {
+            ty::CATEGORY
+        };
         text::paint(
             &painter,
             pos2(rect.min.x + 18.0 + 26.0 + 14.0, rect.center().y),
@@ -790,10 +864,14 @@ mod tests {
                 .find(|r| r.id == "backdrop")
                 .unwrap()
         };
-        let rows::Control::Choice { options, .. } = rows_of(&prefs).control else { panic!() };
+        let rows::Control::Choice { options, .. } = rows_of(&prefs).control else {
+            panic!()
+        };
         assert_eq!(options.len(), 2, "no video choice without one stored");
         prefs.backdrop = Backdrop::Video;
-        let rows::Control::Choice { options, selected } = rows_of(&prefs).control else { panic!() };
+        let rows::Control::Choice { options, selected } = rows_of(&prefs).control else {
+            panic!()
+        };
         assert_eq!((options.len(), selected), (3, 2));
     }
 
@@ -801,15 +879,25 @@ mod tests {
     fn the_toolkit_rows_depend_on_what_is_installed() {
         let prefs = Preferences::first_run();
         let none = build_categories(&prefs, &env(None, UpdateState::Unknown), Language::English);
-        assert!(ids(&none, Category::Toolkit).contains(&"install"), "nothing installed: offer it");
-        let current = build_categories(&prefs, &env(Some("0.1.3-abc"), UpdateState::UpToDate), Language::English);
+        assert!(
+            ids(&none, Category::Toolkit).contains(&"install"),
+            "nothing installed: offer it"
+        );
+        let current = build_categories(
+            &prefs,
+            &env(Some("0.1.3-abc"), UpdateState::UpToDate),
+            Language::English,
+        );
         assert!(!ids(&current, Category::Toolkit).contains(&"install"));
         let outdated = build_categories(
             &prefs,
             &env(Some("0.1.3-abc"), UpdateState::Available("0.1.4".into())),
             Language::English,
         );
-        assert!(ids(&outdated, Category::Toolkit).contains(&"install"), "an update is offered");
+        assert!(
+            ids(&outdated, Category::Toolkit).contains(&"install"),
+            "an update is offered"
+        );
     }
 
     #[test]
@@ -836,19 +924,61 @@ mod tests {
     #[test]
     fn values_land_in_the_preferences() {
         let mut prefs = Preferences::first_run();
-        assert!(apply_value(&mut prefs, &Change::Choice { row: "theme", index: 2 }));
+        assert!(apply_value(
+            &mut prefs,
+            &Change::Choice {
+                row: "theme",
+                index: 2
+            }
+        ));
         assert_eq!(prefs.theme, anyps5_core::settings::Theme::Sunset);
-        assert!(apply_value(&mut prefs, &Change::Choice { row: "accent", index: 3 }));
+        assert!(apply_value(
+            &mut prefs,
+            &Change::Choice {
+                row: "accent",
+                index: 3
+            }
+        ));
         assert_eq!(prefs.accent, Some(anyps5_core::settings::Accent::Violet));
-        assert!(apply_value(&mut prefs, &Change::Toggle { row: "sounds", on: false }));
+        assert!(apply_value(
+            &mut prefs,
+            &Change::Toggle {
+                row: "sounds",
+                on: false
+            }
+        ));
         assert!(!prefs.sounds);
-        assert!(apply_value(&mut prefs, &Change::Choice { row: "motion", index: 1 }));
+        assert!(apply_value(
+            &mut prefs,
+            &Change::Choice {
+                row: "motion",
+                index: 1
+            }
+        ));
         assert!(prefs.reduced_motion);
-        assert!(apply_value(&mut prefs, &Change::Choice { row: "language", index: 0 }));
+        assert!(apply_value(
+            &mut prefs,
+            &Change::Choice {
+                row: "language",
+                index: 0
+            }
+        ));
         assert_eq!(prefs.language, anyps5_core::settings::Language::Turkish);
-        assert!(apply_value(&mut prefs, &Change::Choice { row: "cpu", index: 2 }));
+        assert!(apply_value(
+            &mut prefs,
+            &Change::Choice {
+                row: "cpu",
+                index: 2
+            }
+        ));
         assert_eq!(prefs.cpu_conversion, CpuConversion::Intel);
-        assert!(apply_value(&mut prefs, &Change::Toggle { row: "updateCheck", on: false }));
+        assert!(apply_value(
+            &mut prefs,
+            &Change::Toggle {
+                row: "updateCheck",
+                on: false
+            }
+        ));
         assert!(!prefs.check_for_updates);
         assert!(!apply_value(&mut prefs, &Change::Run { row: "rescan" }));
     }

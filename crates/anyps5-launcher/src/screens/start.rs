@@ -106,7 +106,14 @@ impl StartScreen {
 }
 
 /// A centred, wrapped paragraph.
-fn centred(painter: &egui::Painter, style: theme::TextStyle, text: &str, color: Color32, width: f32, max_rows: usize) -> std::sync::Arc<egui::Galley> {
+fn centred(
+    painter: &egui::Painter,
+    style: theme::TextStyle,
+    text: &str,
+    color: Color32,
+    width: f32,
+    max_rows: usize,
+) -> std::sync::Arc<egui::Galley> {
     let mut job = LayoutJob::simple(text.to_owned(), style.font(), color, width);
     job.halign = Align::Center;
     job.wrap.max_rows = max_rows;
@@ -125,8 +132,22 @@ fn draw(ui: &mut Ui, data: &StartData<'_>, since: f64) {
     let tile_side = size::SPLASH_TILE;
     let column_w = 380.0;
     let title_w = (screen.width() - 160.0).clamp(200.0, 900.0);
-    let title = centred(&painter, ty::SPLASH_TITLE, data.game_name, Color32::WHITE, title_w, 2);
-    let info = centred(&painter, ty::DETAIL_LARGE, language.text(Key::StartingText), white(0.6), column_w, usize::MAX);
+    let title = centred(
+        &painter,
+        ty::SPLASH_TITLE,
+        data.game_name,
+        Color32::WHITE,
+        title_w,
+        2,
+    );
+    let info = centred(
+        &painter,
+        ty::DETAIL_LARGE,
+        language.text(Key::StartingText),
+        white(0.6),
+        column_w,
+        usize::MAX,
+    );
     let status_h = ty::CHOICE_VALUE.line_height();
     let block_h = status_h + 14.0 + size::PROGRESS_HEIGHT + 14.0 + info.size().y;
     let total = tile_side + 26.0 + title.size().y + 26.0 + block_h;
@@ -158,7 +179,7 @@ fn draw(ui: &mut Ui, data: &StartData<'_>, since: f64) {
 
     // Name.
     let mut y = top + tile_side + 26.0;
-    painter.galley(pos2(cx - title.size().x * 0.5, y), title.clone(), Color32::WHITE);
+    painter.galley(pos2(cx, y), title.clone(), Color32::WHITE);
     y += title.size().y + 26.0;
 
     // "Starting..." with the timer on the right, the sweep, the explanation.
@@ -181,9 +202,11 @@ fn draw(ui: &mut Ui, data: &StartData<'_>, since: f64) {
         pos2(left, y),
         vec2(column_w, size::PROGRESS_HEIGHT),
     )));
-    IndeterminateLine::new(data.accent).width(column_w).show(&mut bar);
+    IndeterminateLine::new(data.accent)
+        .width(column_w)
+        .show(&mut bar);
     y += size::PROGRESS_HEIGHT + 14.0;
-    painter.galley(pos2(cx - info.size().x * 0.5, y), info, white(0.6));
+    painter.galley(pos2(cx, y), info, white(0.6));
 
     // The hint, 40 above the bottom edge.
     let hint_rect = Rect::from_center_size(pos2(cx, screen.max.y - 40.0 - 12.0), vec2(400.0, 24.0));

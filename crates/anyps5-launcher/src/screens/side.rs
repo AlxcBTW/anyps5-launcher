@@ -115,12 +115,7 @@ pub struct SideDrawn {
 }
 
 /// Draws the panel (or its slide-out). `None` once it is fully closed.
-pub fn draw(
-    ctx: &Context,
-    open: bool,
-    view: &SideView<'_>,
-    rows: &mut [Row],
-) -> Option<SideDrawn> {
+pub fn draw(ctx: &Context, open: bool, view: &SideView<'_>, rows: &mut [Row]) -> Option<SideDrawn> {
     let opts = ListOptions {
         accent: view.accent,
         language: view.language,

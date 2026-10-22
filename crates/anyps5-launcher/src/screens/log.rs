@@ -3,18 +3,21 @@
 //! * [`LogView`]: a full-screen overlay with the game's log in a selectable monospaced box that
 //!   starts at the bottom, the diagnosis sentence above it, and the buttons "Make a Report" and
 //!   "Close". Back and select close it.
-//! * [`DiagnosisView`]: the UI's own copy of the pipeline's diagnosis categories with the sentence
-//!   in the launcher's language. The host maps the pipeline's `Diagnosis` onto it.
+//! * [`diagnosis_summary`]: the pipeline's `Diagnosis` as a sentence in the launcher's language.
 //! * [`save_report_with_dialog`]: the report text goes through a native save dialog.
 
 use std::path::{Path, PathBuf};
 
-use egui::{Align2, Color32, Context, Layout, Rect, RichText, ScrollArea, Ui, UiBuilder, pos2, vec2};
+use egui::{
+    Align2, Color32, Context, Layout, Rect, RichText, ScrollArea, Ui, UiBuilder, pos2, vec2,
+};
 
+use anyps5_core::diagnosis::Diagnosis;
+
+use crate::screens::ToastRequest;
 use crate::screens::dialogs;
 use crate::screens::side::commands;
 use crate::screens::strings::Extra;
-use crate::screens::ToastRequest;
 use crate::ui::Shell;
 use crate::ui::chrome::fullscreen_panel;
 use crate::ui::components::ConsoleButton;
@@ -29,52 +32,32 @@ use crate::ui::theme::{self, color, pad, ty, white};
 /// Longest engine message shown in a sentence, cut with an ellipsis.
 pub const ENGINE_MESSAGE_LIMIT: usize = 200;
 
-/// Why a game stopped, as the UI shows it. One variant per category of the pipeline's diagnosis.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DiagnosisView {
-    /// A module (DLL or PRX) could not be loaded.
-    MissingModule(String),
-    /// The game called a system function the engine does not implement yet.
-    Unsupported(String),
-    GpuLost,
-    OutOfMemory,
-    /// Any other error the engine stopped on, with its message.
-    EngineError(String),
-    /// The process died by an exception, for example `0xC0000005 (ACCESS_VIOLATION)`.
-    Crashed(String),
-    /// The host CPU lacks extensions the game needs.
-    HostCpu(String),
+/// One sentence for a diagnosis in the launcher's language. The categories are the pipeline's.
+pub fn diagnosis_summary(diagnosis: &Diagnosis, language: Language) -> String {
+    match diagnosis {
+        Diagnosis::MissingModule(name) => {
+            language.format(Key::DiagnosisMissingModule, &[Arg::Str(name)])
+        }
+        Diagnosis::Unsupported(function) => {
+            language.format(Key::DiagnosisUnsupported, &[Arg::Str(function)])
+        }
+        Diagnosis::GpuLost => language.text(Key::DiagnosisGpuLost).to_owned(),
+        Diagnosis::OutOfMemory => language.text(Key::DiagnosisOutOfMemory).to_owned(),
+        Diagnosis::EngineError(message) => language.format(
+            Key::DiagnosisEngineError,
+            &[Arg::Str(&cut_message(message, ENGINE_MESSAGE_LIMIT))],
+        ),
+        Diagnosis::Crashed(what) => language.format(Key::DiagnosisCrashed, &[Arg::Str(what)]),
+        Diagnosis::HostCpu(list) => Extra::DiagnosisHostCpu.format(language, &[Arg::Str(list)]),
+    }
 }
 
-impl DiagnosisView {
-    /// One sentence in the launcher's language.
-    pub fn summary(&self, language: Language) -> String {
-        match self {
-            DiagnosisView::MissingModule(name) => {
-                language.format(Key::DiagnosisMissingModule, &[Arg::Str(name)])
-            }
-            DiagnosisView::Unsupported(function) => {
-                language.format(Key::DiagnosisUnsupported, &[Arg::Str(function)])
-            }
-            DiagnosisView::GpuLost => language.text(Key::DiagnosisGpuLost).to_owned(),
-            DiagnosisView::OutOfMemory => language.text(Key::DiagnosisOutOfMemory).to_owned(),
-            DiagnosisView::EngineError(message) => language.format(
-                Key::DiagnosisEngineError,
-                &[Arg::Str(&cut_message(message, ENGINE_MESSAGE_LIMIT))],
-            ),
-            DiagnosisView::Crashed(what) => {
-                language.format(Key::DiagnosisCrashed, &[Arg::Str(what)])
-            }
-            DiagnosisView::HostCpu(list) => {
-                Extra::DiagnosisHostCpu.format(language, &[Arg::Str(list)])
-            }
-        }
-    }
-
-    /// The toast after a game ended: `"<game>: <sentence>"` with a warning glyph.
-    pub fn toast(&self, game_name: &str, language: Language) -> ToastRequest {
-        ToastRequest::warning(format!("{game_name}: {}", self.summary(language)))
-    }
+/// The toast after a game ended: `"<game>: <sentence>"` with a warning glyph.
+pub fn diagnosis_toast(diagnosis: &Diagnosis, game_name: &str, language: Language) -> ToastRequest {
+    ToastRequest::warning(format!(
+        "{game_name}: {}",
+        diagnosis_summary(diagnosis, language)
+    ))
 }
 
 /// Cuts a message at `limit` characters and adds an ellipsis.
@@ -89,8 +72,8 @@ pub fn cut_message(message: &str, limit: usize) -> String {
 
 /// The amber diagnosis line of the hero (5.3): a warning glyph and the sentence, 14 regular, at
 /// most two lines and 520 wide.
-pub fn diagnosis_line(ui: &mut Ui, diagnosis: &DiagnosisView, language: Language) -> egui::Response {
-    let sentence = diagnosis.summary(language);
+pub fn diagnosis_line(ui: &mut Ui, diagnosis: &Diagnosis, language: Language) -> egui::Response {
+    let sentence = diagnosis_summary(diagnosis, language);
     let painter = ui.painter().clone();
     let style = ty::DETAIL_LARGE;
     let width = 520.0;
@@ -113,7 +96,10 @@ pub fn diagnosis_line(ui: &mut Ui, diagnosis: &DiagnosisView, language: Language
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, sentence.as_str()));
     if ui.is_rect_visible(rect) {
         painter.text(
-            pos2(rect.min.x + glyph * 0.5, rect.min.y + style.line_height() * 0.5),
+            pos2(
+                rect.min.x + glyph * 0.5,
+                rect.min.y + style.line_height() * 0.5,
+            ),
             Align2::CENTER_CENTER,
             Icon::WARNING.glyph(),
             Icon::WARNING.font(glyph, true),
@@ -140,7 +126,7 @@ pub enum LogAction {
 /// The log, borrowed for one frame.
 pub struct LogData<'a> {
     pub game_name: Option<&'a str>,
-    pub diagnosis: Option<&'a DiagnosisView>,
+    pub diagnosis: Option<&'a Diagnosis>,
     /// The in-memory log, the failure message and the file's tail, as one text.
     pub text: &'a str,
     pub language: Language,
@@ -192,9 +178,13 @@ impl LogView {
             actions.push(LogAction::Close);
         }
         let mut clicked = None;
-        let drawn = fullscreen_panel(ctx, "log-view", self.open, GlassStyle::log_panel(), |ui, _| {
-            draw(ui, data, &mut clicked)
-        });
+        let drawn = fullscreen_panel(
+            ctx,
+            "log-view",
+            self.open,
+            GlassStyle::log_panel(),
+            |ui, _| draw(ui, data, &mut clicked),
+        );
         if drawn.is_none() {
             self.closing = false;
         }
@@ -271,14 +261,23 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
 
     // The diagnosis box.
     if let Some(diagnosis) = data.diagnosis {
-        let sentence = diagnosis.summary(language);
+        let sentence = diagnosis_summary(diagnosis, language);
         let inner_w = area.width() - 32.0 - 26.0;
-        let galley = text::layout(&painter, ty::DIAGNOSIS_LOG, &sentence, Color32::PLACEHOLDER, inner_w);
+        let galley = text::layout(
+            &painter,
+            ty::DIAGNOSIS_LOG,
+            &sentence,
+            Color32::PLACEHOLDER,
+            inner_w,
+        );
         let h = galley.size().y.max(18.0) + 32.0;
         let rect = Rect::from_min_size(pos2(area.min.x, y), vec2(area.width(), h));
         paint_glass(ui.ctx(), &painter, rect, GlassStyle::diagnosis_box());
         painter.text(
-            pos2(rect.min.x + 16.0 + 9.0, rect.min.y + 16.0 + ty::DIAGNOSIS_LOG.line_height() * 0.5),
+            pos2(
+                rect.min.x + 16.0 + 9.0,
+                rect.min.y + 16.0 + ty::DIAGNOSIS_LOG.line_height() * 0.5,
+            ),
             Align2::CENTER_CENTER,
             Icon::WARNING.glyph(),
             Icon::WARNING.font(17.0, true),
@@ -297,12 +296,18 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
     paint_glass(ui.ctx(), &painter, log_rect, GlassStyle::log_box());
     let inner = log_rect.shrink(18.0);
     let mut child = ui.new_child(UiBuilder::new().max_rect(inner));
-    let body = if data.text.is_empty() { EMPTY_LOG } else { data.text };
+    let body = if data.text.is_empty() {
+        EMPTY_LOG
+    } else {
+        data.text
+    };
     ScrollArea::vertical()
         .id_salt("log-text")
         .auto_shrink([false, false])
         .stick_to_bottom(true)
-        .scroll_bar_visibility(egui::containers::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+        .scroll_bar_visibility(
+            egui::containers::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+        )
         .show(&mut child, |ui| {
             ui.add(
                 egui::Label::new(
@@ -324,7 +329,13 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
 pub fn report_file_name(title_id: &str, now: time::OffsetDateTime) -> String {
     let safe: String = title_id
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     format!(
         "{safe}-{:04}{:02}{:02}-{:02}{:02}{:02}.txt",
@@ -359,7 +370,10 @@ pub fn save_report_with_dialog(
             Some(path),
             ToastRequest::new(Icon::FILE_TEXT, language.text(Key::ReportSaved)),
         ),
-        Err(_) => (None, ToastRequest::warning(language.text(Key::ReportFailed))),
+        Err(_) => (
+            None,
+            ToastRequest::warning(language.text(Key::ReportFailed)),
+        ),
     })
 }
 
@@ -376,18 +390,21 @@ mod tests {
     #[test]
     fn every_category_has_a_sentence_in_both_languages() {
         let all = [
-            DiagnosisView::MissingModule("libgcc_s_seh-1.dll".into()),
-            DiagnosisView::Unsupported("sceFoo".into()),
-            DiagnosisView::GpuLost,
-            DiagnosisView::OutOfMemory,
-            DiagnosisView::EngineError("boom".into()),
-            DiagnosisView::Crashed("0xC0000005 (ACCESS_VIOLATION)".into()),
-            DiagnosisView::HostCpu("AVX2".into()),
+            Diagnosis::MissingModule("libgcc_s_seh-1.dll".into()),
+            Diagnosis::Unsupported("sceFoo".into()),
+            Diagnosis::GpuLost,
+            Diagnosis::OutOfMemory,
+            Diagnosis::EngineError("boom".into()),
+            Diagnosis::Crashed("0xC0000005 (ACCESS_VIOLATION)".into()),
+            Diagnosis::HostCpu("AVX2".into()),
         ];
         for language in Language::ALL {
             for d in &all {
-                let s = d.summary(language);
-                assert!(!s.is_empty() && !s.contains("%@"), "{d:?} {language:?}: {s}");
+                let s = diagnosis_summary(d, language);
+                assert!(
+                    !s.is_empty() && !s.contains("%@"),
+                    "{d:?} {language:?}: {s}"
+                );
             }
         }
     }
@@ -395,15 +412,21 @@ mod tests {
     #[test]
     fn arguments_land_in_the_sentence() {
         assert_eq!(
-            DiagnosisView::MissingModule("libX.dll".into()).summary(Language::English),
+            diagnosis_summary(
+                &Diagnosis::MissingModule("libX.dll".into()),
+                Language::English
+            ),
             "Missing module: libX.dll. Unlocking the game again may fix it."
         );
         assert_eq!(
-            DiagnosisView::Crashed("0xC0000005 (ACCESS_VIOLATION)".into()).summary(Language::English),
+            diagnosis_summary(
+                &Diagnosis::Crashed("0xC0000005 (ACCESS_VIOLATION)".into()),
+                Language::English
+            ),
             "The game crashed (0xC0000005 (ACCESS_VIOLATION))."
         );
         assert_eq!(
-            DiagnosisView::HostCpu("AVX2".into()).summary(Language::English),
+            diagnosis_summary(&Diagnosis::HostCpu("AVX2".into()), Language::English),
             "This CPU lacks AVX2, which the game needs."
         );
     }
@@ -411,14 +434,14 @@ mod tests {
     #[test]
     fn long_engine_messages_are_cut_at_200_characters() {
         let long = "x".repeat(300);
-        let sentence = DiagnosisView::EngineError(long).summary(Language::English);
+        let sentence = diagnosis_summary(&Diagnosis::EngineError(long), Language::English);
         assert_eq!(sentence, format!("Engine error: {}…", "x".repeat(200)));
         assert_eq!(cut_message("short", 200), "short");
     }
 
     #[test]
     fn the_toast_names_the_game() {
-        let toast = DiagnosisView::GpuLost.toast("Stray", Language::English);
+        let toast = diagnosis_toast(&Diagnosis::GpuLost, "Stray", Language::English);
         assert!(toast.text.starts_with("Stray: "));
         assert_eq!(toast.icon, Icon::WARNING);
     }
@@ -426,7 +449,10 @@ mod tests {
     #[test]
     fn report_files_are_named_like_the_original() {
         let t = date(2026, 10, 17, 21, 14, 9);
-        assert_eq!(report_file_name("PPSA02100", t), "PPSA02100-20261017-211409.txt");
+        assert_eq!(
+            report_file_name("PPSA02100", t),
+            "PPSA02100-20261017-211409.txt"
+        );
         assert_eq!(report_file_name("a b/c", t), "a_b_c-20261017-211409.txt");
     }
 }

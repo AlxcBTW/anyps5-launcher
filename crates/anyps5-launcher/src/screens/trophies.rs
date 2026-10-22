@@ -6,12 +6,11 @@
 //! textures (greyscale and dimmed until a trophy is earned).
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use anyps5_core::trophies::{Trophy, TrophySet};
 use egui::{
-    Align, Align2, Color32, ColorImage, Context, Layout, Rect, Sense, TextureHandle,
-    TextureId, TextureOptions, Ui, UiBuilder, pos2, vec2,
+    Align2, Color32, ColorImage, Context, Rect, Sense, TextureHandle, TextureId, TextureOptions,
+    Ui, UiBuilder, pos2, vec2,
 };
 
 use crate::screens::clamped;
@@ -22,9 +21,7 @@ use crate::screens::side::commands;
 use crate::ui::Shell;
 use crate::ui::anim::AnimExt;
 use crate::ui::chrome::fullscreen_panel;
-use crate::ui::components::{
-    self, corner, hint_bar, paint_focus_glow, paint_focus_stroke, paint_progress, scale_rect,
-};
+use crate::ui::components::{corner, paint_focus_stroke, paint_progress};
 use crate::ui::glass::GlassStyle;
 use crate::ui::i18n::{Key, Language};
 use crate::ui::icons::Icon;
@@ -86,9 +83,10 @@ pub fn decode_icon(data: &[u8], earned: bool) -> Option<ColorImage> {
     let (w, h) = (decoded.width() as usize, decoded.height() as usize);
     let mut pixels = decoded.into_raw();
     if !earned {
-        for px in pixels.chunks_exact_mut(4) {
-            let luma = (0.2126 * f32::from(px[0]) + 0.7152 * f32::from(px[1]) + 0.0722 * f32::from(px[2]))
-                .round() as u8;
+        for px in pixels.as_chunks_mut::<4>().0 {
+            let luma =
+                (0.2126 * f32::from(px[0]) + 0.7152 * f32::from(px[1]) + 0.0722 * f32::from(px[2]))
+                    .round() as u8;
             px[0] = luma;
             px[1] = luma;
             px[2] = luma;
@@ -98,12 +96,7 @@ pub fn decode_icon(data: &[u8], earned: bool) -> Option<ColorImage> {
 }
 
 /// Paints a trophy icon tile: the picture (or a trophy glyph) clipped to a rounded square.
-pub fn paint_trophy_icon(
-    ui: &mut Ui,
-    rect: Rect,
-    texture: Option<TextureId>,
-    earned: bool,
-) {
+pub fn paint_trophy_icon(ui: &mut Ui, rect: Rect, texture: Option<TextureId>, earned: bool) {
     let side = rect.width();
     let r = radius::trophy_icon(side);
     ui.painter().rect_filled(rect, corner(r), white(0.07));
@@ -239,9 +232,12 @@ impl TrophyListPanel {
         let set = data.set;
         let painter = ui.painter().clone();
         let icon_rect = Rect::from_min_size(header.min, vec2(header.height(), header.height()));
-        let texture = self
-            .icons
-            .get(&ctx, &format!("{}/set", data.game_key), set.icon.as_deref(), true);
+        let texture = self.icons.get(
+            &ctx,
+            &format!("{}/set", data.game_key),
+            set.icon.as_deref(),
+            true,
+        );
         paint_trophy_icon(ui, icon_rect, texture, true);
 
         // Overline, title and the progress row, centred against the icon.
@@ -281,7 +277,13 @@ impl TrophyListPanel {
         let mut cx = x;
         let percent_text = format!("{percent}%");
         let w = text::tabular_width(&painter, ty::PERCENT, &percent_text);
-        text::paint_tabular(&painter, pos2(cx, row_y), ty::PERCENT, &percent_text, Color32::WHITE);
+        text::paint_tabular(
+            &painter,
+            pos2(cx, row_y),
+            ty::PERCENT,
+            &percent_text,
+            Color32::WHITE,
+        );
         cx += w + 16.0;
         let bar = Rect::from_center_size(pos2(cx + 130.0, row_y + row_h * 0.5), vec2(260.0, 4.0));
         paint_progress(&painter, bar, percent as f32 / 100.0, data.accent);
@@ -315,12 +317,7 @@ impl TrophyListPanel {
         }
 
         // The hint bar, right aligned and centred on the header.
-        let mut hints = ui.new_child(
-            UiBuilder::new()
-                .max_rect(header)
-                .layout(Layout::right_to_left(Align::Center)),
-        );
-        hint_bar(&mut hints, language, false);
+        crate::screens::right_aligned_hints(ui, header, language);
     }
 
     fn draw_rows(&mut self, ui: &mut Ui, data: &TrophyData<'_>, clicked: &mut Option<usize>) {
@@ -330,7 +327,9 @@ impl TrophyListPanel {
         let mut area = egui::ScrollArea::vertical()
             .id_salt(id)
             .auto_shrink([false, false])
-            .scroll_bar_visibility(egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden);
+            .scroll_bar_visibility(
+                egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden,
+            );
         if let Some(offset) = scroll_to {
             area = area.vertical_scroll_offset(offset);
         }
@@ -345,7 +344,8 @@ impl TrophyListPanel {
                         let rect = self.draw_row(ui, data, trophy, i, i == self.index);
                         geometry.push((rect.min.y - origin, rect.height()));
                         // Hit-test after drawing so the click reads the row's own response.
-                        let response = ui.interact(rect, ui.id().with(("trophy-row", i)), Sense::click());
+                        let response =
+                            ui.interact(rect, id.with(("trophy-row", i)), Sense::click());
                         if response.clicked() {
                             *clicked = Some(i);
                         }
@@ -357,7 +357,7 @@ impl TrophyListPanel {
             geometry,
             output.content_size.y,
             output.inner_rect.height(),
-            output.state.offset.y,
+            output.state.clamped_offset().y,
         );
     }
 
@@ -401,8 +401,22 @@ impl TrophyListPanel {
         } else {
             trophy.detail.as_str()
         };
-        let name_g = clamped(&painter, ty::TROPHY_NAME, name, Color32::PLACEHOLDER, text_w, 1);
-        let detail_g = clamped(&painter, ty::DETAIL_LARGE, detail, Color32::PLACEHOLDER, text_w, 2);
+        let name_g = clamped(
+            &painter,
+            ty::TROPHY_NAME,
+            name,
+            Color32::PLACEHOLDER,
+            text_w,
+            1,
+        );
+        let detail_g = clamped(
+            &painter,
+            ty::DETAIL_LARGE,
+            detail,
+            Color32::PLACEHOLDER,
+            text_w,
+            2,
+        );
         let progress = (!earned && !secret).then_some(trophy.progress).flatten();
         let mut block = name_g.size().y + 6.0 + detail_g.size().y;
         if progress.is_some() {
@@ -415,11 +429,15 @@ impl TrophyListPanel {
         }
         let t = ctx.focus_t(("trophy-row-focus", index), focused);
         let r = radius::TROPHY_ROW;
-        paint_focus_glow(&painter, rect, r, 2.0, t);
+        // Ring only: a glow would show through the translucent row.
         painter.rect_filled(
             rect,
             corner(r),
-            mix(color::surface_trophy_row(), color::surface_trophy_row_focused(), t),
+            mix(
+                color::surface_trophy_row(),
+                color::surface_trophy_row_focused(),
+                t,
+            ),
         );
         paint_focus_stroke(&painter, rect, r, 2.0, t);
 
@@ -459,7 +477,11 @@ impl TrophyListPanel {
         if let Some((value, target)) = progress {
             let y = detail_y + detail_h + 6.0;
             let bar = Rect::from_center_size(pos2(x + 90.0, y + 7.2), vec2(180.0, 4.0));
-            let fraction = if target == 0 { 0.0 } else { value as f32 / target as f32 };
+            let fraction = if target == 0 {
+                0.0
+            } else {
+                value as f32 / target as f32
+            };
             paint_progress(&painter, bar, fraction.clamp(0.0, 1.0), data.accent);
             text::paint_tabular(
                 &painter,
@@ -472,7 +494,11 @@ impl TrophyListPanel {
 
         // Grade and date, right aligned.
         let right = rect.max.x - 18.0;
-        let grade_color = if earned { grade.color() } else { fade(grade.color(), 0.55) };
+        let grade_color = if earned {
+            grade.color()
+        } else {
+            fade(grade.color(), 0.55)
+        };
         let rows_h = grade_style.line_height() + 6.0 + date_style.line_height();
         let gy = rect.center().y - rows_h * 0.5;
         let label = text::paint(
@@ -510,7 +536,10 @@ mod tests {
         let mut bytes = Vec::new();
         let image = image::RgbaImage::from_pixel(2, 2, image::Rgba(rgba));
         image
-            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
             .unwrap();
         bytes
     }

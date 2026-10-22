@@ -105,6 +105,10 @@ mod tests {
         assert_eq!(centred_offset(0.0, 58.0, 400.0, 1000.0), 0.0);
         assert_eq!(centred_offset(500.0, 58.0, 400.0, 1000.0), 329.0);
         assert_eq!(centred_offset(980.0, 58.0, 400.0, 1000.0), 600.0);
-        assert_eq!(centred_offset(10.0, 58.0, 400.0, 300.0), 0.0, "short content");
+        assert_eq!(
+            centred_offset(10.0, 58.0, 400.0, 300.0),
+            0.0,
+            "short content"
+        );
     }
 }

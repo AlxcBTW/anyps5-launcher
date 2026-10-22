@@ -501,7 +501,8 @@ impl<'a> PanelRow<'a> {
                 text_width,
             );
             job.wrap.max_rows = 2;
-            job.wrap.break_anywhere = true;
+            // Words wrap whole (the original); only a single long word, such as a path, breaks.
+            job.wrap.break_anywhere = false;
             job.sections[0].format.line_height = Some(ty::DETAIL.line_height());
             painter.layout_job(job)
         });

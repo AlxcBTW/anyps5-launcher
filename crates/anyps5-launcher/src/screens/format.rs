@@ -33,7 +33,10 @@ pub fn date_text(unix_micros: i64, offset_seconds: i32, language: Language) -> S
     let local = unix_micros.div_euclid(1_000_000) + i64::from(offset_seconds);
     let (year, month, day) = civil_from_days(local.div_euclid(86_400));
     let second_of_day = local.rem_euclid(86_400);
-    let (hour, minute) = ((second_of_day / 3600) as u32, (second_of_day % 3600 / 60) as u32);
+    let (hour, minute) = (
+        (second_of_day / 3600) as u32,
+        (second_of_day % 3600 / 60) as u32,
+    );
     match language {
         Language::English => {
             let (h12, suffix) = match hour {
@@ -144,11 +147,19 @@ mod tests {
         );
         // Midnight and noon are 12, not 0.
         assert_eq!(
-            date_text(OCT_17 + 2 * 3600 * 1_000_000 + 46 * 60 * 1_000_000, 0, Language::English),
+            date_text(
+                OCT_17 + 2 * 3600 * 1_000_000 + 46 * 60 * 1_000_000,
+                0,
+                Language::English
+            ),
             "Oct 18, 2026 at 12:00 AM"
         );
         assert_eq!(
-            date_text(OCT_17 - 9 * 3600 * 1_000_000 - 14 * 60 * 1_000_000, 0, Language::English),
+            date_text(
+                OCT_17 - 9 * 3600 * 1_000_000 - 14 * 60 * 1_000_000,
+                0,
+                Language::English
+            ),
             "Oct 17, 2026 at 12:00 PM"
         );
     }
@@ -190,7 +201,10 @@ mod tests {
             abbreviate_path(Path::new("C:\\Users\\me\\Pictures\\AnyPS5"), Some(home)),
             "~\\Pictures\\AnyPS5"
         );
-        assert_eq!(abbreviate_path(Path::new("D:\\Games"), Some(home)), "D:\\Games");
+        assert_eq!(
+            abbreviate_path(Path::new("D:\\Games"), Some(home)),
+            "D:\\Games"
+        );
         assert_eq!(abbreviate_path(home, Some(home)), "~");
     }
 }
