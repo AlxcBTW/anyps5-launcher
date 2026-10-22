@@ -446,10 +446,7 @@ impl LauncherApp {
 
     /// Switches between filling the screen and a maximised window, and remembers the choice.
     fn set_fullscreen(&mut self, ctx: &Context, fullscreen: bool) {
-        ctx.send_viewport_cmd(ViewportCommand::Fullscreen(fullscreen));
-        if !fullscreen {
-            ctx.send_viewport_cmd(ViewportCommand::Maximized(true));
-        }
+        enter_fullscreen(ctx, fullscreen);
         self.model.edit_prefs(|p| p.fullscreen = fullscreen);
     }
 
@@ -613,6 +610,19 @@ impl LauncherApp {
     }
 }
 
+/// Fills the screen, or leaves it for a maximised window. A maximised window is restored first:
+/// Windows keeps a maximised frameless window's content to the work area, so in fullscreen the
+/// taskbar's strip would stay empty.
+fn enter_fullscreen(ctx: &Context, fullscreen: bool) {
+    if fullscreen {
+        ctx.send_viewport_cmd(ViewportCommand::Maximized(false));
+        ctx.send_viewport_cmd(ViewportCommand::Fullscreen(true));
+    } else {
+        ctx.send_viewport_cmd(ViewportCommand::Fullscreen(false));
+        ctx.send_viewport_cmd(ViewportCommand::Maximized(true));
+    }
+}
+
 /// Runs the launcher.
 pub fn run() -> eframe::Result {
     // Read before the window exists: it opens filling its screen unless the player chose a window.
@@ -629,7 +639,8 @@ pub fn run() -> eframe::Result {
                 crate::ui::theme::MIN_WINDOW.0,
                 crate::ui::theme::MIN_WINDOW.1,
             ])
-            .with_maximized(true),
+            // Filling the screen starts from a plain window (see `enter_fullscreen`).
+            .with_maximized(!fullscreen),
         ..Default::default()
     };
     crate::ui::restrict_backends(&mut options);
