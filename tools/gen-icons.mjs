@@ -8,7 +8,7 @@ const names = `squares-four dots-nine gear-six game-controller lock lock-open wa
 check-circle arrows-clockwise arrow-clockwise hourglass play play-circle x trophy dots-three circle-dashed
 hard-drive hash tag folder magnifying-glass stack caret-left caret-right caret-up caret-down minus plus
 stethoscope file-text paint-brush globe sliders-horizontal wrench info palette circle-half images image wind
-user-circle speaker-high eye-slash power rectangle frame-corners app-window arrows-out-simple wave-sine keyboard
+user-circle speaker-high music-notes eye-slash power rectangle frame-corners app-window arrows-out-simple wave-sine keyboard
 sliders gauge translate sparkle trash mouse arrows-down-up chart-line-up crosshair timer person-simple-walk
 export download-simple arrow-counter-clockwise circle list hand-pointing arrows-out-cardinal camera text-aa
 x-circle arrow-right check question folder-open folder-simple-dashed arrow-up arrow-down arrow-left`.split(/\s+/);

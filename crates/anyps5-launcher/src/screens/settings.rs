@@ -249,6 +249,9 @@ pub fn build_categories(
     let behaviour = vec![
         Row::text("name", t(Key::ProfileName), prefs.profile_name.clone()).icon(Icon::USER_CIRCLE),
         Row::toggle("sounds", t(Key::Sounds), prefs.sounds).icon(Icon::SPEAKER_HIGH),
+        Row::toggle("music", Extra::HomeMusic.text(language), prefs.music)
+            .detail(Extra::HomeMusicDetail.text(language))
+            .icon(Icon::MUSIC_NOTES),
         Row::toggle("hide", t(Key::HideWhilePlaying), prefs.hide_while_playing)
             .icon(Icon::EYE_SLASH),
     ];
@@ -419,6 +422,7 @@ pub fn apply_value(prefs: &mut Preferences, change: &Change) -> bool {
             }
         }
         Change::Toggle { row: "sounds", on } => prefs.sounds = *on,
+        Change::Toggle { row: "music", on } => prefs.music = *on,
         Change::Toggle { row: "hide", on } => prefs.hide_while_playing = *on,
         Change::Toggle {
             row: "updateCheck",
@@ -955,6 +959,14 @@ mod tests {
             }
         ));
         assert!(!prefs.sounds);
+        assert!(apply_value(
+            &mut prefs,
+            &Change::Toggle {
+                row: "music",
+                on: false
+            }
+        ));
+        assert!(!prefs.music);
         assert!(apply_value(
             &mut prefs,
             &Change::Choice {
