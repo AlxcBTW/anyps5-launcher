@@ -66,9 +66,13 @@ pub trait OverlayHost {
         &mut self,
         _cx: &mut OverlayCx<'_>,
         _key: egui::Key,
+        _physical_key: Option<egui::Key>,
         _modifiers: egui::Modifiers,
     ) {
     }
+
+    /// Once per frame after the overlays, open or not: background work and the trophy banner.
+    fn frame(&mut self, _cx: &mut OverlayCx<'_>) {}
 }
 
 /// The placeholder host: draws nothing and closes on back and options.

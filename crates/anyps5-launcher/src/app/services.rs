@@ -12,7 +12,7 @@ use anyps5_core::events::{CancelToken, CoreEvent, Notifier};
 use anyps5_core::library::{self, Game, LibraryWatcher};
 use anyps5_core::paths::{self, GameId};
 use anyps5_core::settings::{ConsoleLanguage, Preferences};
-use anyps5_core::trophies::Trophies;
+use anyps5_core::trophies::{Trophies, TrophyWatcher};
 use egui::Context;
 
 pub struct Services {
@@ -23,6 +23,8 @@ pub struct Services {
     watched: Option<PathBuf>,
     busy: Arc<AtomicBool>,
     folder: Option<Receiver<Option<PathBuf>>>,
+    /// Polls the running game's trophy records (the banner and the live list).
+    trophy_watch: Option<(GameId, TrophyWatcher)>,
 }
 
 impl Services {
@@ -37,6 +39,7 @@ impl Services {
             watched: None,
             busy: Arc::new(AtomicBool::new(false)),
             folder: None,
+            trophy_watch: None,
         }
     }
 
@@ -130,6 +133,45 @@ impl Services {
                 notify();
             })
             .ok();
+    }
+
+    /// Starts watching the trophy records of a running game (one game at a time).
+    pub fn watch_trophies(&mut self, game: &Game, root: Option<&Path>, prefs: &Preferences) {
+        if self
+            .trophy_watch
+            .as_ref()
+            .is_some_and(|(id, _)| *id == game.id)
+        {
+            return;
+        }
+        self.stop_trophy_watch();
+        let Some(root) = root else { return };
+        let copy = paths::unlocked_copy_dir(root, &game.title_id, &game.id);
+        let number = prefs
+            .game_settings(&game.id)
+            .language
+            .unwrap_or(match prefs.language {
+                anyps5_core::settings::Language::Turkish => 19,
+                anyps5_core::settings::Language::English => 1,
+            });
+        let languages: Vec<String> = ConsoleLanguage::tag(number)
+            .map(|tag| vec![tag.to_owned()])
+            .unwrap_or_default();
+        let watcher = TrophyWatcher::start(
+            game.clone(),
+            copy,
+            languages,
+            self.tx.clone(),
+            self.notify.clone(),
+        );
+        self.trophy_watch = Some((game.id.clone(), watcher));
+    }
+
+    /// Stops the trophy watch; the thread is joined off the UI thread.
+    pub fn stop_trophy_watch(&mut self) {
+        if let Some((_, watcher)) = self.trophy_watch.take() {
+            std::thread::spawn(move || drop(watcher));
+        }
     }
 
     /// Opens the native folder dialog on its own thread. False when one is already open.

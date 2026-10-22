@@ -158,3 +158,21 @@ pub fn restrict_backends(options: &mut eframe::NativeOptions) {
         create_new.instance_descriptor.backends = Backends::VULKAN | Backends::DX12;
     }
 }
+
+#[cfg(test)]
+impl Shell {
+    /// A shell without GPU, gamepad or sound for tests that drive whole frames.
+    pub fn for_test(ctx: &Context, theme: Theme) -> Self {
+        theme::install(ctx);
+        let mut sounds = Sounds::new();
+        sounds.enabled = false;
+        Self {
+            input: Input::new(None),
+            sounds,
+            backdrop: Backdrop::new(theme),
+            language: Language::English,
+            accent: theme.default_accent(),
+            scale: 1.0,
+        }
+    }
+}

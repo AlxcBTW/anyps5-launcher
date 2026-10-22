@@ -1650,3 +1650,28 @@ Decisions and deviations:
 - The artwork is decoded to at most 2048 px (the original: 1.6 x the window).
 - Dev builds compile dependencies with `opt-level = 2` (image decoding is unusably slow otherwise).
 - Previews for local comparison can take real art from a dump on the machine (`ANYPS5_PREVIEW_REAL_ART=<dump folder>`); nothing of it is copied.
+
+## 16. Implemented panel wiring and window chrome (crate `anyps5-launcher`, modules `app::panels`, `app::toolkit`, `app::window_chrome`)
+
+`app::panels::PanelHost` is the real `OverlayHost`; the launcher and `--demo` run with it (`NoPanels` stays for tests of the model).
+
+| Overlay | Panel | Opened from | On close |
+|---|---|---|---|
+| `Settings` | `settings` | options button, `Ctrl+,` | back to home |
+| `Library` | `library` | library button | pick selects the game (focus on the tiles) and closes |
+| `GameSettings` | `game_settings` | "..." button | back to home |
+| `Controls`, `Advanced` | `controls`, `advanced` | rows of the game settings | back returns to the game settings on the row that opened them (no slide); a click on the scrim closes everything |
+| `Trophies` | `trophies` | trophy button, row of the game settings | back to home |
+| `Log` | `log` | "Open log" row | back to home |
+| `ConfirmUninstall` | `UninstallPanel` | "Uninstall" row | both answers close everything, as in the original |
+
+- **Keeping in step.** A panel opens when `Model::overlay` becomes its overlay and closes (slides out) when another overlay or none is open. The four side panels share one frame, so switching between them swaps the content without a slide. Commands routed by the model are queued in the host and handed to the panel with the raw captured keys of the controls panel.
+- **Persistence.** The settings panel edits `Model::prefs` in place; game settings, controls and advanced edit a copy of the game's `GameSettings` that is stored back (`Preferences::set_game_settings`) when the panel reports `changed`. Either way `Model::mark_prefs_dirty` makes the host write `preferences.json` atomically at the end of the frame (and on exit). A panel that was only looked at writes nothing.
+- **Theme and accent** reach `Shell::set_theme` inside the settings panel while the choice is made (the backdrop cross-fades) and are saved with the other preferences.
+- **Sounds.** The panels play their own cues, so the host closes and switches overlays silently (`Model::dismiss_overlay`, `Model::switch_overlay`).
+- **Actions.** Reinstall closes the panel and queues `UnlockAgain`. Show in Explorer selects the unlocked copy (the dump folder when there is none). Open log shows the failure message and the last 60 000 bytes of the game's log, and the diagnosis sentence when the game ended on an error. Make a report (also from the log view) writes `Logs\Reports\<TITLEID>-<stamp>.txt` on a worker thread, reveals it in Explorer and toasts `reportSaved`/`reportFailed` (5.13, no save dialog). Clear shader cache deletes the game's cache folder. Uninstall deletes the unlocked copy on a worker thread (the dump is never touched).
+- **Toolkit category** (`app::toolkit`): "check now", the check at start (when `checkForUpdates` is on and the launcher is onboarded; only the latest release is requested), download and install, and "use a toolkit folder" run on worker threads; the pipeline looks for the toolkit again afterwards (`Effect::ReloadToolkit`). The demo never goes online.
+- **Trophies while a game runs.** `Services::watch_trophies` starts the core's `TrophyWatcher` for the running game; earned trophies queue `BannerHost` banners (own viewport, 9.4) and reload the trophy set.
+- **Window chrome** (`app::window_chrome`, Windows only): after the first frame `DwmSetWindowAttribute` sets immersive dark mode (attribute 19 before 20H1), caption colour black, caption text white, border colour black (Windows 11) and round corners. A refused attribute keeps the system look; other platforms do nothing. The backdrop type stays the system default (no Mica): 9.2 asks for a black title bar that merges with the black backdrop.
+
+Deviations: the diagnosis sentence in the log view is derived from the log text only (a crash known only from its exit code appears in the toast and the hero line, not in the log box); the diagnosis stored by the model stays a localised sentence.
