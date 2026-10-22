@@ -12,7 +12,7 @@ use crate::ui::anim::{AnimExt, Motion, lerp};
 use crate::ui::background::{Background, SLOT_CARDS, STILL_TIME_CARD};
 use crate::ui::chrome::{self, language_card, onboarding_dots};
 use crate::ui::components::{
-    ConsoleButton, hint_bar, key_string_width, paint_focus_glow, paint_focus_stroke, scale_rect,
+    ConsoleButton, hint_bar, hint_bar_size, paint_focus_glow, paint_focus_stroke, scale_rect,
 };
 use crate::ui::glass::{GlassStyle, paint_glass};
 use crate::ui::i18n::{Key, Language};
@@ -97,7 +97,7 @@ pub fn show(ui: &mut Ui, cx: &mut ScreenCx<'_>) {
             presses.push(Press::Back);
         }
     }
-    let (hints_width, hints_height) = hint_size(&painter, language);
+    let (hints_width, hints_height) = hint_bar_size(&painter, language, false);
     let rect = Rect::from_min_size(
         pos2(
             screen.max.x - pad_x - hints_width,
@@ -119,26 +119,6 @@ pub fn show(ui: &mut Ui, cx: &mut ScreenCx<'_>) {
             Press::Back => cx.model.onboarding_back(),
         }
     }
-}
-
-fn hint_size(painter: &Painter, language: Language) -> (f32, f32) {
-    let height = (ty::HINT_KEY.line_height() + 6.0).max(ty::HINT_LABEL.line_height());
-    let hints = [
-        ("← → ↑ ↓", Key::HintMove),
-        ("↩ / ✕", Key::HintSelect),
-        ("esc / ○", Key::HintBack),
-    ];
-    let mut width = 0.0;
-    for (i, (keys, key)) in hints.iter().enumerate() {
-        width += key_string_width(painter, ty::HINT_KEY, keys)
-            + 14.0
-            + size::HINT_GAP
-            + text::width(painter, ty::HINT_LABEL, language.text(*key));
-        if i + 1 < hints.len() {
-            width += size::HINT_BAR_GAP;
-        }
-    }
-    (width, height)
 }
 
 /// Black 0.55 at the leading edge to 0.1 at the trailing edge.

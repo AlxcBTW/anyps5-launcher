@@ -35,8 +35,8 @@ const windows = {
     "AnyPS5, PS5 oyunlarını Windows'ta yerel olarak çalıştırır.",
   ],
   installedSize: [
-    "Unlocked games are kept in the `.AnyPS5` folder inside your games folder. (provisional: depends on the Windows install strategy)",
-    "Kilidi açılan oyunlar oyun klasörünün içindeki `.AnyPS5` klasöründe saklanır. (geçici: Windows kurulum yöntemine bağlı)",
+    "Unlocked games are kept in the .AnyPS5 folder inside your games folder.",
+    "Kilidi açılan oyunlar oyun klasörünün içindeki .AnyPS5 klasöründe saklanır.",
   ],
   showInFinder: ["Show in Explorer", "Dosya Gezgini'nde Göster"],
   noToolkit: [

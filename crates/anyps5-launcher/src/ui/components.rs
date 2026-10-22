@@ -15,6 +15,7 @@ use egui::{
 use crate::ui::anim::{self, AnimExt, Motion, lerp};
 use crate::ui::i18n::{Key, Language};
 use crate::ui::icons::Icon;
+use crate::ui::input::{self, Device};
 use crate::ui::text;
 use crate::ui::theme::{TextStyle, black, color, fade, mix, radius, shadows, size, ty, white};
 
@@ -54,20 +55,21 @@ pub fn paint_focus_glow(painter: &Painter, rect: Rect, radius: f32, width: f32, 
         paint_shadow(
             painter,
             rect.expand(width * 1.6),
-            radius + width,
+            radius + width * 1.6,
             shadows::focus_glow(t),
         );
     }
 }
 
 /// The white ring of a focused element (`focusRing`): a stroke of `width` drawn outside the
-/// element, outset by `width * 1.6`. `t` is the focus amount; paint after the element.
+/// element, outset by `width * 1.6` with the radius grown by the same amount so the ring stays
+/// concentric with the element. `t` is the focus amount; paint after the element.
 pub fn paint_focus_stroke(painter: &Painter, rect: Rect, radius: f32, width: f32, t: f32) {
     let t = t.clamp(0.0, 1.0);
     if t > 0.001 {
         painter.add(RectShape::stroke(
             rect.expand(width * 1.6),
-            corner(radius + width),
+            corner(radius + width * 1.6),
             Stroke::new(width, white(0.95 * t)),
             StrokeKind::Inside,
         ));
@@ -86,9 +88,32 @@ pub fn paint_hairline(painter: &Painter, rect: Rect, radius: f32, color: Color32
     }
 }
 
+/// A spinning three-quarter arc with round ends (the original's small `ProgressView`).
+pub fn paint_spinner_arc(
+    painter: &Painter,
+    centre: Pos2,
+    radius: f32,
+    time: f64,
+    width: f32,
+    color: Color32,
+) {
+    const POINTS: usize = 36;
+    let angle = (time * std::f64::consts::TAU * 1.1) as f32;
+    let points: Vec<Pos2> = (0..=POINTS)
+        .map(|i| {
+            let a = angle + i as f32 / POINTS as f32 * std::f32::consts::PI * 1.5;
+            centre + radius * vec2(a.cos(), a.sin())
+        })
+        .collect();
+    let (first, last) = (points[0], points[POINTS]);
+    painter.add(Shape::line(points, Stroke::new(width, color)));
+    painter.circle_filled(first, width * 0.5, color);
+    painter.circle_filled(last, width * 0.5, color);
+}
 /// Fills a capsule.
 pub fn paint_capsule(painter: &Painter, rect: Rect, color: Color32) {
-    painter.rect_filled(rect, corner(rect.height() * 0.5), color);
+    // egui clamps the radius to half the shorter side: a true capsule at any height.
+    painter.rect_filled(rect, CornerRadius::same(255), color);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -255,10 +280,10 @@ impl<'a> ConsoleButton<'a> {
         } else {
             size::BUTTON_PADDING_ICON_ONLY
         };
-        let icon_width = if self.icon.is_some() {
-            size::BUTTON_ICON
-        } else {
-            0.0
+        let icon_width = match (self.icon.is_some(), has_text) {
+            (false, _) => 0.0,
+            (true, true) => size::BUTTON_ICON,
+            (true, false) => size::BUTTON_ICON_ONLY,
         };
         let gap = if self.icon.is_some() && has_text {
             size::BUTTON_GAP
@@ -323,13 +348,25 @@ impl<'a> ConsoleButton<'a> {
         let mut x = rect.center().x - content * s * 0.5;
         if let Some(icon) = self.icon {
             let glyph = icon_width * s;
-            painter.text(
-                pos2(x + glyph * 0.5, rect.center().y),
-                Align2::CENTER_CENTER,
-                icon.glyph(),
-                icon.font(text::quantize_size(size::BUTTON_ICON * s), self.icon_fill),
-                fade(foreground, a),
-            );
+            let centre = pos2(x + glyph * 0.5, rect.center().y);
+            if icon == Icon::DOTS_THREE && !has_text {
+                // The font's dots are hairline-thin at button size: three round dots instead.
+                for k in [-1.0, 0.0, 1.0] {
+                    painter.circle_filled(
+                        centre + vec2(k * 7.0 * s, 0.0),
+                        2.2 * s,
+                        fade(foreground, a),
+                    );
+                }
+            } else {
+                painter.text(
+                    centre,
+                    Align2::CENTER_CENTER,
+                    icon.glyph(),
+                    icon.font(text::quantize_size(icon_width * s), self.icon_fill),
+                    fade(foreground, a),
+                );
+            }
             x += glyph + gap * s;
         }
         if has_text {
@@ -366,7 +403,7 @@ impl IconButton {
         Self {
             icon,
             label: label.into(),
-            fill: true,
+            fill: false,
             focused: false,
             enabled: true,
             force: None,
@@ -788,18 +825,60 @@ pub fn key_string_width(painter: &Painter, style: TextStyle, keys: &str) -> f32 
     width
 }
 
-/// One hint: a keycap and what it does (`← → ↑ ↓` "Move").
+/// What a hint stands for. Its key follows the device in use (DESIGN.md 3.7): a keyboard shows
+/// the key name, a gamepad the face button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HintAction {
+    Select,
+    Back,
+    Options,
+}
+
+impl HintAction {
+    fn key(self) -> &'static str {
+        match self {
+            HintAction::Select => "Enter",
+            HintAction::Back => "Esc",
+            HintAction::Options => "O",
+        }
+    }
+
+    fn glyph(self) -> PadGlyph {
+        match self {
+            HintAction::Select => PadGlyph::Cross,
+            HintAction::Back => PadGlyph::Circle,
+            HintAction::Options => PadGlyph::Triangle,
+        }
+    }
+}
+
+/// One hint: the key of an action and what it does ("Enter Select", "○ Back").
 pub struct Hint<'a> {
-    pub keys: &'a str,
+    pub action: HintAction,
     pub label: &'a str,
 }
 
 impl Hint<'_> {
+    /// Width of the key: a circle for a face button, a keycap for a key name.
+    fn cap_width(painter: &Painter, action: HintAction, device: Device) -> f32 {
+        match device {
+            Device::Gamepad => size::HINT_CAP,
+            Device::Keyboard => (text::width(painter, ty::HINT_KEY, action.key())
+                + 2.0 * size::HINT_CAP_PADDING)
+                .max(size::HINT_CAP),
+        }
+    }
+
+    pub fn width(&self, painter: &Painter, device: Device) -> f32 {
+        Self::cap_width(painter, self.action, device)
+            + size::HINT_GAP
+            + text::width(painter, ty::HINT_LABEL, self.label)
+    }
+
     pub fn show(&self, ui: &mut Ui) -> Response {
         let painter = ui.painter().clone();
-        let keys_w = key_string_width(&painter, ty::HINT_KEY, self.keys);
-        let cap_w = keys_w + 14.0;
-        let cap_h = ty::HINT_KEY.line_height() + 6.0;
+        let device = input::device(ui.ctx());
+        let cap_w = Self::cap_width(&painter, self.action, device);
         let label = text::layout(
             &painter,
             ty::HINT_LABEL,
@@ -807,22 +886,38 @@ impl Hint<'_> {
             Color32::PLACEHOLDER,
             f32::INFINITY,
         );
-        let width = cap_w + size::HINT_GAP + label.size().x;
-        let height = cap_h.max(label.size().y);
-        let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+        let height = size::HINT_CAP.max(label.size().y);
+        let (rect, response) = ui.allocate_exact_size(
+            vec2(cap_w + size::HINT_GAP + label.size().x, height),
+            Sense::hover(),
+        );
         if ui.is_rect_visible(rect) {
             let cap = Rect::from_min_size(
-                pos2(rect.min.x, rect.center().y - cap_h * 0.5),
-                vec2(cap_w, cap_h),
+                pos2(rect.min.x, rect.center().y - size::HINT_CAP * 0.5),
+                vec2(cap_w, size::HINT_CAP),
             );
-            painter.rect_filled(cap, corner(radius::KEYCAP_HINT), color::keycap());
-            paint_key_string(
-                &painter,
-                pos2(cap.min.x + 7.0, cap.center().y),
-                ty::HINT_KEY,
-                self.keys,
-                color::text_hint(),
-            );
+            match device {
+                Device::Gamepad => {
+                    painter.circle_filled(cap.center(), size::HINT_CAP * 0.5, color::keycap());
+                    self.action.glyph().paint(
+                        &painter,
+                        cap.center(),
+                        size::HINT_GLYPH,
+                        color::text_hint_key(),
+                    );
+                }
+                Device::Keyboard => {
+                    painter.rect_filled(cap, corner(radius::KEYCAP_HINT), color::keycap());
+                    text::paint(
+                        &painter,
+                        cap.center(),
+                        Align2::CENTER_CENTER,
+                        ty::HINT_KEY,
+                        self.action.key(),
+                        color::text_hint_key(),
+                    );
+                }
+            }
             painter.galley(
                 pos2(
                     cap.max.x + size::HINT_GAP,
@@ -836,34 +931,44 @@ impl Hint<'_> {
     }
 }
 
-/// The hint bar: `← → ↑ ↓` Move, `↩ / ✕` Select, `esc / ○` Back and, optionally, `O / △` Options.
-/// The key texts are fixed (PlayStation naming), not adapted to the controller in use.
+fn hint_list(language: Language, options: bool) -> Vec<Hint<'static>> {
+    let mut hints = vec![
+        Hint {
+            action: HintAction::Select,
+            label: language.text(Key::HintSelect),
+        },
+        Hint {
+            action: HintAction::Back,
+            label: language.text(Key::HintBack),
+        },
+    ];
+    if options {
+        hints.push(Hint {
+            action: HintAction::Options,
+            label: language.text(Key::HintOptions),
+        });
+    }
+    hints
+}
+
+/// The hint bar: Select, Back and, optionally, Options, in the keys of the device in use.
+/// Moving needs no hint.
 pub fn hint_bar(ui: &mut Ui, language: Language, options: bool) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = size::HINT_BAR_GAP;
-        Hint {
-            keys: "← → ↑ ↓",
-            label: language.text(Key::HintMove),
-        }
-        .show(ui);
-        Hint {
-            keys: "↩ / ✕",
-            label: language.text(Key::HintSelect),
-        }
-        .show(ui);
-        Hint {
-            keys: "esc / ○",
-            label: language.text(Key::HintBack),
-        }
-        .show(ui);
-        if options {
-            Hint {
-                keys: "O / △",
-                label: language.text(Key::HintOptions),
-            }
-            .show(ui);
+        for hint in hint_list(language, options) {
+            hint.show(ui);
         }
     });
+}
+
+/// Width and height of [`hint_bar`], for screens that align it to the right.
+pub fn hint_bar_size(painter: &Painter, language: Language, options: bool) -> (f32, f32) {
+    let device = input::device(painter.ctx());
+    let hints = hint_list(language, options);
+    let width = hints.iter().map(|h| h.width(painter, device)).sum::<f32>()
+        + size::HINT_BAR_GAP * hints.len().saturating_sub(1) as f32;
+    (width, size::HINT_CAP.max(ty::HINT_LABEL.line_height()))
 }
 
 /// A key cap of the controls panel: 30 x 28 minimum, radius 7, 13.5 semibold, 1 px stroke at 0.18.

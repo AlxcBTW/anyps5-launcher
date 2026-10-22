@@ -1479,7 +1479,7 @@ the APFS-clone sentence. Strings that mention the Mac are replaced (keys unchang
 | `stepRelink` | Converting for Windows | Windows için çevriliyor |
 | `startingText` | The game is opening, please wait. The first start can take a few minutes while the game gets ready for Windows. | Oyun açılıyor, lütfen bekle. İlk açılış, oyun Windows için hazırlanırken birkaç dakika sürebilir. |
 | `aboutText` | AnyPS5 runs PS5 games natively on Windows. | AnyPS5, PS5 oyunlarını Windows'ta yerel olarak çalıştırır. |
-| `installedSize` | Unlocked games are kept in the `.AnyPS5` folder inside your games folder. (provisional: depends on the Windows install strategy) | Kilidi açılan oyunlar oyun klasörünün içindeki `.AnyPS5` klasöründe saklanır. (geçici: Windows kurulum yöntemine bağlı) |
+| `installedSize` | Unlocked games are kept in the .AnyPS5 folder inside your games folder. | Kilidi açılan oyunlar oyun klasörünün içindeki .AnyPS5 klasöründe saklanır. |
 | `showInFinder` | Show in Explorer | Dosya Gezgini'nde Göster |
 | `noToolkit` | This copy has no conversion tools. Use the installer from the release. | Bu kopyada dönüştürme araçları yok. Release'deki kurulum dosyasını kullan. |
 

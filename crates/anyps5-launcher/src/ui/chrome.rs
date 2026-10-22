@@ -140,7 +140,7 @@ fn paint_tile_overlay(painter: &Painter, rect: Rect, r: f32, style: &TileStyle, 
     let dim = |amount: f32| painter.rect_filled(rect, corner(r), fade(black(amount), alpha));
     let badge = |icon: Icon| {
         dim(0.42);
-        let glyph = side * 0.13;
+        let glyph = (side * 0.15).max(14.0);
         let boxed = glyph + side * 0.16;
         let centre = pos2(rect.max.x - boxed * 0.5, rect.max.y - boxed * 0.5);
         painter.circle_filled(
@@ -152,7 +152,7 @@ fn paint_tile_overlay(painter: &Painter, rect: Rect, r: f32, style: &TileStyle, 
             centre,
             Align2::CENTER_CENTER,
             icon.glyph(),
-            icon.font(text::quantize_size(glyph), true),
+            icon.font(text::quantize_size(glyph), icon != Icon::X_CIRCLE),
             fade(Color32::WHITE, alpha),
         );
     };
@@ -184,17 +184,14 @@ fn paint_tile_overlay(painter: &Painter, rect: Rect, r: f32, style: &TileStyle, 
         TileOverlay::Starting => {
             dim(0.42);
             let radius = side * 0.07;
-            let angle = (style.time * std::f64::consts::TAU * 1.1) as f32;
-            let points: Vec<_> = (0..=18)
-                .map(|i| {
-                    let a = angle + i as f32 / 18.0 * std::f32::consts::PI * 1.5;
-                    rect.center() + radius * vec2(a.cos(), a.sin())
-                })
-                .collect();
-            painter.add(egui::Shape::line(
-                points,
-                egui::Stroke::new(2.0, fade(Color32::WHITE, alpha)),
-            ));
+            components::paint_spinner_arc(
+                painter,
+                rect.center(),
+                radius,
+                style.time,
+                2.0,
+                fade(Color32::WHITE, alpha),
+            );
         }
         TileOverlay::Running => {
             let d = side * 0.09;
@@ -533,7 +530,8 @@ impl<'a> PanelRow<'a> {
         }
 
         // Background, glow and the 1.5 % scale.
-        let bg_rect = scale_rect(rect, lerp(1.0, 1.015, t));
+        // A fixed 3 dp grow: a proportional scale would push wide rows 8 dp past their column.
+        let bg_rect = rect.expand(lerp(0.0, 3.0, t));
         paint_shadow(&painter, bg_rect, radius::ROW, shadows::settings_row(t));
         let rest = if !focusable {
             Color32::TRANSPARENT
@@ -550,7 +548,7 @@ impl<'a> PanelRow<'a> {
         let mut x = rect.min.x + pad;
         if let Some(icon) = self.icon {
             let tint = if destructive {
-                mix(color::destructive_icon(), dim(0.85), t)
+                mix(color::destructive_icon(), color::destructive_on_focus(), t)
             } else {
                 dim(0.85)
             };
@@ -565,7 +563,8 @@ impl<'a> PanelRow<'a> {
         }
         let top = rect.center().y - text_height * 0.5;
         let title_color = if destructive {
-            mix(color::destructive_text(), fg, t)
+            // A focused destructive row stays red on its white fill.
+            mix(color::destructive_text(), color::destructive_on_focus(), t)
         } else if focusable {
             fg
         } else {
@@ -1099,7 +1098,8 @@ pub fn toast(
                 rect,
                 radius::TOAST,
                 egui::epaint::Shadow {
-                    color: fade(shadows::toast().color, a),
+                    // Squared, so the shadow never shows through the fading glass.
+                    color: fade(shadows::toast().color, a * a),
                     ..shadows::toast()
                 },
             );

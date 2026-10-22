@@ -61,6 +61,8 @@ pub struct Row {
     pub detail: Option<String>,
     pub control: Control,
     pub destructive: bool,
+    /// Starts a new group: the list leaves a double gap above it.
+    pub group_start: bool,
 }
 
 impl Row {
@@ -73,6 +75,7 @@ impl Row {
             detail: None,
             control,
             destructive: false,
+            group_start: false,
         }
     }
 
@@ -83,6 +86,12 @@ impl Row {
         selected: usize,
     ) -> Row {
         Row::new(id, title, Control::Choice { options, selected })
+    }
+
+    /// Starts a new group (a double gap above the row).
+    pub fn group_start(mut self) -> Row {
+        self.group_start = true;
+        self
     }
 
     pub fn toggle(id: RowId, title: impl Into<String>, on: bool) -> Row {
@@ -419,6 +428,9 @@ pub fn list(
                 ui.spacing_mut().item_spacing.y = size::ROW_GAP;
                 let origin = ui.cursor().min.y;
                 for (index, row) in rows.iter_mut().enumerate() {
+                    if row.group_start && index > 0 {
+                        ui.add_space(size::ROW_GAP);
+                    }
                     let focused = options.focus == Some(index);
                     let force = options.force.and_then(|(i, f)| (i == index).then_some(f));
                     let out = show_row(ui, row, index, focused, force, options, &mut events);
@@ -458,6 +470,7 @@ fn show_row(
         detail,
         control,
         destructive,
+        group_start: _,
     } = row;
     let caps;
     let none_label = language.text(Key::NoKey);

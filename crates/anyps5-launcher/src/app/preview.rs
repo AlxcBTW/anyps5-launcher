@@ -1,7 +1,7 @@
 //! Made-up data and the hidden `--gallery=<scene>` / `--demo` modes.
 //!
 //! ```text
-//! anyps5-launcher --gallery=home [--screenshot=out.png] [--size=1600x900] [--tr] [--frames=100]
+//! anyps5-launcher --gallery=home [--screenshot=out.png] [--size=1600x900] [--tr] [--pad] [--frames=100]
 //! anyps5-launcher --demo
 //! ```
 //!
@@ -124,6 +124,8 @@ pub struct Options {
     pub screenshot: Option<PathBuf>,
     pub size: (f32, f32),
     pub turkish: bool,
+    /// `--pad`: hint bars show gamepad buttons instead of keys.
+    pub pad: bool,
     pub frames: u32,
     /// Commands fed to the app one after the other (`--script=right,select,wait60`).
     pub script: Vec<Step>,
@@ -167,6 +169,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Option<Options> {
         screenshot: None,
         size: (1600.0, 900.0),
         turkish: false,
+        pad: false,
         frames: 100,
         script: Vec::new(),
         real_art: std::env::var_os("ANYPS5_PREVIEW_REAL_ART").map(PathBuf::from),
@@ -191,6 +194,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Option<Options> {
             options.frames = frames.parse().unwrap_or(100);
         } else if let Some(script) = arg.strip_prefix("--script=") {
             options.script = parse_script(script);
+        } else if arg == "--pad" {
+            options.pad = true;
         } else if arg == "--tr" {
             options.turkish = true;
         }
@@ -533,6 +538,9 @@ impl PreviewApp {
             _ => Theme::Cosmic,
         };
         let mut shell = Shell::headless(cc, theme);
+        if options.pad {
+            crate::ui::input::set_device(&cc.egui_ctx, crate::ui::input::Device::Gamepad);
+        }
         shell.language = if options.turkish {
             crate::ui::i18n::Language::Turkish
         } else {

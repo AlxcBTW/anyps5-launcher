@@ -235,7 +235,12 @@ pub fn build_rows(data: &GameSettingsData<'_>) -> Vec<Row> {
         );
     }
     rows.push(Row::toggle("vsync", t(Key::Vsync), s.vsync).icon(Icon::WAVE_SINE));
-    rows.push(Row::action("controls", t(Key::Controls)).icon(Icon::KEYBOARD));
+    // Groups: display, then play (controls to language), then maintenance, then removal.
+    rows.push(
+        Row::action("controls", t(Key::Controls))
+            .icon(Icon::KEYBOARD)
+            .group_start(),
+    );
     if let Some(p) = data.trophies {
         rows.push(
             Row::action("trophies", t(Key::Trophies))
@@ -283,6 +288,7 @@ pub fn build_rows(data: &GameSettingsData<'_>) -> Vec<Row> {
     rows.push(
         Row::choice("language", t(Key::GameLanguage), languages, selected).icon(Icon::TRANSLATE),
     );
+    let maintenance = rows.len();
     if data.installed {
         rows.push(Row::action("reinstall", t(Key::Reinstall)).icon(Icon::ARROWS_CLOCKWISE));
     }
@@ -294,11 +300,13 @@ pub fn build_rows(data: &GameSettingsData<'_>) -> Vec<Row> {
             .icon(Icon::STETHOSCOPE),
     );
     rows.push(Row::action("cache", t(Key::ClearShaderCache)).icon(Icon::SPARKLE));
+    rows[maintenance].group_start = true;
     if data.installed {
         rows.push(
             Row::action("uninstall", t(Key::Uninstall))
                 .icon(Icon::TRASH)
-                .destructive(),
+                .destructive()
+                .group_start(),
         );
     }
     rows
@@ -362,9 +370,10 @@ pub struct UninstallPanel {
 }
 
 impl UninstallPanel {
-    /// Opens on the destructive row, as the original does.
+    /// Opens on Cancel (the original opens on the destructive row): Enter must never remove
+    /// an installation by accident.
     pub fn open(&mut self) {
-        self.side.open_at(0);
+        self.side.open_at(1);
     }
 
     pub fn close(&mut self) {
@@ -407,7 +416,7 @@ impl UninstallPanel {
                 Row::action("uninstall", language.text(Key::Uninstall))
                     .icon(Icon::TRASH)
                     .destructive(),
-                Row::action("cancel", language.text(Key::Cancel)),
+                Row::action("cancel", language.text(Key::Cancel)).icon(Icon::X),
             ]
         };
         if self.side.is_open() {

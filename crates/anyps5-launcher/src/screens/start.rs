@@ -11,7 +11,7 @@ use crate::screens::side::commands;
 use crate::ui::Shell;
 use crate::ui::anim::{self, AnimExt, lerp};
 use crate::ui::chrome::{TileImage, TileStyle, fullscreen_panel, paint_tile};
-use crate::ui::components::{Hint, IndeterminateLine, paint_shadow};
+use crate::ui::components::{Hint, HintAction, IndeterminateLine, paint_shadow};
 use crate::ui::glass::GlassStyle;
 use crate::ui::i18n::{Key, Language};
 use crate::ui::input::{Command, InputEvent};
@@ -216,7 +216,7 @@ fn draw(ui: &mut Ui, data: &StartData<'_>, since: f64) {
             .layout(Layout::top_down(Align::Center)),
     );
     Hint {
-        keys: "esc / ○",
+        action: HintAction::Back,
         label: language.text(Key::Cancel),
     }
     .show(&mut hint);
