@@ -345,6 +345,75 @@ impl Controls {
     }
 }
 
+/// Ready-made layouts the Controls panel offers (docs/DESIGN.md 5.17).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Preset {
+    /// The launcher's own layout: WASD moves, J K L I are the face buttons.
+    Classic,
+    /// The usual PC action-game layout: the mouse looks (it already drives the right stick), its
+    /// buttons are the triggers, and the face buttons sit around WASD.
+    MouseAndKeyboard,
+}
+
+impl Preset {
+    pub const ALL: [Preset; 2] = [Preset::Classic, Preset::MouseAndKeyboard];
+
+    /// The sources of every action in this layout.
+    pub fn sources(self, action: PadAction) -> &'static [&'static str] {
+        use PadAction::*;
+        match self {
+            Preset::Classic => Controls::default_sources(action),
+            Preset::MouseAndKeyboard => match action {
+                Cross => &["KEY:Space"],
+                Circle => &["KEY:C"],
+                Square => &["KEY:F"],
+                Triangle => &["KEY:E"],
+                L1 => &["KEY:Q"],
+                R1 => &["KEY:R"],
+                L2 => &["MOUSE:Right"],
+                R2 => &["MOUSE:Left"],
+                L3 => &["KEY:Left Shift"],
+                R3 => &["KEY:V", "MOUSE:Middle"],
+                Options => &["KEY:Escape"],
+                TouchLeft => &["KEY:Tab"],
+                TouchRight => &["KEY:M"],
+                Up => &["KEY:1", "WHEEL:Up"],
+                Right => &["KEY:2"],
+                Down => &["KEY:3", "WHEEL:Down"],
+                Left => &["KEY:4"],
+                LeftStickUp => &["KEY:W"],
+                LeftStickDown => &["KEY:S"],
+                LeftStickLeft => &["KEY:A"],
+                LeftStickRight => &["KEY:D"],
+                RightStickUp => &["KEY:Up"],
+                RightStickDown => &["KEY:Down"],
+                RightStickLeft => &["KEY:Left"],
+                RightStickRight => &["KEY:Right"],
+                StickModifier => &["KEY:Left Alt"],
+            },
+        }
+    }
+
+    /// The layout as changes against the launcher's defaults (the form games store).
+    pub fn changes(self) -> Changes {
+        PadAction::ALL
+            .into_iter()
+            .filter(|a| self.sources(*a) != Controls::default_sources(*a))
+            .map(|a| {
+                (
+                    a.name().to_string(),
+                    self.sources(a).iter().map(|s| (*s).to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// The preset these changes are exactly, if any.
+    pub fn matching(changes: &Changes) -> Option<Preset> {
+        Preset::ALL.into_iter().find(|p| p.changes() == *changes)
+    }
+}
+
 /// The SDL scancode name of a Windows set-1 scan code (`MapVirtualKeyW(vk, MAPVK_VK_TO_VSC_EX)`:
 /// extended keys as `0xE000 | code`), `None` for keys a binding cannot use. The key's position on a
 /// US keyboard decides, as SDL reads scancodes. F24 is deliberately absent.
@@ -581,6 +650,30 @@ StickModifier = KEY:F24
         let json = serde_json::to_value(InputTuning::default()).unwrap();
         assert_eq!(json["mouseDeadzoneOffset"], 20);
         assert_eq!(json.as_object().unwrap().len(), 12);
+    }
+
+    #[test]
+    fn presets_use_real_keys_once_each() {
+        for preset in Preset::ALL {
+            let mut seen = HashSet::new();
+            for action in PadAction::ALL {
+                for source in preset.sources(action) {
+                    assert!(seen.insert(*source), "{preset:?}: {source} twice");
+                    if let Some(name) = source.strip_prefix("KEY:") {
+                        assert!(scancode_of(name).is_some(), "{preset:?}: {name}");
+                    }
+                }
+            }
+        }
+        assert!(Preset::Classic.changes().is_empty());
+        let mk = Preset::MouseAndKeyboard.changes();
+        assert_eq!(mk["R2"], vec!["MOUSE:Left".to_string()]);
+        assert!(
+            !mk.contains_key("LeftStickUp"),
+            "WASD is the default already"
+        );
+        assert_eq!(Preset::matching(&mk), Some(Preset::MouseAndKeyboard));
+        assert_eq!(Preset::matching(&Changes::new()), Some(Preset::Classic));
     }
 
     #[test]
