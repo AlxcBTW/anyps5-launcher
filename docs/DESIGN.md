@@ -679,6 +679,14 @@ The launcher keeps the port's structure but trims what read as noise next to the
   0.5) are bare text on the panel, as high as their text, not 58 dp rows. The settings rows start
   level with the first category, and the trophy rows and library grid stand on the title edge. The
   focused trophy is the white card (3 dp grow, dark ink, darker grade tones), not a ring.
+- **Home polish.** Two soft scrims sit under the home UI so white text reads on bright artwork:
+  black 0.30 fading out over the top 150 dp, and black 0.46 in the hero's bottom-left corner
+  (72 % of the width, half the height at most 480 dp), both fading to nothing on every side. The
+  selected tile keeps 10 dp more air before the next one (`TILE_LABEL_COLUMN = 10`). While a game
+  unlocks, the step is named once, in the state line above the title; the hero shows only a 260 dp
+  bar and its percentage on the buttons' centre line. The scanning icon breathes in opacity only.
+  The launch splash's explanation wraps at 460 dp, so it never ends on a lone word. The onboarding
+  theme names share one baseline under the resting cards; focus grows the card, not the label.
 
 ## 4. Materials and blur on the GPU
 

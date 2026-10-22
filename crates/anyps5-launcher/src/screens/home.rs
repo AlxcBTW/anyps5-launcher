@@ -41,6 +41,10 @@ const ACTION_ROW: f32 = size::BUTTON_MIN_HEIGHT;
 /// Longest a failure or diagnosis text gets.
 const MESSAGE_WIDTH: f32 = 520.0;
 
+/// Darkness of the shade under the top bar and in the hero's corner.
+const SCRIM_TOP: f32 = 0.30;
+const SCRIM_HERO: f32 = 0.46;
+
 /// A press the model has to hear about, collected while painting.
 #[derive(Clone, Copy, Debug)]
 enum Press {
@@ -61,6 +65,7 @@ pub fn show(ui: &mut Ui, cx: &mut ScreenCx<'_>) {
     let ctx = cx.ctx.clone();
     let screen = ctx.content_rect();
     let mut presses = Vec::new();
+    paint_scrims(ui.painter(), screen, !cx.model.games.is_empty());
     // At launch the parts rise into place one after another (ui::intro).
     staged(ui, &ctx, intro::TOP_BAR, screen, |ui, screen| {
         top_bar(ui, cx, screen, &mut presses);
@@ -107,6 +112,34 @@ fn staged(
     let mut child = ui.new_child(UiBuilder::new().max_rect(screen));
     child.multiply_opacity(t);
     add(&mut child, intro::lift(screen, t));
+}
+
+/// Soft shade behind the hero (bottom left) and the top bar, so white text still reads on bright
+/// artwork. Every side fades to nothing, so it never shows an edge.
+fn paint_scrims(painter: &egui::Painter, screen: Rect, with_hero: bool) {
+    let quad = |rect: Rect, corners: [f32; 4]| {
+        let mut mesh = egui::epaint::Mesh::default();
+        for (pos, alpha) in [
+            (rect.left_top(), corners[0]),
+            (rect.right_top(), corners[1]),
+            (rect.left_bottom(), corners[2]),
+            (rect.right_bottom(), corners[3]),
+        ] {
+            mesh.colored_vertex(pos, theme::black(alpha));
+        }
+        mesh.indices.extend_from_slice(&[0, 1, 2, 1, 3, 2]);
+        painter.add(egui::Shape::mesh(mesh));
+    };
+    let top = Rect::from_min_size(screen.min, vec2(screen.width(), 150.0));
+    quad(top, [SCRIM_TOP, SCRIM_TOP, 0.0, 0.0]);
+    if with_hero {
+        let height = (screen.height() * 0.5).min(480.0);
+        let hero = Rect::from_min_max(
+            pos2(screen.min.x, screen.max.y - height),
+            pos2(screen.min.x + screen.width() * 0.72, screen.max.y),
+        );
+        quad(hero, [0.0, 0.0, SCRIM_HERO, 0.0]);
+    }
 }
 
 /// Focus is only drawn while no overlay covers the home screen.
@@ -599,31 +632,24 @@ fn action_row_status(
     let mid = top + ACTION_ROW * 0.5;
     match state {
         GameState::Installing { step, fraction } => {
-            let left = x + 10.0;
+            // The state line above the title already names the step: the bar and its percentage
+            // sit on the buttons' centre line.
+            let left = x + 16.0;
             let overall = step.overall(*fraction);
             let block = size::HERO_PROGRESS_WIDTH;
-            let line_height = ty::PROGRESS_LABEL.line_height();
-            let block_height = line_height + 8.0 + size::PROGRESS_HEIGHT;
-            let y = mid - block_height * 0.5;
-            text::paint(
-                &painter,
-                pos2(left, y),
-                Align2::LEFT_TOP,
-                ty::PROGRESS_LABEL,
-                language.text(step.title_key()),
-                white(0.85),
-            );
             let percent = format!("{}%", (overall * 100.0) as u32);
-            let w = text::tabular_width(&painter, ty::PROGRESS_PERCENT, &percent);
             text::paint_tabular(
                 &painter,
-                pos2(left + block - w, y),
+                pos2(
+                    left + block + 14.0,
+                    mid - ty::PROGRESS_PERCENT.line_height() * 0.5,
+                ),
                 ty::PROGRESS_PERCENT,
                 &percent,
                 white(0.85),
             );
             let bar = Rect::from_min_size(
-                pos2(left, y + line_height + 8.0),
+                pos2(left, mid - size::PROGRESS_HEIGHT * 0.5),
                 vec2(block, size::PROGRESS_HEIGHT),
             );
             place(ui, bar, |ui| {
@@ -743,12 +769,19 @@ fn empty_library(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut
         Icon::STACK
     };
     let centre = pos2(cx_mid, y + icon_size * 0.5);
+    // While it scans, the glass breathes in opacity (nothing moves, nothing shifts the layout).
+    let glow = if scanning && !cx.ctx.reduced_motion() {
+        cx.ctx.request_repaint();
+        lerp(0.5, 0.9, crate::ui::anim::breathing(cx.ctx.clock()))
+    } else {
+        0.8
+    };
     painter.text(
         centre,
         Align2::CENTER_CENTER,
         icon.glyph(),
         icon.font(icon_size, false),
-        white(0.8),
+        white(glow),
     );
     y += icon_size + 18.0;
     text::paint(

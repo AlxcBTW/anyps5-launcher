@@ -256,7 +256,9 @@ fn theme_step(
             ctx.request_repaint();
         }
 
-        let name_y = preview.max.y + 14.0 * factor + name_style.line_height() * factor * 0.5;
+        // The names sit on one baseline under the resting cards, so the focus only grows the card.
+        let resting_left = origin.x + index as f32 * (width + 26.0);
+        let name_y = y + preview_height + 14.0 + name_style.line_height() * 0.5;
         let style = if focused {
             ty::THEME_CARD_NAME_FOCUSED
         } else {
@@ -265,15 +267,15 @@ fn theme_step(
         let faded = theme::fade(Color32::WHITE, lerp(0.72, 1.0, t));
         text::paint(
             &painter,
-            pos2(preview.min.x, name_y),
+            pos2(resting_left, name_y),
             Align2::LEFT_CENTER,
-            text::scaled(style, factor),
+            style,
             theme.title(language),
             faded,
         );
         painter.circle_filled(
-            pos2(preview.max.x - 6.0 * factor, name_y),
-            6.0 * factor,
+            pos2(resting_left + width - 6.0, name_y),
+            6.0,
             theme::fade(theme.default_accent().color(), lerp(0.72, 1.0, t)),
         );
 
