@@ -199,6 +199,12 @@ impl<'a> ConsoleButton<'a> {
         button
     }
 
+    /// The name assistive technology reads when it differs from the visible text.
+    pub fn accessible_name(mut self, name: impl Into<String>) -> Self {
+        self.label = Some(name.into());
+        self
+    }
+
     pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
         self
@@ -272,10 +278,10 @@ impl<'a> ConsoleButton<'a> {
             self.force,
         );
         let enabled = self.enabled;
-        let name = if self.title.is_empty() {
-            self.label.as_deref().unwrap_or_default()
-        } else {
-            self.title
+        let name = match (&self.label, self.title.is_empty()) {
+            (Some(label), _) => label.as_str(),
+            (None, true) => "",
+            (None, false) => self.title,
         };
         it.response
             .widget_info(|| WidgetInfo::labeled(Role::Button, enabled, name));

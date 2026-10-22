@@ -19,7 +19,8 @@ struct GlassParams {
     black: f32,
     saturation: f32,
     linearize: u32,
-    _pad: vec2<f32>,
+    alpha: f32,
+    _pad: f32,
 };
 @group(0) @binding(0) var<uniform> g: GlassParams;
 @group(1) @binding(0) var sharp: texture_2d<f32>;
@@ -67,5 +68,6 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     if (g.linearize != 0u) {
         c = srgb_to_linear(c);
     }
-    return vec4<f32>(c * coverage, coverage);
+    let a = coverage * g.alpha;
+    return vec4<f32>(c * a, a);
 }
