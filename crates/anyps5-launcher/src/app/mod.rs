@@ -18,6 +18,7 @@
 
 pub mod clock;
 pub mod core_pipeline;
+pub mod links;
 pub mod model;
 pub mod overlay;
 pub mod panels;
@@ -117,6 +118,7 @@ pub struct LauncherApp {
     /// A game is on Discord right now.
     presence_shown: bool,
     start_screen: screens::start::StartScreen,
+    links: links::LinkState,
     scan_on_start: bool,
     /// No scan, size or trophy work (previews and the demo have a made-up library).
     pub offline: bool,
@@ -153,6 +155,7 @@ impl LauncherApp {
             presence: None,
             presence_shown: false,
             start_screen: screens::start::StartScreen::default(),
+            links: links::LinkState::default(),
             scan_on_start: config.scan_on_start,
             offline: false,
             freeze_backdrop: false,
@@ -202,6 +205,7 @@ impl LauncherApp {
         for event in frame.events {
             self.handle_event(ctx, event);
         }
+        self.poll_links();
         self.run_effects(ctx);
         self.watch_trophies();
 
@@ -628,8 +632,9 @@ fn enter_fullscreen(ctx: &Context, fullscreen: bool) {
     }
 }
 
-/// Runs the launcher.
-pub fn run() -> eframe::Result {
+/// Runs the launcher. `inbox` brings the arguments of later launches; `arguments` are the ones this
+/// launch got (a link or a folder).
+pub fn run(inbox: Option<crate::instance::Inbox>, arguments: Vec<String>) -> eframe::Result {
     // Read before the window exists: it opens filling its screen unless the player chose a window.
     let fullscreen = AppPaths::from_env()
         .map(|paths| Preferences::load(&paths).fullscreen)
@@ -653,8 +658,10 @@ pub fn run() -> eframe::Result {
         "AnyPS5",
         options,
         Box::new(|cc| {
+            let mut app = LauncherApp::new(cc, Config::from_environment(&cc.egui_ctx));
+            app.attach_links(&cc.egui_ctx, inbox, &arguments);
             Ok(Box::new(App {
-                app: LauncherApp::new(cc, Config::from_environment(&cc.egui_ctx)),
+                app,
                 chrome_applied: false,
                 frames: 0,
                 start_fullscreen: fullscreen,

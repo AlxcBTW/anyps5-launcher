@@ -85,4 +85,5 @@ impl Icon {
     pub const ARROW_UP: Icon = Icon('\u{e08e}');
     pub const ARROW_DOWN: Icon = Icon('\u{e03e}');
     pub const ARROW_LEFT: Icon = Icon('\u{e058}');
+    pub const LINK: Icon = Icon('\u{e2e2}');
 }

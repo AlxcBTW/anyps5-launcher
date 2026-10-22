@@ -532,7 +532,7 @@ fn use_real_art(game: &mut Game, dump: &Path) {
 // ---------------------------------------------------------------------------------------------
 
 /// Opens the preview or demo window.
-pub fn run(options: Options) -> eframe::Result {
+pub fn run(options: Options, inbox: Option<crate::instance::Inbox>) -> eframe::Result {
     let mut viewport = egui::ViewportBuilder::default();
     if let Some((x, y)) = options.at {
         viewport = viewport.with_position([x, y]);
@@ -550,7 +550,7 @@ pub fn run(options: Options) -> eframe::Result {
     eframe::run_native(
         "AnyPS5 preview",
         native,
-        Box::new(move |cc| Ok(Box::new(PreviewApp::new(cc, options)))),
+        Box::new(move |cc| Ok(Box::new(PreviewApp::new(cc, options, inbox)))),
     )
 }
 
@@ -564,7 +564,11 @@ struct PreviewApp {
 }
 
 impl PreviewApp {
-    fn new(cc: &eframe::CreationContext<'_>, options: Options) -> Self {
+    fn new(
+        cc: &eframe::CreationContext<'_>,
+        options: Options,
+        inbox: Option<crate::instance::Inbox>,
+    ) -> Self {
         let dir = crate::app::preview_dir();
         let games = match &options.showcase {
             Some(folder) => showcase_games(folder),
@@ -620,6 +624,9 @@ impl PreviewApp {
             use_real_art(&mut games[1], real);
         }
         apply_scene(&mut inner, options.scene.unwrap_or(Scene::Home), games);
+        if inbox.is_some() {
+            inner.attach_links(&cc.egui_ctx, inbox, &[]);
+        }
         if demo {
             inner.model.edit_prefs(|p| p.sounds = true);
         }

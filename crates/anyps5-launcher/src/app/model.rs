@@ -184,6 +184,10 @@ pub struct Model {
     /// The focused row of the trophy list.
     pub trophy_index: usize,
     pub onboarding: Onboarding,
+    /// The first scan of the games folder has finished.
+    pub library_loaded: bool,
+    /// The page of the settings a link asked for; the settings panel takes it when it opens.
+    pub settings_page: Option<anyps5_core::links::SettingsPage>,
 
     /// Unlock progress of the game that is being unlocked.
     pub progress: HashMap<GameId, (UnlockStep, f32)>,
@@ -231,6 +235,8 @@ impl Model {
             library_index: 0,
             trophy_index: 0,
             onboarding: Onboarding::default(),
+            library_loaded: false,
+            settings_page: None,
             progress: HashMap::new(),
             queue: Vec::new(),
             failures: HashMap::new(),
@@ -478,6 +484,7 @@ impl Model {
                 let current = self.selected_game().map(|g| g.id.clone());
                 self.games = games;
                 self.scanning = false;
+                self.library_loaded = true;
                 self.selected = current
                     .and_then(|id| self.games.iter().position(|g| g.id == id))
                     .unwrap_or_else(|| self.selected.min(self.games.len().saturating_sub(1)));

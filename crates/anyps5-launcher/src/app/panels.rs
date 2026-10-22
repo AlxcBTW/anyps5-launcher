@@ -26,6 +26,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use anyps5_core::diagnosis::{self, Diagnosis};
 use anyps5_core::gamefiles::GameInput;
 use anyps5_core::library::Game;
+use anyps5_core::linkreg::{self, Handler as LinkHandler};
 use anyps5_core::paths::{AppPaths, GameId};
 use anyps5_core::report::{self, ReportInput, SystemInfo};
 use anyps5_core::settings::GameSettings;
@@ -33,6 +34,7 @@ use anyps5_core::unlock;
 use egui::{Context, Ui, ViewportCommand};
 
 use crate::app::clock;
+use crate::app::links;
 use crate::app::model::{Effect, GameState, Model};
 use crate::app::overlay::{Overlay, OverlayCx, OverlayHost};
 use crate::app::selfupdate::{SelfUpdateEvent, SelfUpdateService};
@@ -48,7 +50,7 @@ use crate::screens::home::tile_overlay;
 use crate::screens::library::{LibraryAction, LibraryData, LibraryEntry, LibraryGrid, StateText};
 use crate::screens::log::{LogAction, LogData, LogView};
 use crate::screens::rows::RowId;
-use crate::screens::settings::{SettingsAction, SettingsEnv, SettingsPanel};
+use crate::screens::settings::{Category, SettingsAction, SettingsEnv, SettingsPanel};
 use crate::screens::strings::Extra;
 use crate::screens::trophies::{TrophyAction, TrophyData, TrophyListPanel};
 use crate::screens::{ToastRequest, state_label};
@@ -108,6 +110,10 @@ pub struct PanelHost {
     launcher_toasted: Option<String>,
     /// The first-start download of the toolkit was tried (once per session; the settings retry).
     toolkit_auto_tried: bool,
+    /// Who answers `anyps5://` links, read when the settings open and after a change.
+    links: LinkHandler,
+    /// The demo and the tests keep the registration in memory and never touch the registry.
+    simulated: bool,
 }
 
 impl PanelHost {
@@ -138,6 +144,8 @@ impl PanelHost {
             launcher: SelfUpdateService::new(ctx, simulated),
             launcher_toasted: None,
             toolkit_auto_tried: simulated,
+            links: LinkHandler::Absent,
+            simulated,
         }
     }
 
@@ -165,7 +173,13 @@ impl PanelHost {
 
     fn settings_ui(&mut self, cx: &mut OverlayCx<'_>, wanted: bool) {
         if wanted && !self.settings.is_open() {
-            self.settings.open();
+            self.refresh_links();
+            match cx.model.settings_page.take() {
+                Some(page) => self
+                    .settings
+                    .open_at(Category::from_link(page) as usize, false),
+                None => self.settings.open(),
+            }
         } else if !wanted && self.settings.is_open() {
             self.settings.close();
         }
@@ -179,6 +193,7 @@ impl PanelHost {
             update: self.toolkit.state.clone(),
             launcher: self.launcher.state.clone(),
             default_screenshots: &default_screenshots,
+            links: self.links.clone(),
         };
         // Theme, accent, language, motion and sounds reach the shell inside the panel
         // (`apply_preferences`), so the backdrop cross-fades while the choice is made.
@@ -225,8 +240,44 @@ impl PanelHost {
                     cx.ctx.send_viewport_cmd(ViewportCommand::Close);
                 }
             }
+            SettingsAction::SetLinks(on) => self.set_links(model, on),
             SettingsAction::Quit => cx.ctx.send_viewport_cmd(ViewportCommand::Close),
         }
+    }
+
+    /// Reads who answers the links from the registry.
+    fn refresh_links(&mut self) {
+        if !self.simulated {
+            self.links = std::env::current_exe()
+                .map(|exe| linkreg::status(&links::scheme(), &exe))
+                .unwrap_or(LinkHandler::Absent);
+        }
+    }
+
+    /// Writes or removes the per-user registration of the scheme (and, for the real scheme, of the
+    /// folder entry), then reads it back so the row shows what is true.
+    fn set_links(&mut self, model: &mut Model, on: bool) {
+        if self.simulated {
+            self.links = if on {
+                LinkHandler::ThisExe
+            } else {
+                LinkHandler::Absent
+            };
+            return;
+        }
+        let scheme = links::scheme();
+        let folder_menu = scheme == anyps5_core::links::SCHEME;
+        let result = match std::env::current_exe() {
+            Ok(exe) if on => linkreg::register(&scheme, &exe, folder_menu),
+            Ok(_) => linkreg::unregister(&scheme, folder_menu),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = result {
+            tracing::warn!("cannot change the link registration: {error}");
+            let text = Extra::LinksFailed.text(model.language());
+            model.toast(text, Icon::WARNING);
+        }
+        self.refresh_links();
     }
 
     fn check_toolkit(&mut self, model: &Model) {
