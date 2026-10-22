@@ -26,9 +26,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 sys-locale = "0.3"
 rfd = "0.17.2"
 time.workspace = true
+naga = { version = "30", features = ["wgsl-in"] }
 
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "3"
-
-[dev-dependencies]
-naga = { version = "30", features = ["wgsl-in"] }

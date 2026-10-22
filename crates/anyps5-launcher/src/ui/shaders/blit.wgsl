@@ -36,6 +36,17 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     return select(hi, lo, c <= vec3<f32>(0.04045));
 }
 
+fn pcg(v: u32) -> u32 {
+    let state = v * 747796405u + 2891336453u;
+    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// Uniform in 0..1, fixed per framebuffer pixel so the dither never flickers.
+fn pixel_noise(px: vec2<u32>, seed: u32) -> f32 {
+    return f32(pcg(px.x ^ pcg(px.y ^ seed)) >> 8u) / 16777216.0;
+}
+
 fn rounded_box_sdf(q: vec2<f32>, half_size: vec2<f32>, r: f32) -> f32 {
     let d = abs(q) - half_size + vec2<f32>(r);
     return length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0) - r;
@@ -45,6 +56,9 @@ fn rounded_box_sdf(q: vec2<f32>, half_size: vec2<f32>, r: f32) -> f32 {
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let uv = mix(p.uv_min, p.uv_max, in.uv);
     var c = textureSample(tex, samp, uv).rgb;
+    // triangular dither of about one 8-bit step at full resolution against banding in the dark gradients
+    let px = vec2<u32>(in.pos.xy);
+    c = max(c + vec3<f32>((pixel_noise(px, 0x9e37u) + pixel_noise(px, 0x85ebu) - 1.0) / 255.0), vec3<f32>(0.0));
     if (p.linearize != 0u) {
         c = srgb_to_linear(c);
     }
