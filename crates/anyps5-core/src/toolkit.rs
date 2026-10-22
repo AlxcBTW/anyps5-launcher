@@ -27,7 +27,7 @@ pub const MINGW_DLLS: [&str; 3] = [
 /// Default release repository (`toolkitRepository` setting).
 pub const DEFAULT_REPOSITORY: &str = "boykopovar/AnyPS5";
 
-const API_BASE: &str = "https://api.github.com";
+pub(crate) const API_BASE: &str = "https://api.github.com";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolkitError {
@@ -393,7 +393,7 @@ fn feed(hasher: &mut Sha256, path: &Path) -> io::Result<()> {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -496,7 +496,7 @@ pub fn parse_release(json: &str) -> Result<ReleaseInfo, ToolkitError> {
     })
 }
 
-fn agent(timeout: Option<Duration>) -> ureq::Agent {
+pub(crate) fn agent(timeout: Option<Duration>) -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(timeout)
         .http_status_as_error(false)
@@ -504,7 +504,7 @@ fn agent(timeout: Option<Duration>) -> ureq::Agent {
         .into()
 }
 
-fn user_agent() -> String {
+pub(crate) fn user_agent() -> String {
     format!("anyps5-launcher/{}", env!("CARGO_PKG_VERSION"))
 }
 
@@ -516,6 +516,11 @@ pub fn check_latest(repo: &str) -> Result<ReleaseInfo, ToolkitError> {
 
 /// [`check_latest`] against another API host (tests).
 pub fn check_latest_at(api_base: &str, repo: &str) -> Result<ReleaseInfo, ToolkitError> {
+    parse_release(&latest_release_json(api_base, repo)?)
+}
+
+/// The JSON of `GET /repos/<repo>/releases/latest` (shared with the launcher's self-update).
+pub(crate) fn latest_release_json(api_base: &str, repo: &str) -> Result<String, ToolkitError> {
     let url = format!("{api_base}/repos/{repo}/releases/latest");
     let mut response = agent(Some(Duration::from_secs(10)))
         .get(&url)
@@ -534,11 +539,29 @@ pub fn check_latest_at(api_base: &str, repo: &str) -> Result<ReleaseInfo, Toolki
         404 => return Err(ToolkitError::NoRelease),
         other => return Err(ToolkitError::Network(format!("GitHub answered {other}"))),
     }
-    let body = response
+    response
         .body_mut()
         .read_to_string()
+        .map_err(|e| ToolkitError::Network(e.to_string()))
+}
+
+/// Downloads a small text file (a checksum list).
+pub(crate) fn download_text(url: &str) -> Result<String, ToolkitError> {
+    let mut response = agent(Some(Duration::from_secs(20)))
+        .get(url)
+        .header("User-Agent", user_agent())
+        .call()
         .map_err(|e| ToolkitError::Network(e.to_string()))?;
-    parse_release(&body)
+    if response.status().as_u16() != 200 {
+        return Err(ToolkitError::Network(format!(
+            "download failed: HTTP {}",
+            response.status().as_u16()
+        )));
+    }
+    response
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| ToolkitError::Network(e.to_string()))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -666,7 +689,24 @@ fn download(
     progress: &mut dyn FnMut(DownloadStage, f64),
     cancel: &CancelToken,
 ) -> Result<(), ToolkitError> {
-    progress(stage, 0.0);
+    download_to(
+        agent,
+        asset,
+        destination,
+        &mut |share| progress(stage, share),
+        cancel,
+    )
+}
+
+/// Streams `asset` into `destination` and checks it (SHA-256 when the asset has one, else size).
+pub(crate) fn download_to(
+    agent: &ureq::Agent,
+    asset: &Asset,
+    destination: &Path,
+    progress: &mut dyn FnMut(f64),
+    cancel: &CancelToken,
+) -> Result<(), ToolkitError> {
+    progress(0.0);
     let mut response = agent
         .get(&asset.url)
         .header("User-Agent", user_agent())
@@ -702,7 +742,7 @@ fn download(
         hasher.update(&buffer[..n]);
         total += n as u64;
         if let Some(size) = expected.filter(|s| *s > 0) {
-            progress(stage, (total as f64 / size as f64).min(1.0));
+            progress((total as f64 / size as f64).min(1.0));
         }
     }
     file.flush()?;
@@ -718,7 +758,7 @@ fn download(
             }
         }
     }
-    progress(stage, 1.0);
+    progress(1.0);
     Ok(())
 }
 

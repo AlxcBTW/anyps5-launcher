@@ -45,6 +45,8 @@ The files are not code-signed yet, so SmartScreen warns about them. Click **More
 3. That is all. On the first start the launcher downloads the AnyPS5 toolkit by itself and shows a message when it is ready. If the download fails (no internet, for example), open Settings and choose *Download the Toolkit*.
 4. Select a game, unlock it and press play.
 
+The launcher updates itself: it checks GitHub for a newer release when it starts, downloads and verifies it in the background, and installs it when you close the launcher (or at once with *Restart Now* in Settings, About). Switch *Check for Updates* off in Settings to stop that.
+
 The launcher keeps its settings in `%APPDATA%\AnyPS5` and the toolkit in `%LOCALAPPDATA%\AnyPS5`. Uninstalling the launcher leaves both in place.
 
 ## What it is

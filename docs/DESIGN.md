@@ -1666,6 +1666,17 @@ mouse pass-through, not in the taskbar, not activating). **Limitation:** a game 
 ordinary window; it works for windowed and borderless fullscreen. When the window cannot be shown the banner is skipped and the trophy
 list still updates.
 
+### 9.5 The launcher updates itself
+
+No counterpart in the macOS launcher (Sparkle there). Core module `anyps5_core::selfupdate`, host `app::selfupdate`.
+
+- **Check.** Once per start, in the background, when the *Check for Updates* preference is on: the latest release of `AlxcBTW/anyps5-launcher` (the same request and HTTP client as the toolkit check). A newer semver (pre-release tags sort below their release) is downloaded and verified at once; garbage tags are never newer. Previews, the demo, the gallery and the tests never check.
+- **Verify.** The portable `AnyPS5-Launcher-<v>-x64.exe` goes to `%LOCALAPPDATA%AnyPS5Updates`. Its SHA-256 must match the line in the release's `SHA256SUMS.txt`; a missing line, a wrong hash or a file that does not start with `MZ` refuses the update and leaves nothing behind. The file gets its final name only after that, so a file of that name is always a verified one.
+- **Swap.** Windows cannot overwrite a running exe but can rename it. The staged file is copied beside the running exe (`<name>.new`, it may be on another drive), the running exe is renamed to `<name>.old`, the copy takes its place. A failure in the second step moves the old one back. The next start deletes `.old` files and stale downloads (one still in use stays until a later start). It works for the installed exe (`%LOCALAPPDATA%ProgramsAnyPS5 Launcher`) and for the portable exe in any writable folder. A folder that refuses new files is reported before anything is downloaded: About shows "<v> available, but this folder is read-only" and nothing else happens.
+- **When.** A calm toast when the update is ready: "Launcher <v> is ready. It installs when you close the launcher." The swap runs on exit, after the preferences are saved. An update staged by a run that closed too early is offered again at the next start without a second download.
+- **About.** The *Version* row reads "<v>" and, with a staged update, "<v> ready" with a *Restart Now* row above *Quit*. It closes the launcher, swaps, and starts the new exe with the same arguments.
+- **Not done.** The exe is not code-signed and the checksum list comes from the same release as the exe, so it guards against a damaged or substituted download, not against a compromised release.
+
 ---
 
 ## 10. Asset list

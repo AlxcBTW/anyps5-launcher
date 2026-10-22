@@ -29,7 +29,9 @@ use crate::screens::game_settings::{
 };
 use crate::screens::library::{LibraryData, LibraryEntry, LibraryGrid, StateText};
 use crate::screens::log::{LogData, LogView};
-use crate::screens::settings::{SettingsEnv, SettingsPanel, UpdateState, apply_preferences};
+use crate::screens::settings::{
+    LauncherUpdate, SettingsEnv, SettingsPanel, UpdateState, apply_preferences,
+};
 use crate::screens::start::{StartData, StartScreen};
 use crate::screens::trophies::{IconCache, TrophyData, TrophyListPanel};
 use crate::screens::unlock::{UnlockProgress, UnlockStep, hero_progress};
@@ -399,6 +401,7 @@ impl ScreenGallery {
             app_version: "0.1.0",
             toolkit_version: Some("0.1.3-4f2a9c"),
             update: UpdateState::UpToDate,
+            launcher: LauncherUpdate::None,
             default_screenshots: std::path::Path::new("C:\\Users\\mira\\Pictures\\AnyPS5"),
         };
         let icon = Some(self.tile(1));

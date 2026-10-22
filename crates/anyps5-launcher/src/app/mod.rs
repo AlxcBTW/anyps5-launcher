@@ -23,6 +23,7 @@ pub mod overlay;
 pub mod panels;
 pub mod pipeline;
 pub mod preview;
+pub mod selfupdate;
 pub mod services;
 pub mod textures;
 pub mod toolkit;
@@ -70,6 +71,10 @@ impl Config {
         let paths = AppPaths::from_env()
             .unwrap_or_else(|| AppPaths::under(&std::env::temp_dir().join("anyps5-launcher")));
         let prefs = Preferences::load(&paths);
+        // Whatever the last self-update swap left behind (`.old` exes, stale downloads).
+        if let Ok(exe) = std::env::current_exe() {
+            anyps5_core::selfupdate::cleanup(&exe, &paths, env!("CARGO_PKG_VERSION"));
+        }
         let repaint = ctx.clone();
         let wake: std::sync::Arc<dyn Fn() + Send + Sync> =
             std::sync::Arc::new(move || repaint.request_repaint());
@@ -686,6 +691,7 @@ impl eframe::App for App {
 
     fn on_exit(&mut self) {
         self.app.save_preferences();
+        self.app.panels.exit();
     }
 }
 
