@@ -1,0 +1,288 @@
+//! Localisation (docs/DESIGN.md section 8): English and Turkish, 212 keys generated from the
+//! macOS launcher's `Localization.swift` by `tools/gen-i18n.mjs`, with the Windows replacements
+//! of section 9.3 already applied.
+//!
+//! Lookup is `current language table, then English, then the key name`. Because both tables are
+//! complete `match`es the fallbacks can never fire; they are kept in [`Language::text`] only as the
+//! documented contract.
+
+include!("i18n_table.rs");
+
+/// Interface languages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum Language {
+    Turkish,
+    #[default]
+    English,
+}
+
+impl Language {
+    pub const ALL: [Language; 2] = [Language::Turkish, Language::English];
+
+    /// Preference value (`"tr"` / `"en"`).
+    pub const fn code(self) -> &'static str {
+        match self {
+            Language::Turkish => "tr",
+            Language::English => "en",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<Language> {
+        match code {
+            "tr" => Some(Language::Turkish),
+            "en" => Some(Language::English),
+            _ => None,
+        }
+    }
+
+    /// Name in its own language.
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Language::Turkish => "Türkçe",
+            Language::English => "English",
+        }
+    }
+
+    /// Two-letter tag shown on the onboarding language cards.
+    pub const fn tag(self) -> &'static str {
+        match self {
+            Language::Turkish => "TR",
+            Language::English => "EN",
+        }
+    }
+
+    /// The console language a game starts in when its own setting follows the launcher.
+    pub const fn console_language(self) -> u32 {
+        match self {
+            Language::Turkish => 19,
+            Language::English => 1,
+        }
+    }
+
+    /// Turkish when the OS UI language starts with `tr`, else English.
+    pub fn system() -> Language {
+        match sys_locale::get_locale() {
+            Some(locale) if locale.to_ascii_lowercase().starts_with("tr") => Language::Turkish,
+            _ => Language::English,
+        }
+    }
+
+    /// Looks a key up in this language.
+    pub const fn text(self, key: Key) -> &'static str {
+        match self {
+            Language::Turkish => key.turkish(),
+            Language::English => key.english(),
+        }
+    }
+
+    /// Looks a key up and substitutes `%d` / `%@` in order. `%%` yields a percent sign.
+    pub fn format(self, key: Key, args: &[Arg<'_>]) -> String {
+        substitute(self.text(key), args)
+    }
+
+    /// Locale tag for dates (`en-US` / `tr-TR`).
+    pub const fn locale(self) -> &'static str {
+        match self {
+            Language::Turkish => "tr-TR",
+            Language::English => "en-US",
+        }
+    }
+}
+
+/// One format argument.
+#[derive(Clone, Copy, Debug)]
+pub enum Arg<'a> {
+    Int(i64),
+    Str(&'a str),
+}
+
+impl From<i64> for Arg<'_> {
+    fn from(value: i64) -> Self {
+        Arg::Int(value)
+    }
+}
+
+impl From<usize> for Arg<'_> {
+    fn from(value: usize) -> Self {
+        Arg::Int(value as i64)
+    }
+}
+
+impl<'a> From<&'a str> for Arg<'a> {
+    fn from(value: &'a str) -> Self {
+        Arg::Str(value)
+    }
+}
+
+/// Replaces `%d` and `%@` placeholders with `args` in order.
+pub fn substitute(template: &str, args: &[Arg<'_>]) -> String {
+    let mut out = String::with_capacity(template.len() + 16);
+    let mut next = args.iter();
+    let mut chars = template.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek() {
+            Some('d') | Some('@') => {
+                chars.next();
+                match next.next() {
+                    Some(Arg::Int(v)) => out.push_str(&v.to_string()),
+                    Some(Arg::Str(s)) => out.push_str(s),
+                    None => {}
+                }
+            }
+            Some('%') => {
+                chars.next();
+                out.push('%');
+            }
+            _ => out.push('%'),
+        }
+    }
+    out
+}
+
+impl Key {
+    /// Keys that only make sense on macOS (Rosetta, move to Applications). They stay in the table
+    /// for completeness but no Windows screen shows them.
+    pub const fn is_macos_only(self) -> bool {
+        matches!(
+            self,
+            Key::RosettaMissing
+                | Key::RosettaInstall
+                | Key::RosettaInstalled
+                | Key::MoveToApplications
+                | Key::MoveToApplicationsText
+                | Key::MoveNow
+                | Key::Later
+        )
+    }
+}
+
+/// Decimal-unit file size (1 GB = 10^9 bytes) with the language's decimal separator, e.g. `8,39 GB`
+/// in Turkish and `8.39 GB` in English. Negative input means "not measured yet" and yields an ellipsis.
+pub fn byte_text(bytes: i64, language: Language) -> String {
+    if bytes < 0 {
+        return "…".to_owned();
+    }
+    const UNITS: [&str; 5] = ["bytes", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1000.0 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        return format!("{bytes} bytes");
+    }
+    let text = if value >= 100.0 {
+        format!("{value:.0}")
+    } else if value >= 10.0 {
+        format!("{value:.1}")
+    } else {
+        format!("{value:.2}")
+    };
+    let text = if language == Language::Turkish {
+        text.replace('.', ",")
+    } else {
+        text
+    };
+    format!("{text} {}", UNITS[unit])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_212_keys_exist_in_both_languages() {
+        assert_eq!(Key::ALL.len(), 212);
+        for key in Key::ALL {
+            for language in Language::ALL {
+                assert!(
+                    !language.text(key).is_empty(),
+                    "{} is empty in {language:?}",
+                    key.name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn windows_replacements_are_applied() {
+        assert_eq!(
+            Language::English.text(Key::WelcomeSubtitle),
+            "Play PS5 games on your PC. Let's set a few things up first."
+        );
+        assert_eq!(
+            Language::English.text(Key::StepRelink),
+            "Converting for Windows"
+        );
+        assert_eq!(
+            Language::Turkish.text(Key::StepRelink),
+            "Windows için çevriliyor"
+        );
+        assert_eq!(
+            Language::English.text(Key::ShowInFinder),
+            "Show in Explorer"
+        );
+        assert_eq!(
+            Language::English.text(Key::AboutText),
+            "AnyPS5 runs PS5 games natively on Windows."
+        );
+    }
+
+    #[test]
+    fn no_visible_string_still_names_the_mac() {
+        for key in Key::ALL {
+            if key.is_macos_only() {
+                continue;
+            }
+            for language in Language::ALL {
+                let text = language.text(key);
+                for word in ["Mac", "Finder", "Rosetta", "APFS", "MoltenVK"] {
+                    assert!(
+                        !text.contains(word),
+                        "{} ({language:?}) still says {word}: {text}",
+                        key.name()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn format_substitutes_in_order() {
+        assert_eq!(
+            Language::English.format(Key::GamesFound, &[3usize.into()]),
+            "3 games found"
+        );
+        assert_eq!(
+            Language::Turkish.format(Key::GamesFound, &[3usize.into()]),
+            "3 oyun bulundu"
+        );
+        assert_eq!(
+            Language::English.format(Key::DiagnosisMissingModule, &["libX.dll".into()]),
+            "Missing module: libX.dll. Unlocking the game again may fix it."
+        );
+        assert_eq!(substitute("100%% of %d", &[Arg::Int(7)]), "100% of 7");
+    }
+
+    #[test]
+    fn language_codes_round_trip() {
+        for language in Language::ALL {
+            assert_eq!(Language::from_code(language.code()), Some(language));
+        }
+        assert_eq!(Language::from_code("de"), None);
+    }
+
+    #[test]
+    fn byte_text_uses_decimal_units() {
+        assert_eq!(byte_text(8_390_000_000, Language::Turkish), "8,39 GB");
+        assert_eq!(byte_text(8_390_000_000, Language::English), "8.39 GB");
+        assert_eq!(byte_text(-1, Language::English), "…");
+        assert_eq!(byte_text(999, Language::English), "999 bytes");
+        assert_eq!(byte_text(12_300_000, Language::English), "12.3 MB");
+    }
+}

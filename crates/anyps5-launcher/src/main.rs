@@ -3,58 +3,56 @@
 // No console window in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod background;
-mod gamepad;
+mod ui;
 
 use eframe::egui;
 
-struct App;
+use crate::ui::Shell;
+use crate::ui::theme;
+
+/// Placeholder host until the screens land: the animated backdrop and the product name.
+struct App {
+    shell: Shell,
+}
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        if let Some(render_state) = cc.wgpu_render_state.as_ref() {
-            background::init(render_state);
+        Self {
+            shell: Shell::new(cc),
         }
-        gamepad::spawn(cc.egui_ctx.clone());
-        App
     }
 }
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE)
-            .show(ui, |ui| {
-                background::paint(ui, ui.max_rect());
-                ui.centered_and_justified(|ui| {
-                    ui.label(
-                        egui::RichText::new("AnyPS5")
-                            .size(48.0)
-                            .color(egui::Color32::from_rgb(0xE8, 0xEC, 0xF4)),
-                    );
-                });
-            });
-    }
-}
-
-/// Use Vulkan and DX12 only. wgpu's OpenGL probe crashes some AMD OpenGL drivers
-/// (access violation in atio6axx.dll during ChoosePixelFormat), and the game needs neither.
-fn restrict_backends(options: &mut eframe::NativeOptions) {
-    use eframe::egui_wgpu::{WgpuSetup, wgpu::Backends};
-    if let WgpuSetup::CreateNew(create_new) = &mut options.wgpu_options.wgpu_setup {
-        create_new.instance_descriptor.backends = Backends::VULKAN | Backends::DX12;
+        let ctx = ui.ctx().clone();
+        let _frame_input = self.shell.begin_frame(&ctx);
+        let screen = ctx.content_rect();
+        let painter = ui.painter().clone();
+        self.shell.paint_backdrop(&ctx, &painter, screen);
+        painter.text(
+            screen.center(),
+            egui::Align2::CENTER_CENTER,
+            "AnyPS5",
+            theme::ty::HERO_TITLE.font(),
+            egui::Color32::WHITE,
+        );
     }
 }
 
 fn main() -> eframe::Result {
     tracing_subscriber::fmt().init();
+    if let Some(options) = ui::gallery::parse_args(std::env::args().skip(1)) {
+        return ui::gallery::run(options);
+    }
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("AnyPS5")
-            .with_inner_size([1280.0, 720.0])
-            .with_min_inner_size([960.0, 540.0]),
+            .with_inner_size([1600.0, 900.0])
+            .with_min_inner_size([theme::MIN_WINDOW.0, theme::MIN_WINDOW.1])
+            .with_maximized(true),
         ..Default::default()
     };
-    restrict_backends(&mut options);
+    ui::restrict_backends(&mut options);
     eframe::run_native("AnyPS5", options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
 }
