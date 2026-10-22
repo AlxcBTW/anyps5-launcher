@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "anyps5-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "flate2",
  "libc",
@@ -290,7 +290,7 @@ dependencies = [
 
 [[package]]
 name = "anyps5-launcher"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyps5-core",
  "bytemuck",
@@ -1372,7 +1372,7 @@ checksum = "af9673d8203fcb076b19dfd17e38b3d4ae9f44959416ea532ce72415a6020365"
 
 [[package]]
 name = "fake-relinker"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "fastrand"
