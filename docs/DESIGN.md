@@ -862,7 +862,7 @@ category's rows (5.8).
 
 Settings are persisted per user (`Preferences`): `onboarded`, `language` (system default: Turkish if the OS UI language starts with
 `tr`, else English), `theme` (Cosmic), `accent` (nil = theme default), `backdrop` (theme), `backdropFile`, `gameArtwork` (true),
-`reducedMotion` (false), `sounds` (true), `music` (true), `hideWhilePlaying` (false), `profileName` (first word of the user's full name, fallback
+`reducedMotion` (false), `sounds` (true), `music` (true), `discordPresence` (true), `hideWhilePlaying` (false), `profileName` (first word of the user's full name, fallback
 "Player"), `gamesFolder`, `screenshotsFolder` (nil = `Pictures/AnyPS5`), `fontsFolder`, per-game settings, `lastPlayed`.
 Every change saves immediately and re-applies language, motion and sound flags.
 
@@ -1286,6 +1286,30 @@ any source is written as `KEY:F24`, "unbound"), followed by the changed tuning l
 in `docs/user/INPUT_MAPPING.md` of AnyPS5-ARM.
 
 ---
+
+### 7.4 Discord presence (AnyPS5-ARM `4a29777` to `14ef671`, after the pinned commit)
+
+The running game shows on the player's Discord profile ("Playing ..." with the time since it
+started), ported from `DiscordPresence.swift` into `anyps5_core::discord`.
+
+- **Transport.** Discord's local IPC: `\.\pipe\discord-ipc-0` to `-9` on Windows (a Unix socket
+  elsewhere). A frame is a little-endian `u32` opcode and length, then JSON. Handshake opcode 0
+  with `{"v": 1, "client_id": ...}`, answered by opcode 1; then `SET_ACTIVITY` frames (opcode 1).
+  A connection belongs to the application it shook hands as; a different one reconnects. A failed
+  send reconnects once (Discord restarted). Without Discord nothing happens.
+- **Which application.** Discord's public list of detectable games
+  (`https://discord.com/api/v9/applications/detectable`, cut to id, name and aliases, cached in
+  `Cache/discord-games.json` for a week) is matched by lowercase words of the name or an alias.
+  A known game is shown as itself with details "AnyPS5 Launcher · Windows"; any other game shows
+  under the AnyPS5 application (`1562749843724566549`, shared with the macOS launcher) with the
+  game's name as details and "AnyPS5 · Windows" as state. No image is named, so Discord shows the
+  application's icon.
+- **When.** Set when the game's window appears (`PipelineEvent::WindowShown`), cleared when it
+  exits or when the setting is turned off. Everything runs on a `discord` thread; the UI only
+  sends messages. Previews and tests never connect.
+- **Setting.** Behaviour, "Show Game on Discord" (`discordPresence`, on by default), with the
+  detail "With Discord open, your profile shows the game and for how long." and the `discord-logo`
+  icon.
 
 ## 8. Localization
 

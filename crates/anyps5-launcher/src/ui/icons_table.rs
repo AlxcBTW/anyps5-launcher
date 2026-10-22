@@ -47,6 +47,7 @@ impl Icon {
     pub const USER_CIRCLE: Icon = Icon('\u{e4c4}');
     pub const SPEAKER_HIGH: Icon = Icon('\u{e44a}');
     pub const MUSIC_NOTES: Icon = Icon('\u{e340}');
+    pub const DISCORD_LOGO: Icon = Icon('\u{e61a}');
     pub const EYE_SLASH: Icon = Icon('\u{e224}');
     pub const POWER: Icon = Icon('\u{e3da}');
     pub const RECTANGLE: Icon = Icon('\u{e3f0}');

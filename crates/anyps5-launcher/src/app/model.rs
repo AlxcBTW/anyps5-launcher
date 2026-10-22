@@ -89,6 +89,8 @@ pub enum Effect {
     /// "Hide Launcher While Playing".
     MinimizeWindow,
     RestoreWindow,
+    /// Show a game on Discord (`Some(name)`) or clear it (`None`).
+    Presence(Option<String>),
     /// The toolkit changed on disk or in the preferences: the pipeline looks for it again.
     ReloadToolkit,
 }
@@ -559,6 +561,11 @@ impl Model {
             PipelineEvent::WindowShown { game } => {
                 if self.starting.as_ref() == Some(&game) {
                     self.starting = None;
+                    if self.prefs.discord_presence
+                        && let Some(name) = self.game(&game).map(|g| g.name.clone())
+                    {
+                        self.effects.push(Effect::Presence(Some(name)));
+                    }
                     if self.prefs.hide_while_playing {
                         self.effects.push(Effect::MinimizeWindow);
                     }
@@ -576,6 +583,7 @@ impl Model {
                     return;
                 }
                 self.running = None;
+                self.effects.push(Effect::Presence(None));
                 self.reload_trophies(&game);
                 if self.starting.as_ref() == Some(&game) {
                     self.starting = None;
@@ -1167,6 +1175,40 @@ mod tests {
         assert_eq!(m.progress[&id].1, 0.10);
         m.on_pipeline(p(0.11));
         assert_eq!(m.progress[&id].1, 0.11);
+    }
+
+    #[test]
+    fn a_running_game_shows_on_discord_until_it_ends() {
+        let g = game("a", Some("v1"), ExecutableKind::Elf);
+        let id = g.id.clone();
+        let mut m = model_with(vec![g.clone()]);
+        m.handle(Command::Select);
+        m.on_pipeline(PipelineEvent::Spawned { game: id.clone() });
+        m.effects.clear();
+        m.on_pipeline(PipelineEvent::WindowShown { game: id.clone() });
+        assert!(m.effects.contains(&Effect::Presence(Some(g.name.clone()))));
+        m.effects.clear();
+        m.on_pipeline(PipelineEvent::Exited {
+            game: id,
+            diagnosis: None,
+        });
+        assert!(m.effects.contains(&Effect::Presence(None)));
+    }
+
+    #[test]
+    fn discord_stays_quiet_when_turned_off() {
+        let g = game("a", Some("v1"), ExecutableKind::Elf);
+        let id = g.id.clone();
+        let mut m = model_with(vec![g]);
+        m.prefs.discord_presence = false;
+        m.handle(Command::Select);
+        m.on_pipeline(PipelineEvent::Spawned { game: id.clone() });
+        m.on_pipeline(PipelineEvent::WindowShown { game: id });
+        assert!(
+            !m.effects
+                .iter()
+                .any(|e| matches!(e, Effect::Presence(Some(_))))
+        );
     }
 
     #[test]

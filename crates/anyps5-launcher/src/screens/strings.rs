@@ -41,6 +41,9 @@ pub enum Extra {
     /// Settings row: the home screen music toggle.
     HomeMusic,
     HomeMusicDetail,
+    /// Settings row: the running game on Discord.
+    DiscordPresence,
+    DiscordPresenceDetail,
     /// The log box before the game wrote anything.
     EmptyLog,
     /// The button of the removal confirmation (its title already says what is removed).
@@ -84,6 +87,10 @@ impl Extra {
             Extra::HomeMusicDetail => {
                 "Plays quiet ambient music on the home screen. It fades out while a game runs."
             }
+            Extra::DiscordPresence => "Show Game on Discord",
+            Extra::DiscordPresenceDetail => {
+                "With Discord open, your profile shows the game and for how long."
+            }
             Extra::EmptyLog => "No log yet. Play the game once and it appears here.",
             Extra::Remove => "Remove",
             Extra::ToolkitFolderInvalid => {
@@ -126,6 +133,10 @@ impl Extra {
             Extra::HomeMusicDetail => {
                 "Ana ekranda sakin bir ortam müziği çalar. Oyun çalışırken susar."
             }
+            Extra::DiscordPresence => "Oyunu Discord'da Göster",
+            Extra::DiscordPresenceDetail => {
+                "Discord açıksa profilinde oyunun adı ve süresi görünür."
+            }
             Extra::EmptyLog => "Henüz günlük yok. Oyunu bir kez oynadığında burada görünür.",
             Extra::Remove => "Kaldır",
             Extra::ToolkitFolderInvalid => {
@@ -145,7 +156,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 29] = [
+    pub const ALL: [Extra; 31] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -173,6 +184,8 @@ impl Extra {
         Extra::ToolkitFolderInvalid,
         Extra::HomeMusic,
         Extra::HomeMusicDetail,
+        Extra::DiscordPresence,
+        Extra::DiscordPresenceDetail,
         Extra::EmptyLog,
         Extra::Remove,
     ];
