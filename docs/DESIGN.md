@@ -618,6 +618,26 @@ The picture is decoded at `max(w, h) * 2` px and slowly drifts (animation 9). Vi
 window is inactive/a game runs/reduced motion. Video decoding is out of scope for the first port (offer the picture only, hide the
 "My video" choice until a decoder exists); keep the preference value.
 
+### 3.6 Cleaned-up backgrounds (deviation from 3.4)
+
+The shipped `shaders/background.wgsl` keeps each theme's composition and palette but no longer matches 3.4 line by line:
+
+- **Hash and noise:** an integer PCG hash per cell replaces `fract(p * 123.34 ...)`. The float hash gave neighbouring pixels
+  different values for the same cell once the GPU compiler fused the multiply, which showed as hard vertical seams in Aurora.
+  `noise` is gradient noise with a quintic fade (no creases at the lattice).
+- **Colour:** the base gradients (all three themes) blend in Oklab instead of sRGB, so Sunset no longer turns brown between rose
+  and amber.
+- **Cosmic:** four strands on one slow wave instead of six crossing ribbons; fewer, softer bokeh with a gentler twinkle; the light
+  pool and the ribbon haze are Gaussian (no bright point or crease line in the middle).
+- **Aurora:** curtains have a crisp lower rim and a long glow upwards; wide soft folds replace the 16-per-unit ray columns; fewer
+  stars, slower twinkle.
+- **Sunset:** five slower glows, a Gaussian horizon band, very sparse bokeh.
+- **Banding:** the offscreen backdrop is `Rgba16Float` and the blit adds a fixed triangular dither of about one 8-bit step per
+  framebuffer pixel; the per-frame dither of the half-resolution pass is gone.
+
+For tuning, run `anyps5-launcher --gallery=bg0 --live` with `ANYPS5_SHADER_DIR` set to `crates/anyps5-launcher/src/ui/shaders`:
+the background and blit shaders reload on save (invalid WGSL is logged and skipped), Tab switches the theme.
+
 ---
 
 ### 3.7 Cleaner home, panels and launch (deviation from 1.4, 5.x and 7.1)

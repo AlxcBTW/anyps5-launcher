@@ -2,8 +2,9 @@
 
 use eframe::egui_wgpu::wgpu;
 
-/// Offscreen format of the backdrop: display-referred sRGB values, no gamma conversion.
-pub const BACKDROP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// Offscreen format of the backdrop: display-referred sRGB values, no gamma conversion; half floats so
+/// the dark gradients keep their precision until the blit dithers them to the 8-bit swap chain.
+pub const BACKDROP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Format of the blur chain (half floats avoid banding in dark gradients).
 pub const BLUR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 

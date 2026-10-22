@@ -1,4 +1,4 @@
-//! The three animated theme backgrounds (docs/DESIGN.md section 3) as a wgpu paint callback.
+//! The animated theme backgrounds (docs/DESIGN.md sections 3 and 14) as a wgpu paint callback.
 //!
 //! A [`Background`] renders its theme's shader into a **half-resolution** offscreen texture (a
 //! *slot*) and draws that texture, bilinearly upscaled, into the callback rect. The offscreen
@@ -281,23 +281,120 @@ pub(crate) struct BackdropGpu {
     bg_layout: wgpu::BindGroupLayout,
     blit_pipeline: wgpu::RenderPipeline,
     blit_layout: wgpu::BindGroupLayout,
+    target_format: wgpu::TextureFormat,
+    reload: Option<ShaderReload>,
     pub(crate) blur_pipelines: BlurPipelines,
     pub(crate) slots: HashMap<u32, Slot>,
     glass_texture_layout: wgpu::BindGroupLayout,
+}
+
+/// Development aid: with `ANYPS5_SHADER_DIR` set to `crates/anyps5-launcher/src/ui/shaders`, the
+/// background and blit shaders are read from that folder and reloaded whenever a file changes. A
+/// file that does not validate is logged and the running shaders stay.
+struct ShaderReload {
+    dir: std::path::PathBuf,
+    stamp: Option<std::time::SystemTime>,
+    next_check: std::time::Instant,
+}
+
+impl ShaderReload {
+    const FILES: [&str; 2] = ["background.wgsl", "blit.wgsl"];
+
+    fn from_env() -> Option<Self> {
+        let dir = std::path::PathBuf::from(std::env::var_os("ANYPS5_SHADER_DIR")?);
+        tracing::info!("backdrop shaders are reloaded from {}", dir.display());
+        Some(Self {
+            dir,
+            stamp: None,
+            next_check: std::time::Instant::now(),
+        })
+    }
+
+    fn stamp(&self) -> Option<std::time::SystemTime> {
+        Self::FILES
+            .iter()
+            .filter_map(|name| std::fs::metadata(self.dir.join(name)).ok()?.modified().ok())
+            .max()
+    }
+
+    /// The background and blit sources when a file changed since the last call and both validate.
+    fn poll(&mut self) -> Option<(String, String)> {
+        let now = std::time::Instant::now();
+        if now < self.next_check {
+            return None;
+        }
+        self.next_check = now + std::time::Duration::from_millis(250);
+        let stamp = self.stamp();
+        if stamp == self.stamp {
+            return None;
+        }
+        self.stamp = stamp;
+        let [background, blit] = Self::FILES.map(|name| self.read(name));
+        Some((background?, blit?))
+    }
+
+    fn read(&self, name: &str) -> Option<String> {
+        use naga::valid::{Capabilities, ValidationFlags, Validator};
+        let source = std::fs::read_to_string(self.dir.join(name))
+            .inspect_err(|err| tracing::warn!("{name}: {err}"))
+            .ok()?;
+        let module = naga::front::wgsl::parse_str(&source)
+            .inspect_err(|err| tracing::warn!("{name}:\n{}", err.emit_to_string(&source)))
+            .ok()?;
+        Validator::new(ValidationFlags::all(), Capabilities::all())
+            .validate(&module)
+            .inspect_err(|err| tracing::warn!("{name}:\n{}", err.emit_to_string(&source)))
+            .ok()?;
+        Some(source)
+    }
+}
+
+/// The theme background and blit pipelines from WGSL sources.
+fn build_pipelines(
+    device: &wgpu::Device,
+    background: &str,
+    blit: &str,
+    bg_layout: &wgpu::BindGroupLayout,
+    blit_layout: &wgpu::BindGroupLayout,
+    target_format: wgpu::TextureFormat,
+) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
+    let bg_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("theme background"),
+        source: wgpu::ShaderSource::Wgsl(background.into()),
+    });
+    let blit_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("backdrop blit"),
+        source: wgpu::ShaderSource::Wgsl(blit.into()),
+    });
+    let bg_pipeline = gpu::triangle_pipeline(
+        device,
+        "theme background",
+        &bg_module,
+        "fs",
+        &[bg_layout],
+        BACKDROP_FORMAT,
+        None,
+    );
+    let blit_pipeline = gpu::triangle_pipeline(
+        device,
+        "backdrop blit",
+        &blit_module,
+        "fs",
+        &[blit_layout],
+        target_format,
+        Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+    );
+    (bg_pipeline, blit_pipeline)
 }
 
 /// Builds the pipelines. Call once from the app creator.
 pub fn init(render_state: &egui_wgpu::RenderState) {
     let device = &render_state.device;
     let sampler = gpu::linear_sampler(device);
-    let bg_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("theme background"),
-        source: wgpu::ShaderSource::Wgsl(BACKGROUND_WGSL.into()),
-    });
-    let blit_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("backdrop blit"),
-        source: wgpu::ShaderSource::Wgsl(BLIT_WGSL.into()),
-    });
+    let reload = ShaderReload::from_env();
+    if reload.is_some() {
+        device.on_uncaptured_error(std::sync::Arc::new(|err| tracing::error!("wgpu: {err}")));
+    }
     let bg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("background layout"),
         entries: &[gpu::uniform_entry(0, false)],
@@ -310,23 +407,13 @@ pub fn init(render_state: &egui_wgpu::RenderState) {
             gpu::sampler_entry(2),
         ],
     });
-    let bg_pipeline = gpu::triangle_pipeline(
+    let (bg_pipeline, blit_pipeline) = build_pipelines(
         device,
-        "theme background",
-        &bg_module,
-        "fs",
-        &[&bg_layout],
-        BACKDROP_FORMAT,
-        None,
-    );
-    let blit_pipeline = gpu::triangle_pipeline(
-        device,
-        "backdrop blit",
-        &blit_module,
-        "fs",
-        &[&blit_layout],
+        BACKGROUND_WGSL,
+        BLIT_WGSL,
+        &bg_layout,
+        &blit_layout,
         render_state.target_format,
-        Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
     );
     let linearize = gpu::needs_linearize(render_state.target_format);
     let glass_texture_layout = crate::ui::glass::texture_layout(device);
@@ -340,6 +427,8 @@ pub fn init(render_state: &egui_wgpu::RenderState) {
         bg_layout,
         blit_pipeline,
         blit_layout,
+        target_format: render_state.target_format,
+        reload,
         blur_pipelines: BlurPipelines::new(device),
         slots: HashMap::new(),
         glass_texture_layout,
@@ -434,6 +523,21 @@ impl egui_wgpu::CallbackTrait for BackgroundCallback {
         let Some(gpu) = resources.get_mut::<BackdropGpu>() else {
             return Vec::new();
         };
+        if let Some((background, blit)) = gpu.reload.as_mut().and_then(ShaderReload::poll) {
+            (gpu.bg_pipeline, gpu.blit_pipeline) = build_pipelines(
+                device,
+                &background,
+                &blit,
+                &gpu.bg_layout,
+                &gpu.blit_layout,
+                gpu.target_format,
+            );
+            for slot in gpu.slots.values_mut() {
+                slot.last_key = None;
+                slot.blur_stamp = None;
+            }
+            tracing::info!("backdrop shaders reloaded");
+        }
         let BackdropGpu {
             sampler,
             linearize,

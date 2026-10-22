@@ -3,12 +3,13 @@
 //!
 //! ```text
 //! anyps5-launcher --gallery[=components|panels|artwork|themes|bg0|bg1|bg2]
-//!                 [--screenshot=out.png] [--size=1600x900] [--time=260]
+//!                 [--screenshot=out.png] [--size=1600x900] [--time=260] [--live]
 //! ```
 //!
 //! With `--screenshot` the window renders a few frames, writes the PNG and exits. `--time` fixes
 //! the shader clock (the original's preview stills use 260 s for a full frame and 200 s for the
-//! theme cards).
+//! theme cards). `--live` lets the clock run, and on a background page Tab switches the theme; with
+//! `ANYPS5_SHADER_DIR` set (see [`crate::ui::background`]) shader edits show up while it runs.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -55,6 +56,7 @@ pub struct Options {
     pub size: (f32, f32),
     pub time: Option<f32>,
     pub language: Language,
+    pub live: bool,
 }
 
 /// Returns the gallery options when `--gallery` is on the command line.
@@ -65,6 +67,7 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Option<Options> {
         size: (1600.0, 900.0),
         time: None,
         language: Language::English,
+        live: false,
     };
     let mut seen = false;
     for arg in args {
@@ -94,6 +97,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Option<Options> {
             options.time = t.parse().ok();
         } else if arg == "--tr" {
             options.language = Language::Turkish;
+        } else if arg == "--live" {
+            options.live = true;
         }
     }
     seen.then_some(options)
@@ -137,7 +142,7 @@ impl Gallery {
         let clock =
             BackgroundClock::starting_at(f64::from(options.time.unwrap_or(STILL_TIME_FULL)));
         shell.backdrop = crate::ui::background::Backdrop::with_clock(theme, clock);
-        shell.backdrop.paused = true;
+        shell.backdrop.paused = !options.live;
         Self {
             shell,
             options,
@@ -189,7 +194,17 @@ impl eframe::App for Gallery {
         let painter = ui.painter().clone();
         self.shell.paint_backdrop(&ctx, &painter, screen);
         match self.options.page {
-            Page::Background(_) => {}
+            Page::Background(theme) => {
+                if self.options.live && ctx.input(|i| i.key_pressed(egui::Key::Tab)) {
+                    let next = Theme::ALL[(theme.index() as usize + 1) % Theme::ALL.len()];
+                    self.options.page = Page::Background(next);
+                    self.shell.backdrop.set_theme(next);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+                        "AnyPS5 gallery: {}",
+                        next.title(Language::English)
+                    )));
+                }
+            }
             Page::Screen(_) => {
                 if let Some(screens) = self.screens.as_mut() {
                     screens.ui(&mut self.shell, ui);
