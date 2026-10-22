@@ -123,6 +123,10 @@ pub struct Options {
     pub scene: Option<Scene>,
     pub screenshot: Option<PathBuf>,
     pub size: (f32, f32),
+    /// `--at=X,Y`: the window's top-left corner on the screen (recordings).
+    pub at: Option<(f32, f32)>,
+    /// `--fullscreen`: fill the screen the window opens on, as the launcher does.
+    pub fullscreen: bool,
     pub turkish: bool,
     /// `--pad`: hint bars show gamepad buttons instead of keys.
     pub pad: bool,
@@ -134,6 +138,10 @@ pub struct Options {
     /// A real dump whose `icon0.png` and `pic0.png` replace the second game's generated art, for
     /// local comparisons with the original (never committed, never uploaded).
     pub real_art: Option<PathBuf>,
+    /// `ANYPS5_PREVIEW_GAMES`: a folder of dump-shaped game folders (eboot.bin, sce_sys/param.json,
+    /// icon0.png, pic0.png) that replace the generated library, in folder-name order. For the
+    /// README's pictures; the art stays where it is.
+    pub showcase: Option<PathBuf>,
 }
 
 /// One step of a scripted run.
@@ -170,12 +178,15 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Option<Options> {
         scene: None,
         screenshot: None,
         size: (1600.0, 900.0),
+        at: None,
+        fullscreen: false,
         turkish: false,
         pad: false,
         intro: false,
         frames: 100,
         script: Vec::new(),
         real_art: std::env::var_os("ANYPS5_PREVIEW_REAL_ART").map(PathBuf::from),
+        showcase: std::env::var_os("ANYPS5_PREVIEW_GAMES").map(PathBuf::from),
     };
     let mut seen = false;
     for arg in args {
@@ -193,6 +204,10 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Option<Options> {
             {
                 options.size = (w, h);
             }
+        } else if let Some(at) = arg.strip_prefix("--at=") {
+            if let Some((Ok(x), Ok(y))) = at.split_once(',').map(|(x, y)| (x.parse(), y.parse())) {
+                options.at = Some((x, y));
+            }
         } else if let Some(frames) = arg.strip_prefix("--frames=") {
             options.frames = frames.parse().unwrap_or(100);
         } else if let Some(script) = arg.strip_prefix("--script=") {
@@ -201,6 +216,8 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Option<Options> {
             options.pad = true;
         } else if arg == "--intro" {
             options.intro = true;
+        } else if arg == "--fullscreen" {
+            options.fullscreen = true;
         } else if arg == "--tr" {
             options.turkish = true;
         }
@@ -406,15 +423,17 @@ pub fn apply_scene(app: &mut LauncherApp, scene: Scene, games: Vec<Game>) {
         }
     }
     let ids: Vec<GameId> = games.iter().map(|g| g.id.clone()).collect();
+    // Scenes name games by position; a shorter library (a showcase) uses its last game instead.
+    let at = |i: usize| i.min(ids.len().saturating_sub(1));
     m.games = games;
-    m.selected = 1;
+    m.selected = at(1);
     for (i, id) in ids.iter().enumerate() {
         m.sizes.insert(
             id.clone(),
             crate::app::model::SizeState::Known(8_390_000_000 + i as u64 * 1_730_000_000),
         );
     }
-    let trophy_game = m.games[1].clone();
+    let trophy_game = m.games[at(1)].clone();
     m.trophies
         .insert(trophy_game.id.clone(), make_trophies(&trophy_game, 8));
 
@@ -429,38 +448,41 @@ pub fn apply_scene(app: &mut LauncherApp, scene: Scene, games: Vec<Game>) {
         Scene::HomeTrophies => m.focus = HomeFocus::Actions(1),
         Scene::HomeLocked => m.selected = 2,
         Scene::HomeUnlocking => {
-            m.selected = 2;
-            m.progress.insert(ids[2].clone(), (UnlockStep::Copy, 0.4));
+            m.selected = at(2);
+            m.progress
+                .insert(ids[at(2)].clone(), (UnlockStep::Copy, 0.4));
             m.focus = HomeFocus::Actions(0);
         }
         Scene::HomeRelinking => {
-            m.selected = 2;
-            m.progress.insert(ids[2].clone(), (UnlockStep::Relink, 0.0));
+            m.selected = at(2);
+            m.progress
+                .insert(ids[at(2)].clone(), (UnlockStep::Relink, 0.0));
         }
         Scene::HomeFailed => {
-            m.selected = 4;
+            m.selected = at(4);
             m.failures.insert(
-                ids[4].clone(),
+                ids[at(4)].clone(),
                 "The relinker stopped with exit code 3 while it converted eboot.bin.".to_owned(),
             );
         }
         Scene::HomeQueued => {
-            m.selected = 4;
-            m.queue.push(ids[4].clone());
-            m.progress.insert(ids[2].clone(), (UnlockStep::Relink, 0.3));
+            m.selected = at(4);
+            m.queue.push(ids[at(4)].clone());
+            m.progress
+                .insert(ids[at(2)].clone(), (UnlockStep::Relink, 0.3));
         }
-        Scene::HomeRunning => m.running = Some(ids[1].clone()),
+        Scene::HomeRunning => m.running = Some(ids[at(1)].clone()),
         Scene::HomeOutdated => m.toolkit = Some("0.2.0".to_owned()),
         Scene::HomeDiagnosis => {
             m.diagnoses.insert(
-                ids[1].clone(),
+                ids[at(1)].clone(),
                 "The game crashed (0xC0000005 ACCESS_VIOLATION).".to_owned(),
             );
             m.focus = HomeFocus::Actions(0);
         }
         Scene::Starting => {
-            m.starting = Some(ids[1].clone());
-            m.running = Some(ids[1].clone());
+            m.starting = Some(ids[at(1)].clone());
+            m.running = Some(ids[at(1)].clone());
         }
         Scene::Toast => {
             m.toast("Lanternfall · Ready to play", Icon::LOCK_OPEN);
@@ -472,6 +494,18 @@ pub fn apply_scene(app: &mut LauncherApp, scene: Scene, games: Vec<Game>) {
     }
     // The preview has no workers: what the model asked for is dropped.
     m.effects.retain(|e| matches!(e, Effect::Sound(_)));
+}
+
+/// The games of a showcase folder, read like the library reads dumps.
+fn showcase_games(folder: &Path) -> Vec<Game> {
+    let mut dumps: Vec<PathBuf> = std::fs::read_dir(folder)
+        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    dumps.sort();
+    dumps
+        .iter()
+        .filter_map(|dump| anyps5_core::library::inspect(dump))
+        .collect()
 }
 
 /// Points a preview game at the icon and artwork of a real dump on this PC (and gives it the
@@ -499,8 +533,15 @@ fn use_real_art(game: &mut Game, dump: &Path) {
 
 /// Opens the preview or demo window.
 pub fn run(options: Options) -> eframe::Result {
+    let mut viewport = egui::ViewportBuilder::default();
+    if let Some((x, y)) = options.at {
+        viewport = viewport.with_position([x, y]);
+    }
+    if options.fullscreen {
+        viewport = viewport.with_fullscreen(true);
+    }
     let mut native = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+        viewport: viewport
             .with_title("AnyPS5 preview")
             // Frameless like the launcher, so the demo shows its caption as users see it.
             .with_decorations(false)
@@ -528,7 +569,10 @@ struct PreviewApp {
 impl PreviewApp {
     fn new(cc: &eframe::CreationContext<'_>, options: Options) -> Self {
         let dir = crate::app::preview_dir();
-        let games = make_games(&dir);
+        let games = match &options.showcase {
+            Some(folder) => showcase_games(folder),
+            None => make_games(&dir),
+        };
         let demo = options.scene.is_none();
         let prefs = Preferences {
             language: if options.turkish {
@@ -545,6 +589,10 @@ impl PreviewApp {
             _ => Theme::Cosmic,
         };
         let mut shell = Shell::headless(cc, theme);
+        if demo {
+            // The demo sounds like the launcher: cues and the home music.
+            shell.sounds = crate::ui::sound::Sounds::new();
+        }
         if options.pad {
             crate::ui::input::set_device(&cc.egui_ctx, crate::ui::input::Device::Gamepad);
         }
@@ -575,6 +623,9 @@ impl PreviewApp {
             use_real_art(&mut games[1], real);
         }
         apply_scene(&mut inner, options.scene.unwrap_or(Scene::Home), games);
+        if demo {
+            inner.model.edit_prefs(|p| p.sounds = true);
+        }
         Self {
             inner,
             frames: 0,
