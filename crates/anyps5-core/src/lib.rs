@@ -6,6 +6,7 @@ pub mod discord;
 pub mod error;
 pub mod events;
 pub mod fsx;
+pub mod gamefiles;
 pub mod hostcpu;
 pub mod launch;
 pub mod library;

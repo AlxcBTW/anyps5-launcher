@@ -18,6 +18,8 @@ sha2.workspace = true
 time.workspace = true
 ureq.workspace = true
 zip.workspace = true
+flate2 = "1"
+oozextract = "0.5"
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [

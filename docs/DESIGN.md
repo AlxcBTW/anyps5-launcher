@@ -1102,6 +1102,40 @@ empty. Mouse: tapping a language card selects and confirms; tapping a theme card
 
 Exact Phosphor names must be checked against the bundled icon set version; the table gives the intent.
 
+### 5.17 Layouts and the game's own keys (Windows addition)
+
+The Controls panel opens on a **Layout** choice above the key rows (a double gap below it):
+
+- **Launcher**: the default layout (6.5), no changes stored.
+- **Mouse and Keyboard**: the usual PC action layout. Space ✕, C ○, F □, E △, Q L1, R R1, right and
+  left click L2 and R2, Shift L3, V or middle click R3, Tab and M the touchpad halves, 1 to 4 the
+  D-pad, the arrows the right stick, Left Alt the stick modifier; WASD stays.
+- **From the Game**: only offered when the game's files name PC keys (see below). Its detail line
+  says for how many buttons.
+- **Custom**: shown, as an extra last option, once the user has moved a key; choosing it changes
+  nothing.
+
+Choosing a layout replaces the stored changes at once; single keys are still moved by capture.
+
+**Reading the game's files** (`anyps5_core::gamefiles`, off the frame, once per game and run):
+
+1. Unreal paks (v8 to v11, unencrypted index; raw, Oodle or Zlib entries): the project's
+   `Config/DefaultInput.ini`, `ActionMappings` and `AxisMappings`. Gamepad keys become PS5 buttons;
+   PC keys (no modifier chords) become sources. Axes split into one action per stick direction.
+2. When that ini says Enhanced Input: the `IMC_*` assets in the IoStore containers beside the paks,
+   decoded without a schema (UE 5.3+ zen header, unversioned properties). Gamepad and keyboard
+   contexts pair through the Input Action both name, without `IA_` and device prefixes. Contexts
+   of other platforms and of tests are skipped. An unknown layout fails the asset, never yields
+   wrong keys.
+
+**From the Game** gives each key the game names to its action's button (first action wins, three
+per button) and takes it from every other button; a button keeps its own other keys after the
+game's. The walking keys (left stick) stay unless the game itself puts keys on the left stick, and
+a 2D axis's keys stay (their direction is unknown).
+
+Each key row shows what the game calls the button as its detail ("Jump", "Ranged Attack";
+words split, the minus half of an axis marked "−", three names at most).
+
 ---
 
 ## 6. Input
