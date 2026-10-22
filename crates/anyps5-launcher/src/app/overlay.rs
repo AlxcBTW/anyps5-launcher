@@ -21,6 +21,10 @@ pub enum Overlay {
     Library,
     Log,
     ConfirmUninstall,
+    /// The backups of a game's saves (a side panel).
+    Saves,
+    /// The question before a backup is put back (a side panel).
+    ConfirmRestore,
     Controls,
     Trophies,
     Advanced,
@@ -37,6 +41,8 @@ impl Overlay {
             self,
             Overlay::GameSettings
                 | Overlay::ConfirmUninstall
+                | Overlay::Saves
+                | Overlay::ConfirmRestore
                 | Overlay::Controls
                 | Overlay::Advanced
                 | Overlay::Recommended

@@ -95,6 +95,8 @@ pub enum Effect {
     Presence(Option<String>),
     /// The toolkit changed on disk or in the preferences: the pipeline looks for it again.
     ReloadToolkit,
+    /// A game ended well: back up its saves if the last backup is old (see `anyps5_core::saves`).
+    BackUpSaves(GameId),
 }
 
 /// What became of a command.
@@ -627,7 +629,11 @@ impl Model {
                     return;
                 }
                 self.running = None;
+                let had_window = self.sessions.running() == Some(&game);
                 self.end_session(&game, Instant::now());
+                if had_window && diagnosis.is_none() {
+                    self.effects.push(Effect::BackUpSaves(game.clone()));
+                }
                 self.effects.push(Effect::Presence(None));
                 self.reload_trophies(&game);
                 if self.starting.as_ref() == Some(&game) {
@@ -674,6 +680,11 @@ impl Model {
                 self.toast(text, Icon::X_CIRCLE);
             }
         }
+    }
+
+    /// The game is starting or running: its files are in use.
+    pub fn is_active(&self, id: &GameId) -> bool {
+        self.starting.as_ref() == Some(id) || self.running.as_ref() == Some(id)
     }
 
     pub fn unlock(&mut self, id: &GameId) {
@@ -1341,6 +1352,35 @@ mod tests {
         assert!((900..=905).contains(&seconds), "{seconds}");
         assert_eq!(sessions, 1);
         assert!(m.sessions.running().is_none());
+    }
+
+    #[test]
+    fn a_clean_exit_asks_for_a_backup_but_a_crash_or_no_window_does_not() {
+        let backs_up = |m: &Model| {
+            m.effects
+                .iter()
+                .any(|e| matches!(e, Effect::BackUpSaves(_)))
+        };
+        let g = game("a", Some("v1"), ExecutableKind::Elf);
+        let id = g.id.clone();
+        for (window, diagnosis, expected) in [
+            (true, None, true),
+            (true, Some("The game crashed.".to_owned()), false),
+            (false, None, false),
+        ] {
+            let mut m = model_with(vec![g.clone()]);
+            m.play(&id);
+            m.on_pipeline(PipelineEvent::Spawned { game: id.clone() });
+            if window {
+                m.on_pipeline(PipelineEvent::WindowShown { game: id.clone() });
+            }
+            m.effects.clear();
+            m.on_pipeline(PipelineEvent::Exited {
+                game: id.clone(),
+                diagnosis,
+            });
+            assert_eq!(backs_up(&m), expected, "window {window}");
+        }
     }
 
     #[test]

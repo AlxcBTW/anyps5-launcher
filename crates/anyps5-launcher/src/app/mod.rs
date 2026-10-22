@@ -364,7 +364,8 @@ impl LauncherApp {
                 );
             }
             Effect::Rescan if self.offline => self.model.scanning = false,
-            Effect::MeasureSize(_) | Effect::LoadTrophies { .. } if self.offline => {}
+            Effect::MeasureSize(_) | Effect::LoadTrophies { .. } | Effect::BackUpSaves(_)
+                if self.offline => {}
             Effect::Rescan => {
                 if let Some(root) = root {
                     if !self.model.busy() {
@@ -389,6 +390,11 @@ impl LauncherApp {
                 }
             }
             Effect::ReloadToolkit => self.pipeline.reload_toolkit(&self.model.prefs),
+            Effect::BackUpSaves(id) => {
+                if let (Some(game), Some(root)) = (self.model.game(&id), root) {
+                    self.services.back_up_saves(game, &root, &self.model.paths);
+                }
+            }
             Effect::Presence(Some(game)) if self.discord => {
                 let cache = self.model.paths.cache_dir().join("discord-games.json");
                 self.presence

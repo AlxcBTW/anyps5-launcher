@@ -742,6 +742,15 @@ The launcher keeps the port's structure but trims what read as noise next to the
   and the minutes drop from ten hours on. The clock (`app::playtime`) starts when the game's
   window shows, and adds what it counted to the preferences every minute and at the exit, so a
   crash keeps it. The game sheet shows no second copy: the home screen stays visible behind it.
+- **Save data.** The game sheet gains one row, "Save Data" (detail: the number of backups), after
+  Trophies and only for an unlocked game. It opens a side panel: the command "Back Up Now" (with a
+  note under it while there is nothing to back up), then the backups newest first, each a row with a
+  chevron: the date, then its size and why it was made. Selecting one opens the same two-row question
+  as the removal, on Cancel, saying what is replaced and that the current state is backed up first;
+  either answer returns to the list, where the toast says what happened. A running game gets a note
+  and a refusal instead. Backups are also made, quietly, before Unlock Again and before the removal
+  of a game, and once an hour after a game ends well (not after a crash, which may have damaged the
+  saves). Gallery scenes `saves`, `saves-empty` and `restore`.
 - **A steady toolkit header.** The toolkit version row is one line always; the note about a toolkit
   newer or older than the launcher was tested with is its own attached row below it, so the
   title no longer moves up when it appears (gallery scene `toolkit-newer`).

@@ -7,6 +7,7 @@ use anyps5_core::settings::{ConsoleLanguage, GameSettings, Overlay};
 use egui::{Color32, Context};
 
 use crate::screens::rows::{self, Change, Row, RowId};
+use crate::screens::saves;
 use crate::screens::share_strings::Share;
 use crate::screens::side::{self, Output, SideState, SideView};
 use crate::screens::strings::Extra;
@@ -38,6 +39,8 @@ pub enum GameSettingsAction {
     ClearShaderCache,
     /// Open the confirmation ([`UninstallPanel`]).
     AskUninstall,
+    /// The backups of the game's saves.
+    OpenSaves,
 }
 
 /// The unlocked trophies of the selected game, for the detail line of the trophies row.
@@ -77,6 +80,8 @@ pub struct GameSettingsData<'a> {
     pub trophies: Option<TrophyProgress>,
     /// The game is unlocked (reinstall and uninstall are offered).
     pub installed: bool,
+    /// How many backups of the saves there are; `None` hides the row (nothing unlocked yet).
+    pub saves: Option<usize>,
     /// Shown only when the catalogue has something for this game.
     pub recommended: Option<RecommendedRow>,
     /// Why unlocking again is offered ("Unlocked with v0.1.2. v0.1.3 is installed.").
@@ -201,6 +206,7 @@ impl GameSettingsPanel {
             "upstream" => Some(GameSettingsAction::ReportToUpstream),
             "cache" => Some(GameSettingsAction::ClearShaderCache),
             "uninstall" => Some(GameSettingsAction::AskUninstall),
+            "saves" => Some(GameSettingsAction::OpenSaves),
             _ => None,
         };
         if let (Change::Run { .. }, Some(action)) = (change, action) {
@@ -282,6 +288,13 @@ pub fn build_rows(data: &GameSettingsData<'_>) -> Vec<Row> {
             Row::action("trophies", t(Key::Trophies))
                 .detail(format!("{}/{} · {}%", p.unlocked, p.total, p.percent))
                 .icon(Icon::TROPHY),
+        );
+    }
+    if let Some(count) = data.saves {
+        rows.push(
+            Row::action("saves", Extra::SavesTitle.text(data.language))
+                .detail(saves::row_detail(count, data.language))
+                .icon(Icon::FLOPPY_DISK),
         );
     }
     rows.push(
@@ -511,6 +524,7 @@ mod tests {
             resolutions: &[],
             trophies: None,
             installed: true,
+            saves: None,
             recommended: None,
             unlock_note: None,
             language: Language::English,
@@ -545,6 +559,23 @@ mod tests {
             ],
             "no resolution row without a patch, no trophies row without a list"
         );
+    }
+
+    #[test]
+    fn the_save_data_row_sits_in_the_play_group_and_counts_the_backups() {
+        let mut s = GameSettings::default();
+        let mut d = data(&mut s);
+        d.saves = Some(3);
+        let rows = build_rows(&d);
+        let ids = ids(&rows);
+        let at = ids.iter().position(|i| *i == "saves").unwrap();
+        assert_eq!((ids[at - 1], ids[at + 1]), ("controls", "advanced"));
+        assert_eq!(rows[at].detail.as_deref(), Some("3 backups"));
+        assert_eq!(rows[at].control, rows::Control::Action);
+        d.saves = Some(0);
+        let rows = build_rows(&d);
+        let row = rows.iter().find(|r| r.id == "saves").unwrap();
+        assert_eq!(row.detail.as_deref(), Some("No backups yet"));
     }
 
     #[test]

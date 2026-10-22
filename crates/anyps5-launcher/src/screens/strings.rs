@@ -169,6 +169,50 @@ pub enum Extra {
     PlayedHours,
     /// `%@` = hours, then minutes.
     PlayedHoursMinutes,
+    /// Game sheet row and panel subtitle.
+    SavesTitle,
+    /// Detail of the row: no backup yet.
+    SavesNone,
+    /// Detail of the row.
+    SavesOne,
+    /// Detail of the row: `%@` = how many.
+    SavesCount,
+    /// Command.
+    SavesBackUp,
+    /// Detail of the command and its toast when there is nothing to back up.
+    SavesNothing,
+    /// Note of the panel without backups.
+    SavesEmpty,
+    /// Section caption over the list.
+    SavesCaption,
+    /// Note under the list: `%@` = how many are kept.
+    SavesKept,
+    /// Why a backup was made.
+    SavesReasonManual,
+    /// Why a backup was made.
+    SavesReasonUnlock,
+    /// Why a backup was made.
+    SavesReasonRestore,
+    /// Why a backup was made.
+    SavesReasonUninstall,
+    /// Why a backup was made.
+    SavesReasonPlayed,
+    /// Toast.
+    SavesBackedUp,
+    /// Command and title of the question.
+    SavesRestore,
+    /// The question: `%@` = date of the backup.
+    SavesRestoreAsk,
+    /// Toast.
+    SavesRestored,
+    /// Note while the game runs, and the toast of a refusal.
+    SavesRunning,
+    /// Toast.
+    SavesFailed,
+    /// Toast.
+    SavesRestoreFailed,
+    /// Toast.
+    SavesCorrupt,
 }
 
 impl Extra {
@@ -302,6 +346,34 @@ impl Extra {
             Extra::PlayedMinutes => "%@ min",
             Extra::PlayedHours => "%@ h",
             Extra::PlayedHoursMinutes => "%@ h %@ min",
+            Extra::SavesTitle => "Save Data",
+            Extra::SavesNone => "No backups yet",
+            Extra::SavesOne => "1 backup",
+            Extra::SavesCount => "%@ backups",
+            Extra::SavesBackUp => "Back Up Now",
+            Extra::SavesNothing => "No save data to back up yet",
+            Extra::SavesEmpty => {
+                "No backups yet. Back Up Now keeps a copy of your saves and trophies."
+            }
+            Extra::SavesCaption => "Backups",
+            Extra::SavesKept => "The newest %@ backups are kept.",
+            Extra::SavesReasonManual => "Manual",
+            Extra::SavesReasonUnlock => "Before Unlock Again",
+            Extra::SavesReasonRestore => "Before a restore",
+            Extra::SavesReasonUninstall => "Before uninstall",
+            Extra::SavesReasonPlayed => "After playing",
+            Extra::SavesBackedUp => "Saves backed up",
+            Extra::SavesRestore => "Restore",
+            Extra::SavesRestoreAsk => {
+                "This replaces the saves and trophies the game has now with the backup from %@. The current ones are backed up first, so you can undo it."
+            }
+            Extra::SavesRestored => "Saves restored",
+            Extra::SavesRunning => "Close the game to restore a backup.",
+            Extra::SavesFailed => "Could not back up the saves",
+            Extra::SavesRestoreFailed => {
+                "Could not restore the backup. Your saves were not changed."
+            }
+            Extra::SavesCorrupt => "This backup is damaged. Your saves were not changed.",
         }
     }
 
@@ -435,6 +507,32 @@ impl Extra {
             Extra::PlayedMinutes => "%@ dk",
             Extra::PlayedHours => "%@ sa",
             Extra::PlayedHoursMinutes => "%@ sa %@ dk",
+            Extra::SavesTitle => "Kayıt verileri",
+            Extra::SavesNone => "Henüz yedek yok",
+            Extra::SavesOne => "1 yedek",
+            Extra::SavesCount => "%@ yedek",
+            Extra::SavesBackUp => "Şimdi Yedekle",
+            Extra::SavesNothing => "Yedeklenecek kayıt verisi henüz yok",
+            Extra::SavesEmpty => {
+                "Henüz yedek yok. Şimdi Yedekle, kayıtlarının ve kupalarının bir kopyasını saklar."
+            }
+            Extra::SavesCaption => "Yedekler",
+            Extra::SavesKept => "En yeni %@ yedek saklanır.",
+            Extra::SavesReasonManual => "Elle",
+            Extra::SavesReasonUnlock => "Yeniden kilit açmadan önce",
+            Extra::SavesReasonRestore => "Geri yüklemeden önce",
+            Extra::SavesReasonUninstall => "Kaldırmadan önce",
+            Extra::SavesReasonPlayed => "Oynadıktan sonra",
+            Extra::SavesBackedUp => "Kayıtlar yedeklendi",
+            Extra::SavesRestore => "Geri Yükle",
+            Extra::SavesRestoreAsk => {
+                "Oyunun şu anki kayıtları ve kupaları, %@ tarihli yedekle değiştirilir. Geri almak için önce şu anki hâli yedeklenir."
+            }
+            Extra::SavesRestored => "Kayıtlar geri yüklendi",
+            Extra::SavesRunning => "Yedeği geri yüklemek için oyunu kapat.",
+            Extra::SavesFailed => "Kayıtlar yedeklenemedi",
+            Extra::SavesRestoreFailed => "Yedek geri yüklenemedi. Kayıtların değişmedi.",
+            Extra::SavesCorrupt => "Bu yedek hasarlı. Kayıtların değişmedi.",
         }
     }
 
@@ -449,7 +547,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 104] = [
+    pub const ALL: [Extra; 126] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -554,6 +652,28 @@ impl Extra {
         Extra::PlayedMinutes,
         Extra::PlayedHours,
         Extra::PlayedHoursMinutes,
+        Extra::SavesTitle,
+        Extra::SavesNone,
+        Extra::SavesOne,
+        Extra::SavesCount,
+        Extra::SavesBackUp,
+        Extra::SavesNothing,
+        Extra::SavesEmpty,
+        Extra::SavesCaption,
+        Extra::SavesKept,
+        Extra::SavesReasonManual,
+        Extra::SavesReasonUnlock,
+        Extra::SavesReasonRestore,
+        Extra::SavesReasonUninstall,
+        Extra::SavesReasonPlayed,
+        Extra::SavesBackedUp,
+        Extra::SavesRestore,
+        Extra::SavesRestoreAsk,
+        Extra::SavesRestored,
+        Extra::SavesRunning,
+        Extra::SavesFailed,
+        Extra::SavesRestoreFailed,
+        Extra::SavesCorrupt,
     ];
 }
 

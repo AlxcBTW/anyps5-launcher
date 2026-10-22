@@ -108,6 +108,24 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (year + i64::from(month <= 2), month, day)
 }
 
+/// `2026-10-22 14:05` in local time (UTC where the offset cannot be told), the way dates show in
+/// the lists.
+pub fn local_stamp(unix: i64) -> String {
+    use time::{OffsetDateTime, UtcOffset};
+    let Ok(utc) = OffsetDateTime::from_unix_timestamp(unix) else {
+        return String::new();
+    };
+    let at = UtcOffset::local_offset_at(utc).map_or(utc, |offset| utc.to_offset(offset));
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        at.year(),
+        u8::from(at.month()),
+        at.day(),
+        at.hour(),
+        at.minute()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
