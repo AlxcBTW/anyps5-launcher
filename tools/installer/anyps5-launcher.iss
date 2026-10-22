@@ -57,5 +57,18 @@ Source: "{#ExeSource}"; DestDir: "{app}"; DestName: "{#AppExe}"; Flags: ignoreve
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
+[Registry]
+; The anyps5:// links and the folder entry "Open with AnyPS5" (docs/DESIGN.md 9.5). HKA is the
+; current user for the default install and the machine for an administrator install. The launcher
+; writes and removes the same keys from Settings; the uninstaller removes both here.
+Root: HKA; Subkey: "Software\Classes\anyps5"; ValueType: string; ValueData: "URL:AnyPS5 Link"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\anyps5"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\anyps5\DefaultIcon"; ValueType: string; ValueData: """{app}\{#AppExe}"",0"
+Root: HKA; Subkey: "Software\Classes\anyps5\shell\open\command"; ValueType: string; ValueData: """{app}\{#AppExe}"" ""%1"""
+; Folders only, never files.
+Root: HKA; Subkey: "Software\Classes\Directory\shell\AnyPS5"; ValueType: string; ValueData: "Open with AnyPS5"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Directory\shell\AnyPS5"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#AppExe}"",0"
+Root: HKA; Subkey: "Software\Classes\Directory\shell\AnyPS5\command"; ValueType: string; ValueData: """{app}\{#AppExe}"" ""%1"""
+
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent

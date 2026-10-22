@@ -165,3 +165,17 @@ _Avoid_: Output
 **Report**:
 A text file with the PC, the versions, the game's settings, the diagnosis and the log of the last start, for the player to attach to a bug report.
 _Avoid_: Dump (that is the game)
+
+### Links
+
+**Deep link**:
+An `anyps5://` address that opens a place in the launcher: a game, a game's unlock, a page of the settings or a dump folder. It only shows the place; the player presses the button that does something.
+_Avoid_: Command, URL scheme (that is how Windows finds the launcher), protocol
+
+**Link handler**:
+The launcher that Windows starts for deep links and for the "Open with AnyPS5" entry of folders. Only one copy is the handler at a time.
+_Avoid_: Default app, association
+
+**Single instance**:
+Only one launcher runs per user. A second launch hands its link to the running launcher, which comes to the front, and exits.
+_Avoid_: Lock, mutex (how it is done)

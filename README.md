@@ -24,6 +24,7 @@ This is a port of the macOS launcher from [utkuhalis/AnyPS5-ARM](https://github.
 - Reads a game's controls from its own files (Unreal Engine games, including Enhanced Input): every button shows what it does in the game, and one choice gives you the game's own PC keys. Ready-made layouts for mouse and keyboard are there too.
 - Runs fullscreen like a console, with a clean window when you want one (F11).
 - Shows trophies, the running game on Discord, logs and per-game settings.
+- Opens `anyps5://game/<title ID>` links from websites and messages, and adds "Open with AnyPS5" to folders; see [docs/DESIGN.md](docs/DESIGN.md) 9.5.
 
 ## Download
 
