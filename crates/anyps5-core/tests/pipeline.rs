@@ -401,6 +401,14 @@ fn unlocking_again_keeps_saves_and_trophies() {
     write(&copy.join("_sd/slot0.sav"), b"SAVE-1");
     write(&copy.join("_trophy/1_0.txt"), b"1 63000000000000000\n");
     write(&copy.join("data/cache.bin"), b"C");
+    write(&copy.join("_sd_mem/u1/slot0.bin"), b"MEM");
+    write(
+        &copy.join("anyps5-entitlements.ini"),
+        b"[owned]
+",
+    );
+    write(&copy.join("anyps5-screenshots/a.png"), b"PNG");
+    write(&copy.join("shader_cache/v1/a.bin"), b"S");
 
     // A new toolkit version makes the copy outdated; the player unlocks again.
     write(
@@ -419,7 +427,53 @@ fn unlocking_again_keeps_saves_and_trophies() {
     assert_eq!(fs::read(copy.join("_sd/slot0.sav")).unwrap(), b"SAVE-1");
     assert!(copy.join("_trophy/1_0.txt").is_file());
     assert!(copy.join("data/cache.bin").is_file());
+    // Everything else the game and the toolkit wrote beside the executable stays too.
+    assert_eq!(fs::read(copy.join("_sd_mem/u1/slot0.bin")).unwrap(), b"MEM");
+    assert!(copy.join("anyps5-entitlements.ini").is_file());
+    assert!(copy.join("anyps5-screenshots/a.png").is_file());
+    assert!(copy.join("shader_cache/v1/a.bin").is_file());
     no_leftovers(&w.root);
+}
+
+#[test]
+fn the_record_names_the_release_checksums() {
+    let w = world(&[]);
+    let request = w.dump("Sums", "PPSA00014", &elf_bytes());
+    let record = run(&request).0.unwrap();
+    assert_eq!(record.relinker_sha256, None, "a folder toolkit has none");
+    write(
+        &w.toolkit.root().join("toolkit.json"),
+        br#"{"tag":"0.1.3","relinkerSha256":"aa","libsSha256":"bb"}"#,
+    );
+    let mut released = request.clone();
+    released.toolkit = Toolkit::open(w.toolkit.root()).unwrap();
+    let record = run(&released).0.unwrap();
+    assert_eq!(record.relinker_sha256.as_deref(), Some("aa"));
+    assert_eq!(record.libs_sha256.as_deref(), Some("bb"));
+    let copy = unlock::unlocked_copy("PPSA00014", &request.game, &w.root);
+    assert_eq!(unlock::read_record(&copy), Some(record));
+}
+
+#[test]
+fn only_allowlisted_relink_flags_are_passed() {
+    let w = world(&[]);
+    let mut request = w.dump("Flags", "PPSA00015", &elf_bytes());
+    request.relink_flags = vec!["--windows-fixed-base".into(), "0x400000".into()];
+    run(&request).0.unwrap();
+    let copy = unlock::unlocked_copy("PPSA00015", &request.game, &w.root);
+    let args = args_of(&copy.join("eboot.exe"));
+    let at = args
+        .iter()
+        .position(|a| a == "--windows-fixed-base")
+        .expect("flag");
+    assert_eq!(args[at + 1], "0x400000");
+    request.relink_flags = vec!["--autorun".into(), "x".into()];
+    run(&request).0.unwrap();
+    assert!(
+        !args_of(&copy.join("eboot.exe"))
+            .iter()
+            .any(|a| a == "--autorun")
+    );
 }
 
 #[test]

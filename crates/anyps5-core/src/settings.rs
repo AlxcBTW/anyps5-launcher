@@ -82,6 +82,9 @@ pub struct GameSettings {
     /// Keys moved from the launcher's layout, by pad action name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub controls: Option<Changes>,
+    /// Variables a recommendation set (checked again against the allowlist at every start).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
     #[serde(default)]
     pub fullscreen: bool,
     /// Windows only: a Vulkan device name for `ANYPS5_GPU`.
@@ -92,6 +95,9 @@ pub struct GameSettings {
     pub language: Option<i32>,
     #[serde(default, deserialize_with = "lenient")]
     pub overlay: Overlay,
+    /// Relinker flags a recommendation set, as flag and value pairs; used when the game is unlocked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relink: Vec<String>,
     /// `WIDTHxHEIGHT` the title's patches can set; `None` for the title's default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution: Option<String>,
@@ -111,10 +117,12 @@ impl Default for GameSettings {
     fn default() -> Self {
         GameSettings {
             controls: None,
+            env: BTreeMap::new(),
             fullscreen: false,
             gpu: None,
             language: None,
             overlay: Overlay::Off,
+            relink: Vec::new(),
             resolution: None,
             shader_cache: None,
             tuning: None,
@@ -181,6 +189,11 @@ impl GameSettings {
         }
         if let Some(gpu) = self.gpu.as_deref().filter(|g| !g.is_empty()) {
             set("ANYPS5_GPU", gpu.to_string());
+        }
+        for (key, value) in &self.env {
+            if crate::recommended::env_allowed(key, value) {
+                set(key, value.clone());
+            }
         }
         env
     }
@@ -454,6 +467,9 @@ pub struct Preferences {
     pub toolkit_checked_at: Option<String>,
     #[serde(default = "default_repository")]
     pub toolkit_repository: String,
+    /// A release tag to stay on (the pinned channel); `None` follows the latest release.
+    #[serde(default)]
+    pub toolkit_pinned: Option<String>,
     #[serde(default, deserialize_with = "lenient")]
     pub cpu_conversion: CpuConversion,
     /// Fields written by a newer launcher survive a round trip.
@@ -488,13 +504,35 @@ impl Default for Preferences {
             check_for_updates: true,
             toolkit_checked_at: None,
             toolkit_repository: default_repository(),
+            toolkit_pinned: None,
             cpu_conversion: CpuConversion::Auto,
             extra: Map::new(),
         }
     }
 }
 
+/// Which toolkit the launcher follows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ToolkitChannel {
+    /// The latest release; updates are offered.
+    Stable,
+    /// One chosen release; no update is offered.
+    Pinned,
+    /// A folder the player built or picked.
+    Local,
+}
+
 impl Preferences {
+    pub fn toolkit_channel(&self) -> ToolkitChannel {
+        if self.toolkit.is_some() {
+            ToolkitChannel::Local
+        } else if self.toolkit_pinned.is_some() {
+            ToolkitChannel::Pinned
+        } else {
+            ToolkitChannel::Stable
+        }
+    }
+
     /// Defaults for a first start: language from the Windows user locale, profile name from the
     /// user name.
     pub fn first_run() -> Preferences {

@@ -71,6 +71,15 @@ pub struct Toolkit {
     /// MinGW DLLs found outside `libs` (adopted toolkits only).
     extra_runtime: Vec<PathBuf>,
     adopted: bool,
+    /// SHA-256 of the relinker and the libraries zip as the release published them.
+    digests: Option<Digests>,
+}
+
+/// The checksums a downloaded release was verified against (kept in `toolkit.json`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Digests {
+    pub relinker: String,
+    pub libs: String,
 }
 
 impl Toolkit {
@@ -103,6 +112,11 @@ impl Toolkit {
 
     pub fn is_adopted(&self) -> bool {
         self.adopted
+    }
+
+    /// The release checksums; `None` for adopted folders and installs from before they were kept.
+    pub fn digests(&self) -> Option<&Digests> {
+        self.digests.as_ref()
     }
 
     /// MinGW DLLs that must be copied into an unlocked copy besides the contents of `libs`.
@@ -151,6 +165,15 @@ impl Toolkit {
                     .map(|(tag, _)| tag.to_string())
                     .filter(|tag| tag != "local" && tag != "unknown")
             });
+        toolkit.digests = fs::read_to_string(root.join("toolkit.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| {
+                Some(Digests {
+                    relinker: v.get("relinkerSha256")?.as_str()?.to_owned(),
+                    libs: v.get("libsSha256")?.as_str()?.to_owned(),
+                })
+            });
         Ok(toolkit)
     }
 
@@ -191,6 +214,7 @@ impl Toolkit {
             tag: None,
             extra_runtime,
             adopted,
+            digests: None,
         })
     }
 
@@ -451,6 +475,8 @@ pub struct ReleaseInfo {
     pub relinker: Asset,
     pub libs: Asset,
     pub notes_url: String,
+    /// The full list of changes (`release-notes.md`), when the release has one.
+    pub notes: Option<Asset>,
 }
 
 impl ReleaseInfo {
@@ -458,6 +484,21 @@ impl ReleaseInfo {
     pub fn plain_tag(&self) -> &str {
         self.tag.trim_start_matches('v')
     }
+}
+
+/// Reads the JSON of `GET /repos/<repo>/releases?per_page=N`: the releases that have a Windows
+/// relinker and libraries, in the API's order (newest first). Drafts and unusable ones are left out.
+pub fn parse_releases(json: &str) -> Result<Vec<ReleaseInfo>, ToolkitError> {
+    let value: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| ToolkitError::Network(format!("bad release data: {e}")))?;
+    let list = value
+        .as_array()
+        .ok_or_else(|| ToolkitError::Network("bad release data".into()))?;
+    Ok(list
+        .iter()
+        .filter(|r| r.get("draft").and_then(|d| d.as_bool()) != Some(true))
+        .filter_map(|r| parse_release(&r.to_string()).ok())
+        .collect())
 }
 
 /// Reads the JSON of `GET /repos/<repo>/releases/latest`.
@@ -488,6 +529,7 @@ pub fn parse_release(json: &str) -> Result<ReleaseInfo, ToolkitError> {
     let relinker = find(&format!("relinker-{tag}.exe")).ok_or(ToolkitError::NoRelease)?;
     let libs = find(&format!("prx-windows-{tag}.zip")).ok_or(ToolkitError::NoRelease)?;
     Ok(ReleaseInfo {
+        notes: find("release-notes.md"),
         published: text(&value, "published_at").unwrap_or_default(),
         notes_url: text(&value, "html_url").unwrap_or_default(),
         tag,
@@ -647,6 +689,8 @@ fn install_into(
         "published": info.published,
         "source": info.libs.url,
         "installedAt": now_text(),
+        "relinkerSha256": info.relinker.sha256,
+        "libsSha256": info.libs.sha256,
     });
     fs::write(
         partial.join("toolkit.json"),
@@ -1028,6 +1072,7 @@ mod tests {
             relinker: asset("x"),
             libs: asset("y"),
             notes_url: String::new(),
+            notes: None,
         };
         assert!(update_available(&release("v0.1.4"), &toolkit.1));
         assert!(!update_available(&release("v0.1.3"), &toolkit.1));
@@ -1197,6 +1242,7 @@ mod tests {
                 sha256: digests.then(|| sha_hex(zip)),
             },
             notes_url: String::new(),
+            notes: None,
         }
     }
 
