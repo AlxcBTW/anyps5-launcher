@@ -172,6 +172,8 @@ fn folders_are_created_and_a_second_start_adds_a_second_marker() {
     assert_eq!(s.log_text().matches("[anyps5-launcher] start").count(), 2);
 }
 
+// A Unix exit status has eight bits, so a Windows status code only survives on Windows.
+#[cfg(windows)]
 #[test]
 fn a_crash_status_is_diagnosed() {
     let s = setup(&["FAKE_GAME_EXIT=3221225477"]); // 0xC0000005

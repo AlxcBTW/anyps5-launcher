@@ -14,6 +14,7 @@ use crate::compat::release_tag;
 use crate::feed::{self, Request};
 use crate::notes::{self, ReleaseNotes};
 use crate::paths::AppPaths;
+use crate::platform::Os;
 use crate::toolkit::{
     API_BASE, DEFAULT_REPOSITORY, ReleaseInfo, ToolkitError, compare_tags, parse_release,
     parse_releases,
@@ -58,6 +59,7 @@ struct PagesRelease {
 #[derive(Deserialize)]
 struct PagesPlatforms {
     windows: Option<PagesAsset>,
+    linux: Option<PagesAsset>,
 }
 
 #[derive(Deserialize)]
@@ -138,8 +140,11 @@ pub fn libs_digest_disagrees(
     };
     let from_pages = pages
         .platforms
-        .and_then(|p| p.windows)
-        .and_then(|w| w.sha256);
+        .and_then(|p| match Os::current() {
+            Os::Windows => p.windows,
+            Os::Linux => p.linux,
+        })
+        .and_then(|asset| asset.sha256);
     pages.tag.trim_start_matches('v') == release.plain_tag()
         && matches!((&from_pages, &release.libs.sha256), (Some(a), Some(b)) if !a.eq_ignore_ascii_case(b))
 }
@@ -259,9 +264,11 @@ mod tests {
         format!(
             r#"{{"tag_name":"{tag}","published_at":"2026-10-20T10:00:00Z","html_url":"",
             "assets":[
-              {{"name":"relinker-{tag}.exe","browser_download_url":"{base}/r","size":1}},
-              {{"name":"prx-windows-{tag}.zip","browser_download_url":"{base}/p","size":1,"digest":"sha256:{}"}},
+              {{"name":"{}","browser_download_url":"{base}/r","size":1}},
+              {{"name":"{}","browser_download_url":"{base}/p","size":1,"digest":"sha256:{}"}},
               {{"name":"release-notes.md","browser_download_url":"{base}/notes/{tag}","size":1,"digest":"sha256:{}"}}]}}"#,
+            Os::current().relinker_asset(tag),
+            Os::current().libs_asset(tag),
             "a".repeat(64),
             "b".repeat(64)
         )
@@ -302,8 +309,11 @@ mod tests {
     #[test]
     fn a_digest_mismatch_between_pages_and_api_is_seen() {
         let (_dir, paths) = paths();
-        let json = r#"{"tag":"v0.1.4","platforms":{"windows":{"sha256":"ffff"}}}"#;
-        let (base, _) = serve(|_| vec![("/pages/release.json", json.into())]);
+        let json = format!(
+            r#"{{"tag":"v0.1.4","platforms":{{"{}":{{"sha256":"ffff"}}}}}}"#,
+            Os::current().platform_key()
+        );
+        let (base, _) = serve(|_| vec![("/pages/release.json", json.clone())]);
         let release = parse_release(&release_json("v0.1.4", "http://h")).unwrap();
         assert!(libs_digest_disagrees(
             &paths,

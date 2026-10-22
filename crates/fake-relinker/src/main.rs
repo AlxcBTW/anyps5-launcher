@@ -81,7 +81,11 @@ fn relinker() {
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--windows" => windows = true,
-            "--module-dir" | "--patches" | "--rpath" | "--windows-fixed-base" => {
+            "--module-dir"
+            | "--patches"
+            | "--rpath"
+            | "--windows-fixed-base"
+            | "--linux-fixed-base" => {
                 let value = iter.next().cloned().unwrap_or_default();
                 if arg == "--module-dir" {
                     module_dirs.push(value);
@@ -91,7 +95,8 @@ fn relinker() {
             _ => positional.push(arg.clone()),
         }
     }
-    if !windows || positional.len() != 2 {
+    // The Linux relinker has no format flag; the Windows one needs `--windows`.
+    if (cfg!(windows) && !windows) || positional.len() != 2 {
         eprintln!("bad arguments: {args:?}");
         std::process::exit(1);
     }

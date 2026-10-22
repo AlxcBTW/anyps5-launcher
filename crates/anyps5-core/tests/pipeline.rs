@@ -465,11 +465,15 @@ fn only_allowlisted_relink_flags_are_passed() {
     run(&request).0.unwrap();
     let copy = unlock::unlocked_copy("PPSA00015", &request.game, &w.root);
     let args = args_of(&copy.join("eboot.exe"));
-    let at = args
-        .iter()
-        .position(|a| a == "--windows-fixed-base")
-        .expect("flag");
-    assert_eq!(args[at + 1], "0x400000");
+    let at = args.iter().position(|a| a == "--windows-fixed-base");
+    if cfg!(windows) {
+        assert_eq!(args[at.expect("flag") + 1], "0x400000");
+    } else {
+        assert_eq!(
+            at, None,
+            "a Windows flag is not passed to the Linux relinker"
+        );
+    }
     request.relink_flags = vec!["--autorun".into(), "x".into()];
     run(&request).0.unwrap();
     assert!(

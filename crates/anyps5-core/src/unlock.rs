@@ -569,7 +569,12 @@ pub fn run_unlock(
         args.push(directory.into());
     }
     if crate::recommended::relink_allowed(&request.relink_flags) {
-        args.extend(request.relink_flags.iter().map(std::ffi::OsString::from));
+        args.extend(
+            Os::current()
+                .relink_flags(&request.relink_flags)
+                .into_iter()
+                .map(std::ffi::OsString::from),
+        );
     }
     if let Some(toml) = &request.patches_toml {
         let file = work.join("patches.toml");

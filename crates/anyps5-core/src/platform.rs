@@ -37,6 +37,29 @@ impl Os {
         }
     }
 
+    /// The key of this system in `release.json` of the toolkit's download pages.
+    pub const fn platform_key(self) -> &'static str {
+        match self {
+            Os::Windows => "windows",
+            Os::Linux => "linux",
+        }
+    }
+
+    /// The extra relinker flags (flag and value pairs) that apply to this system: the flags of
+    /// another system's output format (`--windows-...`) are left out.
+    pub fn relink_flags(self, flags: &[String]) -> Vec<String> {
+        let other = match self {
+            Os::Windows => "--linux",
+            Os::Linux => "--windows",
+        };
+        flags
+            .chunks(2)
+            .filter(|pair| !pair[0].starts_with(other))
+            .flatten()
+            .cloned()
+            .collect()
+    }
+
     /// The relinker inside a toolkit folder.
     pub const fn relinker_file(self) -> &'static str {
         match self {
@@ -334,6 +357,16 @@ mod tests {
         assert!(Os::Linux.relinker_args().is_empty());
         assert_eq!(Os::Windows.runtime_libs().len(), 3);
         assert!(Os::Linux.runtime_libs().is_empty());
+    }
+
+    #[test]
+    fn relink_flags_of_another_output_format_are_dropped() {
+        let flags: Vec<String> = ["--windows-fixed-base", "0x400000", "--rpath", "x"]
+            .map(String::from)
+            .into();
+        assert_eq!(Os::Windows.relink_flags(&flags), flags);
+        assert_eq!(Os::Linux.relink_flags(&flags), ["--rpath", "x"]);
+        assert_eq!(Os::Windows.platform_key(), "windows");
     }
 
     #[test]

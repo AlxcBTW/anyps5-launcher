@@ -228,9 +228,10 @@ mod tests {
                 assert!(!step_title(step, language).is_empty());
             }
         }
+        let system = if cfg!(windows) { "Windows" } else { "Linux" };
         assert_eq!(
             step_title(UnlockStep::Relink, Language::English),
-            "Converting for Windows"
+            format!("Converting for {system}")
         );
     }
 }
