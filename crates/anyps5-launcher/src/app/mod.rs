@@ -20,10 +20,13 @@ pub mod clock;
 pub mod core_pipeline;
 pub mod model;
 pub mod overlay;
+pub mod panels;
 pub mod pipeline;
 pub mod preview;
 pub mod services;
 pub mod textures;
+pub mod toolkit;
+pub mod window_chrome;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -42,7 +45,7 @@ use crate::ui::input::InputEvent;
 
 use self::core_pipeline::CorePipeline;
 use self::model::{Effect, Model, Routed, ui_accent};
-use self::overlay::{NoPanels, Overlay, OverlayCx, OverlayHost};
+use self::overlay::{Overlay, OverlayCx, OverlayHost};
 use self::pipeline::{Pipeline, PipelineContext};
 use self::services::Services;
 use self::textures::Textures;
@@ -74,7 +77,7 @@ impl Config {
             prefs,
             paths,
             persist: true,
-            panels: Box::new(NoPanels),
+            panels: Box::new(panels::PanelHost::new(ctx, false)),
             scan_on_start: true,
         }
     }
@@ -156,6 +159,7 @@ impl LauncherApp {
             self.model.on_core(event);
         }
         self.model.toolkit = self.pipeline.toolkit_version();
+        self.model.patches_dir = self.pipeline.patches_dir();
         for event in self.pipeline.poll(now) {
             self.model.on_pipeline(event);
         }
@@ -175,12 +179,34 @@ impl LauncherApp {
             self.handle_event(ctx, event);
         }
         self.run_effects(ctx);
+        self.watch_trophies();
 
         self.services.set_busy(self.model.busy());
+        self.save_preferences();
+    }
+
+    /// Writes the preferences when something changed (atomic, see `Preferences::save`).
+    pub fn save_preferences(&mut self) {
         if self.model.take_prefs_dirty()
             && let Err(error) = self.model.prefs.save(&self.model.paths)
         {
             tracing::warn!("cannot save the preferences: {error}");
+        }
+    }
+
+    /// The running game's trophy records are polled for the banner while it runs.
+    fn watch_trophies(&mut self) {
+        if self.offline {
+            return;
+        }
+        let running = self.model.running.clone();
+        match running.and_then(|id| self.model.game(&id).cloned()) {
+            Some(game) => {
+                let root = self.model.prefs.games_folder.clone();
+                self.services
+                    .watch_trophies(&game, root.as_deref(), &self.model.prefs);
+            }
+            None => self.services.stop_trophy_watch(),
         }
     }
 
@@ -239,14 +265,19 @@ impl LauncherApp {
                 let fullscreen = ctx.input(|i| i.viewport().fullscreen).unwrap_or(false);
                 ctx.send_viewport_cmd(ViewportCommand::Fullscreen(!fullscreen));
             }
-            InputEvent::CapturedKey { key, modifiers, .. } => {
+            InputEvent::CapturedKey {
+                key,
+                physical_key,
+                modifiers,
+            } => {
                 let mut cx = OverlayCx {
                     model: &mut self.model,
                     shell: &mut self.shell,
                     textures: &mut self.textures,
                     ctx,
                 };
-                self.panels.captured_key(&mut cx, key, modifiers);
+                self.panels
+                    .captured_key(&mut cx, key, physical_key, modifiers);
             }
         }
     }
@@ -304,6 +335,7 @@ impl LauncherApp {
                         .load_trophies(game, root.as_deref(), &self.model.prefs);
                 }
             }
+            Effect::ReloadToolkit => self.pipeline.reload_toolkit(&self.model.prefs),
             Effect::MinimizeWindow => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
             Effect::RestoreWindow => {
                 ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
@@ -352,6 +384,15 @@ impl LauncherApp {
         self.paint_overlays(ui, &ctx);
         self.paint_start(&ctx);
         self.paint_toast(&ctx);
+        let mut cx = OverlayCx {
+            model: &mut self.model,
+            shell: &mut self.shell,
+            textures: &mut self.textures,
+            ctx: &ctx,
+        };
+        self.panels.frame(&mut cx);
+        self.run_effects(&ctx);
+        self.save_preferences();
         self.schedule_repaints(&ctx);
     }
 
@@ -533,22 +574,34 @@ pub fn run() -> eframe::Result {
         "AnyPS5",
         options,
         Box::new(|cc| {
-            Ok(Box::new(App(LauncherApp::new(
-                cc,
-                Config::from_environment(&cc.egui_ctx),
-            ))))
+            Ok(Box::new(App {
+                app: LauncherApp::new(cc, Config::from_environment(&cc.egui_ctx)),
+                chrome_applied: false,
+            }))
         }),
     )
 }
 
 /// The eframe wrapper of [`LauncherApp`].
-pub struct App(pub LauncherApp);
+pub struct App {
+    pub app: LauncherApp,
+    /// The title bar is recoloured once, on the first frame (the window exists by then).
+    chrome_applied: bool,
+}
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
+        if !self.chrome_applied {
+            self.chrome_applied = true;
+            window_chrome::apply(frame);
+        }
         let ctx = ui.ctx().clone();
-        self.0.step(&ctx);
-        self.0.paint(ui);
+        self.app.step(&ctx);
+        self.app.paint(ui);
+    }
+
+    fn on_exit(&mut self) {
+        self.app.save_preferences();
     }
 }
 

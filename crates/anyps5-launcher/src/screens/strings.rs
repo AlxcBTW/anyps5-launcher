@@ -31,6 +31,13 @@ pub enum Extra {
     /// `%@` = the missing CPU features.
     DiagnosisHostCpu,
     SaveReport,
+    /// Toast while the toolkit downloads.
+    ToolkitDownloading,
+    /// Toast: `%@` = the installed version.
+    ToolkitReady,
+    ToolkitFailed,
+    /// Toast: the picked folder has no relinker or libraries.
+    ToolkitFolderInvalid,
 }
 
 impl Extra {
@@ -61,6 +68,14 @@ impl Extra {
             Extra::CpuIntel => "Intel",
             Extra::DiagnosisHostCpu => "This CPU lacks %@, which the game needs.",
             Extra::SaveReport => "Save report",
+            Extra::ToolkitDownloading => "Downloading the toolkit…",
+            Extra::ToolkitReady => "Toolkit %@ is ready",
+            Extra::ToolkitFailed => {
+                "Could not install the toolkit. Check your connection and try again."
+            }
+            Extra::ToolkitFolderInvalid => {
+                "This folder is not a toolkit. Pick the folder that holds relinker.exe and libs."
+            }
         }
     }
 
@@ -91,6 +106,12 @@ impl Extra {
             Extra::CpuIntel => "Intel",
             Extra::DiagnosisHostCpu => "Bu işlemcide oyunun ihtiyaç duyduğu %@ yok.",
             Extra::SaveReport => "Raporu kaydet",
+            Extra::ToolkitDownloading => "Araç seti indiriliyor…",
+            Extra::ToolkitReady => "Araç seti %@ hazır",
+            Extra::ToolkitFailed => "Araç seti kurulamadı. Bağlantını denetleyip yeniden dene.",
+            Extra::ToolkitFolderInvalid => {
+                "Bu klasör bir araç seti değil. relinker.exe ve libs içeren klasörü seç."
+            }
         }
     }
 
@@ -105,7 +126,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 21] = [
+    pub const ALL: [Extra; 25] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -127,6 +148,10 @@ impl Extra {
         Extra::CpuIntel,
         Extra::DiagnosisHostCpu,
         Extra::SaveReport,
+        Extra::ToolkitDownloading,
+        Extra::ToolkitReady,
+        Extra::ToolkitFailed,
+        Extra::ToolkitFolderInvalid,
     ];
 }
 
