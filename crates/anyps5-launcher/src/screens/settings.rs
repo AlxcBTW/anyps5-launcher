@@ -222,7 +222,7 @@ pub fn build_categories(
         Row::action("folder", t(Key::Folder))
             .detail(path_text(&prefs.games_folder))
             .icon(Icon::FOLDER),
-        Row::action("rescan", t(Key::Rescan))
+        Row::command("rescan", t(Key::Rescan))
             .detail(language.format(Key::GamesFound, &[Arg::Int(env.games_found as i64)]))
             .icon(Icon::ARROW_CLOCKWISE),
         Row::info("clones", t(Key::InstalledSize), None),
@@ -301,14 +301,14 @@ pub fn build_categories(
         .icon(Icon::ARROWS_CLOCKWISE),
     );
     toolkit
-        .push(Row::action("checkNow", Extra::CheckNow.text(language)).icon(Icon::ARROW_CLOCKWISE));
+        .push(Row::command("checkNow", Extra::CheckNow.text(language)).icon(Icon::ARROW_CLOCKWISE));
     match (&env.toolkit_version, &env.update) {
         (None, _) => toolkit.push(
-            Row::action("install", Extra::ToolkitInstall.text(language))
+            Row::command("install", Extra::ToolkitInstall.text(language))
                 .icon(Icon::DOWNLOAD_SIMPLE),
         ),
         (Some(_), UpdateState::Available(_)) => toolkit.push(
-            Row::action("install", Extra::ToolkitInstallUpdate.text(language))
+            Row::command("install", Extra::ToolkitInstallUpdate.text(language))
                 .icon(Icon::DOWNLOAD_SIMPLE),
         ),
         _ => {}
@@ -344,7 +344,7 @@ pub fn build_categories(
         Row::action("screenshots", t(Key::ScreenshotsFolder))
             .detail(abbreviated(screenshots))
             .icon(Icon::CAMERA),
-        Row::action("showScreenshots", t(Key::ShowScreenshots)).icon(Icon::IMAGES),
+        Row::command("showScreenshots", t(Key::ShowScreenshots)).icon(Icon::IMAGES),
         Row::action("fonts", t(Key::FontsFolder))
             .detail(
                 prefs
@@ -355,7 +355,7 @@ pub fn build_categories(
             .icon(Icon::TEXT_AA),
     ];
     if prefs.fonts_folder.is_some() {
-        advanced.push(Row::action("fontsReset", t(Key::FontsReset)).icon(Icon::X_CIRCLE));
+        advanced.push(Row::command("fontsReset", t(Key::FontsReset)).icon(Icon::X_CIRCLE));
     }
     advanced.push(Row::info("fontsHint", t(Key::FontsHint), None));
 
@@ -364,7 +364,7 @@ pub fn build_categories(
         Row::info("text", t(Key::AboutText), None),
         // The toolkit version lives on the Toolkit page only.
         Row::info("version", t(Key::Version), Some(env.app_version.to_owned())),
-        Row::action("quit", t(Key::Quit))
+        Row::command("quit", t(Key::Quit))
             .icon(Icon::POWER)
             .destructive(),
     ];
@@ -735,7 +735,8 @@ fn draw(
         language.text(Key::Settings),
         Color32::WHITE,
     );
-    let mut y = title.max.y + 31.0;
+    let list_top = title.max.y + 31.0;
+    let mut y = list_top;
     let column_w = size::SETTINGS_CATEGORY_WIDTH;
     for (index, cat) in cats.iter().enumerate() {
         let rect = Rect::from_min_size(
@@ -800,7 +801,10 @@ fn draw(
     let current = nav.category.min(cats.len() - 1);
     let fade_in = ctx.animate_from_to(("settings-switch", switches), 0.0, 1.0, Motion::Focus);
     let x = area.min.x + column_w + 36.0;
-    let list_rect = Rect::from_min_max(pos2(x + 18.0 * (1.0 - fade_in), area.min.y), area.max);
+    let list_rect = Rect::from_min_max(
+        pos2(x + 18.0 * (1.0 - fade_in), list_top - size::LIST_INSET),
+        area.max,
+    );
     let mut child = ui.new_child(UiBuilder::new().max_rect(list_rect));
     child.set_opacity(fade_in.clamp(0.0, 1.0));
     let options = ListOptions {

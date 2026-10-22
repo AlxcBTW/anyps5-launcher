@@ -291,7 +291,7 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
     // The log box.
     let log_rect = Rect::from_min_max(pos2(area.min.x, y), area.max);
     paint_glass(ui.ctx(), &painter, log_rect, GlassStyle::log_box());
-    let inner = log_rect.shrink(18.0);
+    let inner = log_rect.shrink(20.0);
     if data.text.is_empty() {
         // An empty log says what will appear here, centred in the box.
         crate::ui::text::paint(
@@ -317,7 +317,7 @@ fn draw(ui: &mut Ui, data: &LogData<'_>, clicked: &mut Option<LogAction>) {
             ui.add(
                 egui::Label::new(
                     RichText::new(body)
-                        .font(theme::font_mono(12.0))
+                        .font(theme::font_mono(13.0))
                         .color(white(0.85)),
                 )
                 .selectable(true)

@@ -291,20 +291,20 @@ pub fn build_rows(data: &GameSettingsData<'_>) -> Vec<Row> {
     );
     let maintenance = rows.len();
     if data.installed {
-        rows.push(Row::action("reinstall", t(Key::Reinstall)).icon(Icon::ARROWS_CLOCKWISE));
+        rows.push(Row::command("reinstall", t(Key::Reinstall)).icon(Icon::ARROWS_CLOCKWISE));
     }
-    rows.push(Row::action("finder", t(Key::ShowInFinder)).icon(Icon::FOLDER));
-    rows.push(Row::action("log", t(Key::OpenLog)).icon(Icon::FILE_TEXT));
+    rows.push(Row::command("finder", t(Key::ShowInFinder)).icon(Icon::FOLDER));
+    rows.push(Row::command("log", t(Key::OpenLog)).icon(Icon::FILE_TEXT));
     rows.push(
-        Row::action("report", t(Key::MakeReport))
+        Row::command("report", t(Key::MakeReport))
             .detail(t(Key::MakeReportDetail))
             .icon(Icon::STETHOSCOPE),
     );
-    rows.push(Row::action("cache", t(Key::ClearShaderCache)).icon(Icon::SPARKLE));
+    rows.push(Row::command("cache", t(Key::ClearShaderCache)).icon(Icon::SPARKLE));
     rows[maintenance].group_start = true;
     if data.installed {
         rows.push(
-            Row::action("uninstall", t(Key::Uninstall))
+            Row::command("uninstall", t(Key::Uninstall))
                 .icon(Icon::TRASH)
                 .destructive()
                 .group_start(),
@@ -414,10 +414,10 @@ impl UninstallPanel {
         }
         let build = || {
             vec![
-                Row::action("uninstall", Extra::Remove.text(language))
+                Row::command("uninstall", Extra::Remove.text(language))
                     .icon(Icon::TRASH)
                     .destructive(),
-                Row::action("cancel", language.text(Key::Cancel)).icon(Icon::X),
+                Row::command("cancel", language.text(Key::Cancel)).icon(Icon::X),
             ]
         };
         if self.side.is_open() {

@@ -19,16 +19,19 @@ use crate::screens::format;
 use crate::screens::scroll::Follow;
 use crate::screens::side::commands;
 use crate::ui::Shell;
-use crate::ui::anim::AnimExt;
+use crate::ui::anim::{AnimExt, lerp};
 use crate::ui::chrome::fullscreen_panel;
-use crate::ui::components::{corner, paint_focus_stroke, paint_progress};
+use crate::ui::components::{corner, paint_progress, paint_shadow};
 use crate::ui::glass::GlassStyle;
 use crate::ui::i18n::{Key, Language};
 use crate::ui::icons::Icon;
 use crate::ui::input::{Command, InputEvent};
 use crate::ui::sound::Cue;
 use crate::ui::text;
-use crate::ui::theme::{self, Grade, color, fade, mix, radius, size, ty, white};
+use crate::ui::theme::{self, Grade, black, color, fade, mix, radius, shadows, size, ty, white};
+
+/// Room around the scrolling rows for the focused card's grow and shadow.
+const LIST_MARGIN: f32 = 8.0;
 
 /// What the host has to do after a frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -237,7 +240,11 @@ impl TrophyListPanel {
             .shrink2(vec2(theme::pad::TROPHIES.0, theme::pad::TROPHIES.1));
         let header = Rect::from_min_size(area.min, vec2(area.width(), size::TROPHY_HEADER_ICON));
         self.draw_header(ui, header, data);
-        let list = Rect::from_min_max(pos2(area.min.x, header.max.y + 28.0), area.max);
+        // The scroll margin puts the rows on the header's edges.
+        let list = Rect::from_min_max(
+            pos2(area.min.x - LIST_MARGIN, header.max.y + 28.0 - LIST_MARGIN),
+            pos2(area.max.x + LIST_MARGIN, area.max.y),
+        );
         let mut child = ui.new_child(UiBuilder::new().max_rect(list));
         self.draw_rows(&mut child, data, clicked);
     }
@@ -352,7 +359,7 @@ impl TrophyListPanel {
         let mut geometry = Vec::with_capacity(data.set.trophies.len());
         let output = area.show(ui, |ui| {
             egui::Frame::NONE
-                .inner_margin(egui::Margin::same(8))
+                .inner_margin(egui::Margin::same(LIST_MARGIN as i8))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 10.0;
                     let origin = ui.cursor().min.y;
@@ -449,17 +456,15 @@ impl TrophyListPanel {
         }
         let t = ctx.focus_t(("trophy-row-focus", index), focused);
         let r = radius::TROPHY_ROW;
-        // Ring only: a glow would show through the translucent row.
+        // The focused row is the white card of every other panel; ink turns dark with it.
+        let card = rect.expand(lerp(0.0, 3.0, t));
+        paint_shadow(&painter, card, r, shadows::settings_row(t));
         painter.rect_filled(
-            rect,
+            card,
             corner(r),
-            mix(
-                color::surface_trophy_row(),
-                color::surface_trophy_row_focused(),
-                t,
-            ),
+            mix(color::surface_trophy_row(), Color32::WHITE, t),
         );
-        paint_focus_stroke(&painter, rect, r, 2.0, t);
+        let ink = |alpha: f32| fade(mix(Color32::WHITE, Color32::BLACK, t), alpha);
 
         // Icon or the secret's lock tile.
         let icon_rect = Rect::from_center_size(
@@ -484,16 +489,12 @@ impl TrophyListPanel {
         // Name, detail and the progress line.
         let x = rect.min.x + text_x;
         let top = rect.center().y - block * 0.5;
-        let name_color = if earned {
-            Color32::WHITE
-        } else {
-            fade(Color32::WHITE, 0.8)
-        };
+        let name_color = ink(if earned { 1.0 } else { 0.8 });
         let name_h = name_g.size().y;
         painter.galley(pos2(x, top), name_g, name_color);
         let detail_y = top + name_h + 6.0;
         let detail_h = detail_g.size().y;
-        painter.galley(pos2(x, detail_y), detail_g, white(0.6));
+        painter.galley(pos2(x, detail_y), detail_g, ink(0.6));
         if let Some((value, target)) = progress {
             let y = detail_y + detail_h + 6.0;
             let bar = Rect::from_center_size(pos2(x + 90.0, y + 7.2), vec2(180.0, 4.0));
@@ -502,22 +503,25 @@ impl TrophyListPanel {
             } else {
                 value as f32 / target as f32
             };
+            painter.rect_filled(bar, corner(2.0), black(0.14 * t));
             paint_progress(&painter, bar, fraction.clamp(0.0, 1.0), data.accent);
             text::paint_tabular(
                 &painter,
                 pos2(bar.max.x + 10.0, y),
                 theme::TextStyle::new(12.0, theme::Weight::Medium),
                 &format!("{value}/{target}"),
-                white(0.6),
+                ink(0.6),
             );
         }
 
         // Grade and date, right aligned.
         let right = rect.max.x - 18.0;
+        // Gold and platinum need a darker tone on the white card.
+        let grade_color = mix(grade.color(), Color32::BLACK, 0.5 * t);
         let grade_color = if earned {
-            grade.color()
+            grade_color
         } else {
-            fade(grade.color(), 0.55)
+            fade(grade_color, 0.55)
         };
         let rows_h = grade_style.line_height() + 6.0 + date_style.line_height();
         let gy = rect.center().y - rows_h * 0.5;
@@ -542,7 +546,7 @@ impl TrophyListPanel {
             Align2::RIGHT_TOP,
             date_style,
             &date_text,
-            white(if earned { 0.7 } else { 0.4 }),
+            ink(if earned { 0.7 } else { 0.4 }),
         );
         rect
     }
