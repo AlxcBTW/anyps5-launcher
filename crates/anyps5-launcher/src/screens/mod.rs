@@ -31,17 +31,22 @@ pub mod convert;
 pub mod dialogs;
 pub mod format;
 pub mod gallery;
+pub mod home;
 pub mod game_settings;
 pub mod library;
 pub mod log;
+pub mod onboarding;
 pub mod rows;
 pub mod scroll;
+mod shared;
 pub mod settings;
 pub mod side;
 pub mod start;
 pub mod strings;
 pub mod trophies;
 pub mod unlock;
+
+pub use shared::*;
 
 use std::sync::Arc;
 

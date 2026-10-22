@@ -1,0 +1,350 @@
+//! The seam between the UI and the unlock/launch pipeline of `anyps5-core`.
+//!
+//! The model never talks to the pipeline directly. It pushes [`PipelineCommand`]s (as
+//! `Effect::Pipeline`) that the host hands to a [`Pipeline`], and it reads [`PipelineEvent`]s back
+//! from [`Pipeline::poll`] once per frame. An adapter for the core pipeline implements the trait
+//! (`submit` turns a command into an `UnlockRequest` / `LaunchRequest`, `poll` turns the core's
+//! `UnlockEvent`s and `LaunchEvent`s into [`PipelineEvent`]s, texts already localised).
+//!
+//! Until that adapter lands the launcher runs with [`NoPipeline`]; [`SimPipeline`] simulates a
+//! pipeline with timers for the demo mode and the tests.
+
+use std::path::Path;
+
+use anyps5_core::library::Game;
+use anyps5_core::paths::GameId;
+use anyps5_core::settings::Preferences;
+
+use crate::ui::i18n::Key;
+
+/// The five steps of an unlock and their share of the single overall bar (DESIGN.md 5.4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum UnlockStep {
+    Unwrap,
+    Relink,
+    Copy,
+    Bundle,
+    Finish,
+}
+
+impl UnlockStep {
+    pub const ALL: [UnlockStep; 5] = [
+        UnlockStep::Unwrap,
+        UnlockStep::Relink,
+        UnlockStep::Copy,
+        UnlockStep::Bundle,
+        UnlockStep::Finish,
+    ];
+
+    /// Where the step starts on the overall bar.
+    pub const fn start(self) -> f32 {
+        match self {
+            UnlockStep::Unwrap => 0.0,
+            UnlockStep::Relink => 0.12,
+            UnlockStep::Copy => 0.62,
+            UnlockStep::Bundle => 0.88,
+            UnlockStep::Finish => 0.96,
+        }
+    }
+
+    /// How much of the overall bar the step covers.
+    pub const fn length(self) -> f32 {
+        match self {
+            UnlockStep::Unwrap => 0.12,
+            UnlockStep::Relink => 0.50,
+            UnlockStep::Copy => 0.26,
+            UnlockStep::Bundle => 0.08,
+            UnlockStep::Finish => 0.04,
+        }
+    }
+
+    /// `start + length * fraction`.
+    pub fn overall(self, fraction: f32) -> f32 {
+        self.start() + self.length() * fraction.clamp(0.0, 1.0)
+    }
+
+    pub const fn title_key(self) -> Key {
+        match self {
+            UnlockStep::Unwrap => Key::StepUnwrap,
+            UnlockStep::Relink => Key::StepRelink,
+            UnlockStep::Copy => Key::StepCopy,
+            UnlockStep::Bundle => Key::StepBundle,
+            UnlockStep::Finish => Key::StepFinish,
+        }
+    }
+}
+
+/// What the UI asks the pipeline to do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PipelineCommand {
+    /// Queue an unlock of a locked game.
+    Unlock(GameId),
+    /// Queue an unlock again after a failure.
+    Retry(GameId),
+    /// Drop a queued unlock or stop the running one.
+    Cancel(GameId),
+    /// Start an unlocked game.
+    Play(GameId),
+    /// Kill the running game (also while it is still starting).
+    Stop(GameId),
+    /// Queue a fresh unlock of an already unlocked game (update, "Reinstall").
+    UnlockAgain(GameId),
+    /// Bring the running game's window to the front.
+    Activate(GameId),
+}
+
+impl PipelineCommand {
+    pub fn game(&self) -> &GameId {
+        match self {
+            PipelineCommand::Unlock(g)
+            | PipelineCommand::Retry(g)
+            | PipelineCommand::Cancel(g)
+            | PipelineCommand::Play(g)
+            | PipelineCommand::Stop(g)
+            | PipelineCommand::UnlockAgain(g)
+            | PipelineCommand::Activate(g) => g,
+        }
+    }
+}
+
+/// What the pipeline reports back.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PipelineEvent {
+    /// A step is running (the first one also means "left the queue").
+    Progress {
+        game: GameId,
+        step: UnlockStep,
+        fraction: f32,
+    },
+    /// An unlock ended. `Ok` carries the toolkit version the copy was made with.
+    UnlockFinished {
+        game: GameId,
+        result: Result<String, String>,
+    },
+    /// An unlock was cancelled (queued or running).
+    UnlockCancelled { game: GameId },
+    /// The game process exists.
+    Spawned { game: GameId },
+    /// The game's first window showed.
+    WindowShown { game: GameId },
+    /// The process could not be started.
+    StartFailed { game: GameId, message: String },
+    /// The process ended. `diagnosis` is the localised one-sentence reason, when it ended on an error.
+    Exited {
+        game: GameId,
+        diagnosis: Option<String>,
+    },
+}
+
+/// What the pipeline needs to know to act on a command.
+pub struct PipelineContext<'a> {
+    /// The games folder.
+    pub root: Option<&'a Path>,
+    /// The game the command is about, when it is in the library.
+    pub game: Option<&'a Game>,
+    pub prefs: &'a Preferences,
+}
+
+/// The unlock/launch pipeline as the UI sees it.
+pub trait Pipeline {
+    /// The toolkit version unlocked copies are compared against; `None` when this PC has no toolkit.
+    fn toolkit_version(&self) -> Option<String>;
+    /// Runs a command. Never blocks.
+    fn submit(&mut self, command: PipelineCommand, cx: &PipelineContext<'_>);
+    /// Events since the last call. `now` is the UI clock in seconds.
+    fn poll(&mut self, now: f64) -> Vec<PipelineEvent>;
+    /// Called before a rescan while nothing unlocks: clean up half-made copies.
+    fn before_scan(&mut self, _root: &Path) {}
+}
+
+/// No pipeline: no toolkit, nothing starts. What the launcher runs with until the core's pipeline
+/// is wired in.
+#[derive(Default)]
+pub struct NoPipeline {
+    events: Vec<PipelineEvent>,
+}
+
+impl Pipeline for NoPipeline {
+    fn toolkit_version(&self) -> Option<String> {
+        None
+    }
+
+    fn submit(&mut self, command: PipelineCommand, _cx: &PipelineContext<'_>) {
+        if let PipelineCommand::Play(game) = command {
+            self.events.push(PipelineEvent::StartFailed {
+                game,
+                message: "no toolkit".to_owned(),
+            });
+        }
+    }
+
+    fn poll(&mut self, _now: f64) -> Vec<PipelineEvent> {
+        std::mem::take(&mut self.events)
+    }
+}
+
+/// A pipeline that only simulates: an unlock walks through the five steps in about 5 s, a start
+/// shows its window after 2.5 s and the game runs until stopped. Used by `--demo` and the tests.
+pub struct SimPipeline {
+    version: String,
+    queue: Vec<GameId>,
+    current: Option<(GameId, f64)>,
+    run: Option<(GameId, f64, bool)>,
+    events: Vec<PipelineEvent>,
+    /// Seconds an unlock takes in total.
+    pub unlock_seconds: f64,
+    /// Seconds from the start until the game's window shows.
+    pub window_seconds: f64,
+    /// Make every unlock fail with this message.
+    pub fail_with: Option<String>,
+}
+
+impl SimPipeline {
+    pub fn new(version: &str) -> Self {
+        Self {
+            version: version.to_owned(),
+            queue: Vec::new(),
+            current: None,
+            run: None,
+            events: Vec::new(),
+            unlock_seconds: 5.0,
+            window_seconds: 2.5,
+            fail_with: None,
+        }
+    }
+}
+
+impl Pipeline for SimPipeline {
+    fn toolkit_version(&self) -> Option<String> {
+        Some(self.version.clone())
+    }
+
+    fn submit(&mut self, command: PipelineCommand, _cx: &PipelineContext<'_>) {
+        match command {
+            PipelineCommand::Unlock(g)
+            | PipelineCommand::Retry(g)
+            | PipelineCommand::UnlockAgain(g) => {
+                self.queue.push(g);
+            }
+            PipelineCommand::Cancel(g) => {
+                if self.current.as_ref().is_some_and(|(c, _)| *c == g) {
+                    self.current = None;
+                }
+                self.queue.retain(|q| *q != g);
+                self.events.push(PipelineEvent::UnlockCancelled { game: g });
+            }
+            PipelineCommand::Play(g) => {
+                self.events.push(PipelineEvent::Spawned { game: g.clone() });
+                self.run = Some((g, f64::NAN, false));
+            }
+            PipelineCommand::Stop(g) => {
+                self.run = None;
+                self.events.push(PipelineEvent::Exited {
+                    game: g,
+                    diagnosis: None,
+                });
+            }
+            PipelineCommand::Activate(_) => {}
+        }
+    }
+
+    fn poll(&mut self, now: f64) -> Vec<PipelineEvent> {
+        if self.current.is_none() && !self.queue.is_empty() {
+            let game = self.queue.remove(0);
+            self.events.push(PipelineEvent::Progress {
+                game: game.clone(),
+                step: UnlockStep::Unwrap,
+                fraction: 0.0,
+            });
+            self.current = Some((game, now));
+        }
+        if let Some((game, since)) = self.current.clone() {
+            let t = ((now - since) / self.unlock_seconds).clamp(0.0, 1.0) as f32;
+            if t >= 1.0 {
+                self.current = None;
+                let result = match &self.fail_with {
+                    Some(message) => Err(message.clone()),
+                    None => Ok(self.version.clone()),
+                };
+                self.events
+                    .push(PipelineEvent::UnlockFinished { game, result });
+            } else {
+                // Map the overall time to a step and the fraction inside it.
+                let step = UnlockStep::ALL
+                    .into_iter()
+                    .rev()
+                    .find(|s| t >= s.start())
+                    .unwrap_or(UnlockStep::Unwrap);
+                let fraction = ((t - step.start()) / step.length()).clamp(0.0, 1.0);
+                self.events.push(PipelineEvent::Progress {
+                    game,
+                    step,
+                    fraction,
+                });
+            }
+        }
+        if let Some((game, since, shown)) = self.run.as_mut() {
+            if since.is_nan() {
+                *since = now;
+            }
+            if !*shown && now - *since >= self.window_seconds {
+                *shown = true;
+                self.events
+                    .push(PipelineEvent::WindowShown { game: game.clone() });
+            }
+        }
+        std::mem::take(&mut self.events)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn steps_cover_the_whole_bar() {
+        let mut at = 0.0;
+        for step in UnlockStep::ALL {
+            assert!((step.start() - at).abs() < 1e-6, "{step:?}");
+            at += step.length();
+        }
+        assert!((at - 1.0).abs() < 1e-6);
+        assert!((UnlockStep::Relink.overall(0.5) - 0.37).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sim_walks_through_the_steps_and_finishes() {
+        let prefs = Preferences::default();
+        let cx = PipelineContext {
+            root: None,
+            game: None,
+            prefs: &prefs,
+        };
+        let id = GameId::from_key("c:/games/a");
+        let mut sim = SimPipeline::new("v1");
+        sim.unlock_seconds = 1.0;
+        sim.submit(PipelineCommand::Unlock(id.clone()), &cx);
+        let mut seen = Vec::new();
+        for i in 0..=20 {
+            seen.extend(sim.poll(f64::from(i) * 0.1));
+        }
+        assert!(matches!(
+            seen.first(),
+            Some(PipelineEvent::Progress {
+                step: UnlockStep::Unwrap,
+                ..
+            })
+        ));
+        assert!(matches!(
+            seen.last(),
+            Some(PipelineEvent::UnlockFinished { result: Ok(v), .. }) if v == "v1"
+        ));
+        assert!(seen.iter().any(|e| matches!(
+            e,
+            PipelineEvent::Progress {
+                step: UnlockStep::Copy,
+                ..
+            }
+        )));
+    }
+}

@@ -1583,6 +1583,7 @@ Decisions made while implementing:
 
 ---
 
+
 ## 14. Implemented panels (crate `anyps5-launcher`, module `screens`)
 
 One module per panel; each has a state struct and a `show(...)` that takes the `Shell`, the egui context and the frame's
@@ -1608,3 +1609,24 @@ Deviations (all Windows additions, the original stays the reference):
 - Row detail lines wrap at words (the first foundation version broke inside words).
 - A trophy row's focus has the ring only; the glow of the foundation would show through the translucent row.
 - Keypad keys arrive as their top-row twins (egui reports one key for both).
+## 15. Implemented home and app (crate `anyps5-launcher`, modules `app` and `screens`)
+
+| Module | Contents |
+|---|---|
+| `app::model` | the state machine of `AppModel.swift` without I/O: game states in priority order, home/onboarding commands, unlock queue and progress (coalesced), start/running/exit, toast (3.2 s), overlay open/close, library bookkeeping. Work for the outside is queued as `Effect`s; results arrive through `on_core` and `on_pipeline` |
+| `app::pipeline` | the seam: `PipelineCommand` (Unlock, Retry, Cancel, Play, Stop, UnlockAgain, Activate), `PipelineEvent`, trait `Pipeline`; `NoPipeline`, `SimPipeline` (demo and tests) |
+| `app::core_pipeline` | `Pipeline` on top of `anyps5-core` (`UnlockQueue`, `Launcher`, diagnosis texts in the launcher language) |
+| `app::overlay` | `Overlay` enum and trait `OverlayHost` that the panel modules implement (`command`, `ui`, `captured_key`) |
+| `app::services`, `app::textures` | scan + watcher, size and trophy workers, folder dialog (`rfd`), icon and artwork decoding off the UI thread |
+| `screens::{home, onboarding, splash}` | 5.3, 5.15, 5.5 |
+| `app::preview` | hidden `--gallery=<scene>` and `--demo` with made-up games (see the module doc) |
+
+Decisions and deviations:
+
+- **Glass cards over the artwork.** The foundation's glass blurs the theme backdrop only. The info cards now also show the frosted game artwork: the artwork is baked once into an 80 px blurred, saturated, tinted texture and drawn under the card through the same uv rectangle as the artwork, darkened by the glass black and the two scrims. The tint (0.30) is tuned by eye against `launcher-home-trophies.jpg`.
+- `GlassStyle` got an `alpha` (and `paint_glass_on` multiplies the painter's opacity), so glass inside a fading screen fades with it.
+- Onboarding to home is a fade-out then fade-in (0.55 s in total), not a cross-fade of both screens.
+- The hero title has no text shadow (the scrims carry the contrast); the empty-library icon is the regular weight (no thin weight in Phosphor).
+- The artwork is decoded to at most 2048 px (the original: 1.6 x the window).
+- Dev builds compile dependencies with `opt-level = 2` (image decoding is unusably slow otherwise).
+- Previews for local comparison can take real art from a dump on the machine (`ANYPS5_PREVIEW_REAL_ART=<dump folder>`); nothing of it is copied.
