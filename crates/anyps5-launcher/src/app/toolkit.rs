@@ -83,12 +83,13 @@ impl ToolkitService {
         });
     }
 
-    /// Downloads and installs the latest release.
-    pub fn install(&mut self, paths: &AppPaths, repository: &str) {
+    /// Downloads and installs the latest release. False when a download already runs.
+    pub fn install(&mut self, paths: &AppPaths, repository: &str) -> bool {
         if self.installing {
-            return;
+            return false;
         }
         self.installing = true;
+        self.state = UpdateState::Downloading;
         let (tx, ctx, paths, repo) = (
             self.tx.clone(),
             self.ctx.clone(),
@@ -106,6 +107,7 @@ impl ToolkitService {
             let _ = tx.send(ToolkitEvent::Installed(result));
             ctx.request_repaint();
         });
+        true
     }
 
     /// Checks a toolkit folder the player picked (it hashes the files, so not on the UI thread).
@@ -144,9 +146,11 @@ impl ToolkitService {
                 ToolkitEvent::Adopted(_) => {}
                 ToolkitEvent::Installed(result) => {
                     self.installing = false;
-                    if result.is_ok() {
-                        self.state = UpdateState::UpToDate;
-                    }
+                    self.state = if result.is_ok() {
+                        UpdateState::UpToDate
+                    } else {
+                        UpdateState::Failed
+                    };
                 }
             }
         }

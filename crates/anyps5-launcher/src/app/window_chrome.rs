@@ -51,6 +51,26 @@ mod imp {
         result == 0
     }
 
+    fn high_contrast() -> bool {
+        use windows_sys::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SPI_GETHIGHCONTRAST, SystemParametersInfoW,
+        };
+        // SAFETY: HIGHCONTRASTW is plain data; zero is a valid value.
+        let mut info: HIGHCONTRASTW = unsafe { std::mem::zeroed() };
+        info.cbSize = std::mem::size_of::<HIGHCONTRASTW>() as u32;
+        // SAFETY: info is a HIGHCONTRASTW with its size set, as SPI_GETHIGHCONTRAST requires.
+        let ok = unsafe {
+            SystemParametersInfoW(
+                SPI_GETHIGHCONTRAST,
+                info.cbSize,
+                std::ptr::from_mut(&mut info).cast(),
+                0,
+            )
+        };
+        ok != 0 && info.dwFlags & HCF_HIGHCONTRASTON != 0
+    }
+
     pub fn apply(window: &impl HasWindowHandle) -> Applied {
         let Ok(handle) = window.window_handle() else {
             return Applied::default();
@@ -62,11 +82,13 @@ mod imp {
         let on: u32 = 1;
         let dark_mode =
             set(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &on) || set(hwnd, DARK_MODE_BEFORE_20H1, &on);
+        // Windows high contrast keeps the system caption colours.
+        let colors = !high_contrast();
         let black = colorref(0, 0, 0);
         let white = colorref(255, 255, 255);
-        let caption = set(hwnd, DWMWA_CAPTION_COLOR, &black);
-        let text = set(hwnd, DWMWA_TEXT_COLOR, &white);
-        let border = set(hwnd, DWMWA_BORDER_COLOR, &black);
+        let caption = colors && set(hwnd, DWMWA_CAPTION_COLOR, &black);
+        let text = colors && set(hwnd, DWMWA_TEXT_COLOR, &white);
+        let border = colors && set(hwnd, DWMWA_BORDER_COLOR, &black);
         let round_corners = set(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &CORNER_ROUND);
         let applied = Applied {
             dark_mode,

@@ -85,6 +85,8 @@ pub enum UpdateState {
     #[default]
     Unknown,
     Checking,
+    /// The toolkit download runs.
+    Downloading,
     UpToDate,
     /// A newer release exists: its version.
     Available(String),
@@ -259,6 +261,7 @@ pub fn build_categories(
     let update_value = match &env.update {
         UpdateState::Unknown => None,
         UpdateState::Checking => Some(Extra::Checking.text(language).to_owned()),
+        UpdateState::Downloading => Some(Extra::ToolkitDownloading.text(language).to_owned()),
         UpdateState::UpToDate => Some(Extra::UpToDate.text(language).to_owned()),
         UpdateState::Available(v) => Some(Extra::UpdateAvailable.format(language, &[Arg::Str(v)])),
         UpdateState::Failed => Some(Extra::CheckFailed.text(language).to_owned()),

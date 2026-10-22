@@ -35,8 +35,9 @@ pub enum Extra {
     ToolkitDownloading,
     /// Toast: `%@` = the installed version.
     ToolkitReady,
-    /// Toast: `%@` = the reason.
     ToolkitFailed,
+    /// Toast: the picked folder has no relinker or libraries.
+    ToolkitFolderInvalid,
 }
 
 impl Extra {
@@ -69,7 +70,12 @@ impl Extra {
             Extra::SaveReport => "Save report",
             Extra::ToolkitDownloading => "Downloading the toolkit…",
             Extra::ToolkitReady => "Toolkit %@ is ready",
-            Extra::ToolkitFailed => "Toolkit not installed: %@",
+            Extra::ToolkitFailed => {
+                "Could not install the toolkit. Check your connection and try again."
+            }
+            Extra::ToolkitFolderInvalid => {
+                "This folder is not a toolkit. Pick the folder that holds relinker.exe and libs."
+            }
         }
     }
 
@@ -102,7 +108,10 @@ impl Extra {
             Extra::SaveReport => "Raporu kaydet",
             Extra::ToolkitDownloading => "Araç seti indiriliyor…",
             Extra::ToolkitReady => "Araç seti %@ hazır",
-            Extra::ToolkitFailed => "Araç seti kurulamadı: %@",
+            Extra::ToolkitFailed => "Araç seti kurulamadı. Bağlantını denetleyip yeniden dene.",
+            Extra::ToolkitFolderInvalid => {
+                "Bu klasör bir araç seti değil. relinker.exe ve libs içeren klasörü seç."
+            }
         }
     }
 
@@ -117,7 +126,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 24] = [
+    pub const ALL: [Extra; 25] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -142,6 +151,7 @@ impl Extra {
         Extra::ToolkitDownloading,
         Extra::ToolkitReady,
         Extra::ToolkitFailed,
+        Extra::ToolkitFolderInvalid,
     ];
 }
 

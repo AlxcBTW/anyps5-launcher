@@ -189,10 +189,14 @@ impl PanelHost {
             }
             SettingsAction::CheckForUpdates => self.check_toolkit(model),
             SettingsAction::InstallToolkit => {
-                let text = Extra::ToolkitDownloading.text(model.language());
-                model.toast(text, Icon::DOWNLOAD_SIMPLE);
-                self.toolkit
-                    .install(&model.paths, &model.prefs.toolkit_repository);
+                // The row of the settings shows the download; the toast only confirms the start.
+                if self
+                    .toolkit
+                    .install(&model.paths, &model.prefs.toolkit_repository)
+                {
+                    let text = Extra::ToolkitDownloading.text(model.language());
+                    model.toast(text, Icon::DOWNLOAD_SIMPLE);
+                }
             }
             SettingsAction::AdoptToolkitFolder(folder) => self.toolkit.adopt(folder),
             SettingsAction::Quit => cx.ctx.send_viewport_cmd(ViewportCommand::Close),
@@ -348,6 +352,9 @@ impl PanelHost {
             self.controls.open();
         }
         let Some(game) = cx.model.selected_game().cloned() else {
+            if wanted {
+                cx.model.dismiss_overlay();
+            }
             return;
         };
         let mut settings = cx.model.prefs.game_settings(&game.id);
@@ -384,6 +391,9 @@ impl PanelHost {
             self.advanced.open();
         }
         let Some(game) = cx.model.selected_game().cloned() else {
+            if wanted {
+                cx.model.dismiss_overlay();
+            }
             return;
         };
         let mut settings = cx.model.prefs.game_settings(&game.id);
@@ -417,21 +427,24 @@ impl PanelHost {
     // --- full-screen panels --------------------------------------------------------------------
 
     fn trophies_ui(&mut self, cx: &mut OverlayCx<'_>, wanted: bool) {
+        let events = self.take_events(wanted);
+        let game = cx.model.selected_game().cloned();
+        let set = game.as_ref().and_then(|g| cx.model.trophies.get(&g.id));
+        let (Some(game), Some(set)) = (game, set) else {
+            // Nothing to list: never open, and leave a panel that is already open.
+            if wanted {
+                cx.model.dismiss_overlay();
+            }
+            if self.trophies.is_active() {
+                self.trophies.close();
+            }
+            return;
+        };
         if wanted && !self.trophies.is_active() {
             self.trophies.open();
         } else if !wanted && self.trophies.is_active() {
             self.trophies.close();
         }
-        let events = self.take_events(wanted);
-        let Some(game) = cx.model.selected_game().cloned() else {
-            return;
-        };
-        let Some(set) = cx.model.trophies.get(&game.id) else {
-            if wanted {
-                cx.model.dismiss_overlay();
-            }
-            return;
-        };
         let data = TrophyData {
             game_key: game.id.as_str(),
             game_name: &game.name,
@@ -654,9 +667,13 @@ impl PanelHost {
                     let text = Extra::ToolkitReady.format(language, &[Arg::Str(&version)]);
                     model.toast(text, Icon::CHECK_CIRCLE);
                 }
-                ToolkitEvent::Installed(Err(error)) | ToolkitEvent::Adopted(Err(error)) => {
-                    let text = Extra::ToolkitFailed.format(language, &[Arg::Str(&error)]);
-                    model.toast(text, Icon::WARNING);
+                ToolkitEvent::Installed(Err(error)) => {
+                    tracing::warn!("toolkit install: {error}");
+                    model.toast(Extra::ToolkitFailed.text(language), Icon::WARNING);
+                }
+                ToolkitEvent::Adopted(Err(error)) => {
+                    tracing::warn!("toolkit folder: {error}");
+                    model.toast(Extra::ToolkitFolderInvalid.text(language), Icon::WARNING);
                 }
             }
         }
