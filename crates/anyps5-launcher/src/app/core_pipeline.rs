@@ -1,0 +1,277 @@
+//! [`Pipeline`] backed by the unlock queue and the launcher of `anyps5-core`.
+//!
+//! Commands become `UnlockRequest`s and `LaunchRequest`s; the core's events come back through
+//! closures into a shared list that [`Pipeline::poll`] drains once per frame (each push also wakes
+//! the UI). Diagnoses are turned into the launcher's language here, so the model only sees text.
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+use anyps5_core::diagnosis::Diagnosis;
+use anyps5_core::hostcpu::{CpuConversion, HostCpu};
+use anyps5_core::launch::{LaunchEvent, LaunchRequest, Launcher, RunHandle, WindowPrefs};
+use anyps5_core::paths::{self, AppPaths, GameId};
+use anyps5_core::settings::{self, EnvContext, Preferences};
+use anyps5_core::toolkit::{Toolkit, adopt_folder};
+use anyps5_core::unlock::{self, UnlockError, UnlockEvent, UnlockQueue, UnlockRequest};
+
+use crate::app::model::ui_language;
+use crate::app::pipeline::{Pipeline, PipelineCommand, PipelineContext, PipelineEvent, UnlockStep};
+use crate::ui::i18n::{Arg, Key, Language};
+
+type Shared = Arc<Mutex<Vec<PipelineEvent>>>;
+
+pub struct CorePipeline {
+    paths: AppPaths,
+    toolkit: Option<Toolkit>,
+    queue: UnlockQueue,
+    runs: HashMap<GameId, RunHandle>,
+    events: Shared,
+    wake: Arc<dyn Fn() + Send + Sync>,
+    language: Arc<Mutex<Language>>,
+}
+
+fn map_step(step: unlock::Step) -> UnlockStep {
+    match step {
+        unlock::Step::Unwrap => UnlockStep::Unwrap,
+        unlock::Step::Relink => UnlockStep::Relink,
+        unlock::Step::Copy => UnlockStep::Copy,
+        unlock::Step::Assemble => UnlockStep::Bundle,
+        unlock::Step::Finish => UnlockStep::Finish,
+    }
+}
+
+/// The localised one-sentence reason (falls back to the English text for kinds without a key).
+fn diagnosis_text(diagnosis: &Diagnosis, language: Language) -> String {
+    let (name, args) = diagnosis.summary_key();
+    let key = match name {
+        "diagnosisMissingModule" => Key::DiagnosisMissingModule,
+        "diagnosisUnsupported" => Key::DiagnosisUnsupported,
+        "diagnosisGpuLost" => Key::DiagnosisGpuLost,
+        "diagnosisOutOfMemory" => Key::DiagnosisOutOfMemory,
+        "diagnosisEngineError" => Key::DiagnosisEngineError,
+        "diagnosisCrashed" => Key::DiagnosisCrashed,
+        _ => return diagnosis.summary(),
+    };
+    let args: Vec<Arg<'_>> = args.iter().map(|a| Arg::Str(a)).collect();
+    language.format(key, &args)
+}
+
+impl CorePipeline {
+    /// `wake` repaints the UI (called after every event).
+    pub fn new(paths: AppPaths, prefs: &Preferences, wake: Arc<dyn Fn() + Send + Sync>) -> Self {
+        let events: Shared = Arc::default();
+        let sink = {
+            let (events, wake) = (events.clone(), wake.clone());
+            Arc::new(move |event: UnlockEvent| {
+                let mapped = match event {
+                    UnlockEvent::Started { game } => Some(PipelineEvent::Progress {
+                        game,
+                        step: UnlockStep::Unwrap,
+                        fraction: 0.0,
+                    }),
+                    UnlockEvent::Progress {
+                        game,
+                        step,
+                        fraction,
+                    } => Some(PipelineEvent::Progress {
+                        game,
+                        step: map_step(step),
+                        fraction: fraction as f32,
+                    }),
+                    UnlockEvent::Finished { game, result } => Some(match result {
+                        Ok(record) => PipelineEvent::UnlockFinished {
+                            game,
+                            result: Ok(record.toolkit),
+                        },
+                        Err(UnlockError::Cancelled) => PipelineEvent::UnlockCancelled { game },
+                        Err(error) => PipelineEvent::UnlockFinished {
+                            game,
+                            result: Err(error.to_string()),
+                        },
+                    }),
+                    _ => None,
+                };
+                if let Some(event) = mapped {
+                    events.lock().expect("events lock").push(event);
+                    wake();
+                }
+            })
+        };
+        let mut pipeline = Self {
+            toolkit: None,
+            queue: UnlockQueue::new(sink),
+            runs: HashMap::new(),
+            events,
+            wake,
+            language: Arc::new(Mutex::new(ui_language(prefs.language))),
+            paths,
+        };
+        pipeline.locate_toolkit(prefs);
+        pipeline
+    }
+
+    /// Looks for the toolkit again (after a download or a changed folder).
+    pub fn locate_toolkit(&mut self, prefs: &Preferences) {
+        self.toolkit = match &prefs.toolkit {
+            Some(folder) => adopt_folder(folder)
+                .ok()
+                .or_else(|| Toolkit::locate(&self.paths, None)),
+            None => Toolkit::locate(&self.paths, None),
+        };
+    }
+
+    fn push(&self, event: PipelineEvent) {
+        self.events.lock().expect("events lock").push(event);
+        (self.wake)();
+    }
+
+    fn unlock(&self, game: &anyps5_core::library::Game, root: &Path, prefs: &Preferences) {
+        let Some(toolkit) = self.toolkit.clone() else {
+            return;
+        };
+        let mut request = UnlockRequest::new(
+            game.folder.clone(),
+            game.title_id.clone(),
+            root.to_path_buf(),
+            toolkit,
+        );
+        let mode = match prefs.cpu_conversion {
+            settings::CpuConversion::Auto => CpuConversion::Auto,
+            settings::CpuConversion::None => CpuConversion::None,
+            settings::CpuConversion::Intel => CpuConversion::Intel,
+        };
+        request.to_intel = HostCpu::detect().wants_intel_conversion(mode);
+        if !self.queue.enqueue(request) {
+            tracing::debug!("{} is already queued", game.name);
+        }
+    }
+
+    fn play(&mut self, game: &anyps5_core::library::Game, root: &Path, prefs: &Preferences) {
+        if self.runs.values().any(RunHandle::is_alive) {
+            return;
+        }
+        let copy = paths::unlocked_copy_dir(root, &game.title_id, &game.id);
+        let name = paths::unlocked_copy_name(&game.title_id, &game.id);
+        let settings = prefs.game_settings(&game.id);
+        // Without the input file the game keeps the engine's built-in keys.
+        let input_file = self.paths.input_file(&name);
+        let written = settings.write_input_file(&input_file).is_ok();
+        let screenshots = prefs.screenshots_dir(&self.paths);
+        let shader_cache = self.paths.shader_cache_dir(&game.title_id);
+        let launcher_language = match prefs.language {
+            settings::Language::Turkish => 19,
+            settings::Language::English => 1,
+        };
+        let env = settings.environment(&EnvContext {
+            launcher_language,
+            input_file: written.then_some(input_file),
+            screenshots: Some(screenshots.clone()),
+            fonts: prefs.fonts_folder.clone(),
+            shader_cache: Some(shader_cache.clone()),
+        });
+        let mut request = LaunchRequest::new(
+            game.id.clone(),
+            game.title_id.clone(),
+            copy,
+            self.paths.log_file(&game.title_id),
+        );
+        request.env = env;
+        request.create_dirs = vec![screenshots, shader_cache];
+        request.window = WindowPrefs {
+            fullscreen: settings.fullscreen,
+            size_percent: settings.window_size_clamped(),
+        };
+        let language = self.language.clone();
+        let (events, wake) = (self.events.clone(), self.wake.clone());
+        let sink = Arc::new(move |event: LaunchEvent| {
+            let mapped = match event {
+                LaunchEvent::Spawned { game, .. } => Some(PipelineEvent::Spawned { game }),
+                LaunchEvent::WindowShown { game, .. } => Some(PipelineEvent::WindowShown { game }),
+                LaunchEvent::Exited { .. } => None,
+                LaunchEvent::Diagnosed {
+                    game, diagnosis, ..
+                } => {
+                    let language = *language.lock().expect("language lock");
+                    Some(PipelineEvent::Exited {
+                        game,
+                        diagnosis: diagnosis.map(|d| diagnosis_text(&d, language)),
+                    })
+                }
+            };
+            if let Some(event) = mapped {
+                events.lock().expect("events lock").push(event);
+                wake();
+            }
+        });
+        match Launcher::start(request, sink) {
+            Ok(handle) => {
+                self.runs.insert(game.id.clone(), handle);
+            }
+            Err(error) => self.push(PipelineEvent::StartFailed {
+                game: game.id.clone(),
+                message: error.to_string(),
+            }),
+        }
+    }
+}
+
+impl Pipeline for CorePipeline {
+    fn toolkit_version(&self) -> Option<String> {
+        self.toolkit.as_ref().map(|t| t.version().to_owned())
+    }
+
+    fn submit(&mut self, command: PipelineCommand, cx: &PipelineContext<'_>) {
+        *self.language.lock().expect("language lock") = ui_language(cx.prefs.language);
+        match command {
+            PipelineCommand::Unlock(_)
+            | PipelineCommand::Retry(_)
+            | PipelineCommand::UnlockAgain(_) => {
+                if self.toolkit.is_none() {
+                    self.locate_toolkit(cx.prefs);
+                }
+                if let (Some(game), Some(root)) = (cx.game, cx.root) {
+                    self.unlock(game, root, cx.prefs);
+                }
+            }
+            PipelineCommand::Cancel(game) => self.queue.cancel(&game),
+            PipelineCommand::Play(game_id) => {
+                if let (Some(game), Some(root)) = (cx.game, cx.root) {
+                    self.play(game, root, cx.prefs);
+                } else {
+                    self.push(PipelineEvent::StartFailed {
+                        game: game_id,
+                        message: "game not found".to_owned(),
+                    });
+                }
+            }
+            PipelineCommand::Stop(game) => {
+                if let Some(run) = self.runs.get(&game) {
+                    run.kill();
+                }
+            }
+            PipelineCommand::Activate(game) => {
+                if let Some(run) = self.runs.get(&game) {
+                    run.activate();
+                }
+            }
+        }
+    }
+
+    fn poll(&mut self, _now: f64) -> Vec<PipelineEvent> {
+        let events = std::mem::take(&mut *self.events.lock().expect("events lock"));
+        for event in &events {
+            if let PipelineEvent::Exited { game, .. } = event {
+                self.runs.remove(game);
+            }
+        }
+        events
+    }
+
+    fn before_scan(&mut self, root: &Path) {
+        if self.queue.is_idle() {
+            unlock::remove_leftovers(root);
+        }
+    }
+}

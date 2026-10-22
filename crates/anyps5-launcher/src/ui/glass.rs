@@ -30,6 +30,9 @@ pub struct GlassStyle {
     pub overlay: Color32,
     /// 1 px inner stroke of white 0.09.
     pub stroke: bool,
+    /// Opacity of the whole panel (a panel inside a fading screen); [`paint_glass_on`] also
+    /// multiplies in the painter's own opacity.
+    pub alpha: f32,
 }
 
 /// Material tint toward white and saturation boost of the blurred copy (estimates, DESIGN.md 12).
@@ -45,6 +48,7 @@ impl GlassStyle {
             black,
             overlay: Color32::TRANSPARENT,
             stroke: true,
+            alpha: 1.0,
         }
     }
 
@@ -76,6 +80,7 @@ impl GlassStyle {
             black: 0.74,
             overlay: Color32::TRANSPARENT,
             stroke: false,
+            alpha: 1.0,
         }
     }
 
@@ -103,6 +108,7 @@ impl GlassStyle {
             black: 0.0,
             overlay: color::side_panel(),
             stroke: false,
+            alpha: 1.0,
         }
     }
 }
@@ -123,7 +129,8 @@ struct GlassUniforms {
     black: f32,
     saturation: f32,
     linearize: u32,
-    _pad: [f32; 2],
+    alpha: f32,
+    _pad: f32,
 }
 
 /// Layout of the per-slot texture bind group (sharp, blurred, sampler).
@@ -276,7 +283,8 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
             black: self.style.black,
             saturation: MATERIAL_SATURATION,
             linearize: u32::from(linearize),
-            _pad: [0.0; 2],
+            alpha: self.style.alpha.clamp(0.0, 1.0),
+            _pad: 0.0,
         };
         queue.write_buffer(
             &glass.uniforms,
@@ -350,6 +358,11 @@ pub fn paint_glass_on(
     slot: u32,
     style: GlassStyle,
 ) {
+    let mut style = style;
+    style.alpha *= painter.opacity();
+    if style.alpha <= 0.0 {
+        return;
+    }
     painter.add(egui_wgpu::Callback::new_paint_callback(
         rect,
         GlassCallback {

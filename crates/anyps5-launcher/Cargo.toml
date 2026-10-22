@@ -25,8 +25,12 @@ bytemuck = { version = "1", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 sys-locale = "0.3"
 rfd = "0.17.2"
+
 time.workspace = true
 naga = { version = "30", features = ["wgsl-in"] }
 
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "3"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_SystemInformation"] }

@@ -34,3 +34,7 @@ lto = "thin"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# Dependencies (image decoding, egui, wgpu) run at a usable speed in debug builds.
+[profile.dev.package."*"]
+opt-level = 2
