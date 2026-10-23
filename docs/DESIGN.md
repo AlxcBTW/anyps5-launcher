@@ -1263,7 +1263,7 @@ community/layouts/<TITLEID>/<name>.ini
 ```
 
 The launcher fetches `index.json` from
-`https://raw.githubusercontent.com/AlxcBTW/anyps5-launcher/main/community/layouts` once per run and
+`https://raw.githubusercontent.com/anyplay-gg/launcher/main/community/layouts` once per run and
 title, when the controls open, and then the files of that title (8 at most, 16 KiB each, 8 s for
 all). An entry is valid when the title ID is four capitals and five digits, the name has 1 to 40
 characters, and the file is `<folder>/<name>.ini` of letters, digits, `.`, `_` and `-`. A file that fails
@@ -1838,7 +1838,7 @@ list still updates.
 
 No counterpart in the macOS launcher (Sparkle there). Core module `anyps5_core::selfupdate`, host `app::selfupdate`.
 
-- **Check.** Once per start, in the background, when the *Check for Updates* preference is on: the latest release of `AlxcBTW/anyps5-launcher` (the same request and HTTP client as the toolkit check). A newer semver (pre-release tags sort below their release) is downloaded and verified at once; garbage tags are never newer. Previews, the demo, the gallery and the tests never check.
+- **Check.** Once per start, in the background, when the *Check for Updates* preference is on: the latest release of `anyplay-gg/launcher` (the same request and HTTP client as the toolkit check). A newer semver (pre-release tags sort below their release) is downloaded and verified at once; garbage tags are never newer. Previews, the demo, the gallery and the tests never check.
 - **Verify.** The portable `AnyPS5-Launcher-<v>-x64.exe` goes to `%LOCALAPPDATA%AnyPS5Updates`. Its SHA-256 must match the line in the release's `SHA256SUMS.txt`; a missing line, a wrong hash or a file that does not start with `MZ` refuses the update and leaves nothing behind. The file gets its final name only after that, so a file of that name is always a verified one.
 - **Swap.** Windows cannot overwrite a running exe but can rename it. The staged file is copied beside the running exe (`<name>.new`, it may be on another drive), the running exe is renamed to `<name>.old`, the copy takes its place. A failure in the second step moves the old one back. The next start deletes `.old` files and stale downloads (one still in use stays until a later start). It works for the installed exe (`%LOCALAPPDATA%ProgramsAnyPS5 Launcher`) and for the portable exe in any writable folder. A folder that refuses new files is reported before anything is downloaded: About shows "<v> available, but this folder is read-only" and nothing else happens.
 - **When.** A calm toast when the update is ready: "Launcher <v> is ready. It installs when you close the launcher." The swap runs on exit, after the preferences are saved. An update staged by a run that closed too early is offered again at the next start without a second download.
