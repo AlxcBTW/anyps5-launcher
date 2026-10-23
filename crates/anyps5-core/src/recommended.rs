@@ -28,7 +28,8 @@ use crate::toolkit::ToolkitError;
 pub const EMBEDDED: &str = include_str!("../../../data/recommended-settings.v1.json");
 
 /// Where the current catalogue lives (this repository, not GitHub Pages).
-pub const URL: &str = "https://raw.githubusercontent.com/anyplay-gg/launcher/main/data/recommended-settings.v1.json";
+pub const URL: &str =
+    "https://raw.githubusercontent.com/anyplay-gg/launcher/main/data/recommended-settings.v1.json";
 
 const MAX_BYTES: u64 = 512 * 1024;
 
