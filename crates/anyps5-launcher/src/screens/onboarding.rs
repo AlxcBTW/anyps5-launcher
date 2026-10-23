@@ -328,7 +328,7 @@ fn folder_step(
         folder.is_some(),
     );
     place(ui, row, |ui| {
-        ui.spacing_mut().item_spacing.x = 18.0;
+        ui.spacing_mut().item_spacing.x = 12.0;
         let pick = ConsoleButton::new(pick_label)
             .icon(Icon::FOLDER)
             .min_width(220.0)

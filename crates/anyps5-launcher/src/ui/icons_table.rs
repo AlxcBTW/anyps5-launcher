@@ -86,4 +86,7 @@ impl Icon {
     pub const ARROW_DOWN: Icon = Icon('\u{e03e}');
     pub const ARROW_LEFT: Icon = Icon('\u{e058}');
     pub const LINK: Icon = Icon('\u{e2e2}');
+    pub const GITHUB_LOGO: Icon = Icon('\u{e576}');
+    pub const FLOPPY_DISK: Icon = Icon('\u{e248}');
+    pub const CLOCK_COUNTER_CLOCKWISE: Icon = Icon('\u{e1a0}');
 }

@@ -46,14 +46,14 @@ impl Share {
                 "Layout imported. Some actions are not shown in this list."
             }
             Share::Report => "Report a Problem",
-            Share::ReportDetail => "Review the report, then save it or open GitHub",
+            Share::ReportDetail => "Review the report, then save it or open it on GitHub",
             Share::ReportHint => {
-                "This is the report. Save it as a file, or open GitHub with it filled in. Nothing is sent until you submit it there."
+                "This is the report. Save it as a file, or open it on GitHub, filled in. Nothing is sent until you submit it there."
             }
             Share::ReportPasteHint => {
-                "The log is too long for the link. Open GitHub copies the full report; paste it into the form."
+                "The log is too long for the link. Open on GitHub copies the full report; paste it into the form."
             }
-            Share::ReportOpen => "Open GitHub",
+            Share::ReportOpen => "Open on GitHub",
             Share::ReportOpenedPaste => "Report copied. Paste it into the GitHub form.",
             Share::ReportOpened => "The form is open in your browser",
             Share::ReportOpenFailed => "Could not open the browser. The link was copied instead.",
@@ -74,14 +74,14 @@ impl Share {
                 "Düzen içe aktarıldı. Bazı eylemler bu listede gösterilmiyor."
             }
             Share::Report => "Sorun bildir",
-            Share::ReportDetail => "Raporu gözden geçir, sonra kaydet ya da GitHub'ı aç",
+            Share::ReportDetail => "Raporu gözden geçir, sonra kaydet ya da GitHub'da aç",
             Share::ReportHint => {
-                "Bu rapordur. Dosya olarak kaydet ya da doldurulmuş hâliyle GitHub'ı aç. GitHub'da sen gönderene kadar hiçbir şey gönderilmez."
+                "Bu rapordur. Dosya olarak kaydet ya da doldurulmuş hâliyle GitHub'da aç. GitHub'da sen gönderene kadar hiçbir şey gönderilmez."
             }
             Share::ReportPasteHint => {
-                "Günlük bağlantı için çok uzun. GitHub'ı açınca raporun tamamı panoya kopyalanır; forma yapıştır."
+                "Günlük bağlantı için çok uzun. GitHub'da aç, raporun tamamını panoya kopyalar; forma yapıştır."
             }
-            Share::ReportOpen => "GitHub'ı aç",
+            Share::ReportOpen => "GitHub'da aç",
             Share::ReportOpenedPaste => "Rapor kopyalandı. GitHub formuna yapıştır.",
             Share::ReportOpened => "Form tarayıcında açıldı",
             Share::ReportOpenFailed => "Tarayıcı açılamadı. Bağlantı panoya kopyalandı.",

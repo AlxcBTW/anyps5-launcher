@@ -38,6 +38,7 @@ pub mod log;
 pub mod onboarding;
 pub mod recommended;
 pub mod rows;
+pub mod saves;
 pub mod scroll;
 pub mod settings;
 pub mod share_strings;

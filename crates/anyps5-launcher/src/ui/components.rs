@@ -30,6 +30,10 @@ pub enum Force {
 /// The press scale of buttons (a mouse affordance added on Windows, DESIGN.md 9.2).
 pub const PRESS_SCALE: f32 = 0.97;
 
+/// How far a focused button grows past its resting edge on every side, in dp. A fixed amount, not a
+/// scale: wide and narrow buttons then lift the same.
+pub const FOCUS_GROW: f32 = 3.0;
+
 /// Rectangle scaled about its centre.
 pub fn scale_rect(rect: Rect, factor: f32) -> Rect {
     Rect::from_center_size(rect.center(), rect.size() * factor)
@@ -171,25 +175,31 @@ pub struct Interaction {
     pub enabled: bool,
 }
 
-/// Allocates `size`, reads the pointer state and runs the focus and press springs.
+/// Allocates `size`, reads the pointer state and runs the focus and press springs. `room` is how far
+/// the widget grows on each side when focused: the layout reserves that much extra width, so a
+/// neighbour keeps its gap while the widget is focused (`Interaction::rect` has the grown width).
 pub fn interact(
     ui: &mut Ui,
     size: Vec2,
     focused: bool,
     enabled: bool,
     force: Option<Force>,
+    room: f32,
 ) -> Interaction {
     let sense = if enabled {
         Sense::click()
     } else {
         Sense::hover()
     };
-    let (rect, response) = ui.allocate_exact_size(size, sense);
+    // The focus spring runs before the allocation, whose width follows it.
+    let id = ui.next_auto_id();
+    let focus = ui.ctx().focus_t((id, "focus"), focused && enabled);
+    let (rect, response) = ui.allocate_exact_size(vec2(size.x + 2.0 * room * focus, size.y), sense);
+    debug_assert_eq!(response.id, id);
     let hovered = enabled
         && (response.hovered() || force == Some(Force::Hover) || force == Some(Force::Press));
     let pressed = enabled && (response.is_pointer_button_down_on() || force == Some(Force::Press));
     let ctx = ui.ctx();
-    let focus = ctx.focus_t((response.id, "focus"), focused && enabled);
     let press = ctx.animate_to(
         (response.id, "press"),
         if pressed { 1.0 } else { 0.0 },
@@ -212,6 +222,16 @@ impl Interaction {
     /// Scale from focus (`focus_scale` at full focus) and press.
     pub fn scale(&self, focus_scale: f32) -> f32 {
         lerp(1.0, focus_scale, self.focus) * lerp(1.0, PRESS_SCALE, self.press)
+    }
+
+    /// The press scale alone, for widgets whose focus grow is made of room.
+    pub fn press_scale(&self) -> f32 {
+        lerp(1.0, PRESS_SCALE, self.press)
+    }
+
+    /// The allocation, also `room` taller on each side at full focus.
+    pub fn grown(&self, room: f32) -> Rect {
+        self.rect.expand2(vec2(0.0, room * self.focus))
     }
 
     /// Multiplier for the whole widget when disabled.
@@ -339,6 +359,7 @@ impl<'a> ConsoleButton<'a> {
             self.focused,
             self.enabled,
             self.force,
+            FOCUS_GROW,
         );
         let enabled = self.enabled;
         let name = match (&self.label, self.title.is_empty()) {
@@ -351,8 +372,9 @@ impl<'a> ConsoleButton<'a> {
         if !ui.is_rect_visible(it.rect) {
             return it.response;
         }
-        let s = it.scale(1.05);
-        let rect = snap_rect(&painter, scale_rect(it.rect, s));
+        let rect = snap_rect(&painter, scale_rect(it.grown(FOCUS_GROW), it.press_scale()));
+        // The content grows with the button; `width` is the size at rest.
+        let s = rect.width() / width;
         let a = it.alpha();
         let rest = if self.prominent {
             color::surface_prominent()
@@ -434,7 +456,7 @@ impl<'a> ConsoleButton<'a> {
 // Icon button (top bar)
 // ---------------------------------------------------------------------------------------------
 
-/// A 44 dp circle with a glyph (library, settings). Focused: white fill, black glyph, scale 1.1.
+/// A 44 dp circle with a glyph (library, settings). Focused: white fill, black glyph, 3 dp larger.
 pub struct IconButton {
     icon: Icon,
     label: String,
@@ -480,6 +502,7 @@ impl IconButton {
             self.focused,
             self.enabled,
             self.force,
+            FOCUS_GROW,
         );
         let (label, enabled) = (self.label.as_str(), self.enabled);
         it.response
@@ -488,8 +511,8 @@ impl IconButton {
             return it.response;
         }
         let painter = ui.painter();
-        let s = it.scale(1.1);
-        let rect = snap_rect(painter, scale_rect(it.rect, s));
+        let rect = snap_rect(painter, scale_rect(it.grown(FOCUS_GROW), it.press_scale()));
+        let s = rect.width() / size::ICON_BUTTON;
         let a = it.alpha();
         let rest = if it.hovered {
             color::surface_hover()

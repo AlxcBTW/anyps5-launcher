@@ -171,6 +171,19 @@ impl AppPaths {
         self.logs_dir().join("Reports")
     }
 
+    /// `Backups`: one folder per title ID below it.
+    pub fn backups_dir(&self) -> PathBuf {
+        self.data.join("Backups")
+    }
+
+    /// The save backups of one title (`Backups<TITLEID>`); only letters and digits of the ID
+    /// name the folder.
+    pub fn game_backups_dir(&self, title_id: &str) -> PathBuf {
+        let name: String = title_id.chars().filter(|c| c.is_alphanumeric()).collect();
+        self.backups_dir()
+            .join(if name.is_empty() { "unknown" } else { &name })
+    }
+
     pub fn cache_dir(&self) -> PathBuf {
         self.data.join("Cache")
     }
@@ -274,6 +287,11 @@ mod tests {
         assert!(p.input_file("PPSA1-ab").ends_with("Controls/PPSA1-ab.ini"));
         assert!(p.log_file("PPSA1").ends_with("Logs/PPSA1.log"));
         assert!(p.reports_dir().ends_with("Logs/Reports"));
+        assert!(
+            p.game_backups_dir("PPSA-01 234")
+                .ends_with("Backups/PPSA01234")
+        );
+        assert!(p.game_backups_dir("../").ends_with("Backups/unknown"));
         assert!(
             p.shader_cache_dir("PPSA02100")
                 .ends_with("Cache/org.anyps5.ppsa02100/shader_cache")

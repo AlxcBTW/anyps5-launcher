@@ -22,6 +22,7 @@ use crate::fsx::{self, LinkMode, Linker, TreeError};
 use crate::paths::GameId;
 use crate::platform::Os;
 use crate::process::{ToolProcess, ToolSpec};
+use crate::saves::{Reason, SaveData, SavesError};
 use crate::toolkit::{Toolkit, ToolkitError};
 use crate::unwrap::{self, Refused};
 
@@ -151,6 +152,9 @@ pub struct UnlockRequest {
     /// ones are passed.
     pub relink_flags: Vec<String>,
     pub link_mode: LinkMode,
+    /// Where to back up the saves of the copy this unlock replaces, just before it is replaced
+    /// (see [`crate::saves`]); `None` makes no backup.
+    pub backup_dir: Option<PathBuf>,
 }
 
 impl UnlockRequest {
@@ -165,6 +169,7 @@ impl UnlockRequest {
             patches_toml: None,
             relink_flags: Vec::new(),
             link_mode: LinkMode::Auto,
+            backup_dir: None,
         }
     }
 }
@@ -674,6 +679,14 @@ pub fn run_unlock(
     control.check()?;
     reporter.progress(Step::Finish, 0.0);
     if copy.exists() {
+        // The saves are carried over, so this is a second copy, not the only one. Failing to make
+        // it is no reason to stop.
+        if let Some(backups) = &request.backup_dir {
+            match SaveData::new(copy.clone(), backups.clone()).backup(Reason::BeforeUnlock) {
+                Ok(_) | Err(SavesError::NothingToSave) => {}
+                Err(error) => reporter.log(format!("could not back up the saves: {error}")),
+            }
+        }
         carry_over(&copy, &partial, &reporter)?;
         fsx::remove_tree_retry(&copy).map_err(io_context("remove the old copy"))?;
     }

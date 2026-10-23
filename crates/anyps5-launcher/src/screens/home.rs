@@ -11,6 +11,7 @@ use egui::{
 };
 
 use crate::app::model::{GameState, Model, SizeState};
+use crate::screens::strings::{Extra, playtime_text};
 use crate::screens::{
     ScreenCx, StateLabel, paint_gradient_circle, paint_label, paint_spinner, place, state_label,
     wrapped,
@@ -229,17 +230,20 @@ fn top_bar(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<P
         (1u8, Icon::GEAR_SIX, language.text(Key::Settings)),
         (0u8, Icon::SQUARES_FOUR, language.text(Key::Library)),
     ];
+    // Right to left in one strip: a focused button makes room for itself, so the gap stays 12.
+    let strip = Rect::from_min_max(pos2(screen.min.x, top), pos2(x, top + size::ICON_BUTTON));
+    let mut row = ui.new_child(
+        UiBuilder::new()
+            .max_rect(strip)
+            .layout(Layout::right_to_left(Align::Center)),
+    );
+    row.spacing_mut().item_spacing.x = button_gap;
     for (index, icon, label) in buttons {
-        x -= size::ICON_BUTTON;
-        let rect = Rect::from_min_size(pos2(x, top), vec2(size::ICON_BUTTON, size::ICON_BUTTON));
         let focused = visible && cx.model.focus == HomeFocus::Top(index);
-        let response = place(ui, rect, |ui| {
-            IconButton::new(icon, label).focused(focused).show(ui)
-        });
+        let response = IconButton::new(icon, label).focused(focused).show(&mut row);
         if response.clicked() {
             presses.push(Press::Focus(HomeFocus::Top(index)));
         }
-        x -= button_gap;
     }
 }
 
@@ -544,7 +548,7 @@ fn paint_hero(
     let (primary_title, primary_icon, primary_fill) = primary_look(&state, language);
     let mut pressed = None;
     let after_buttons = place(ui, row, |ui| {
-        ui.spacing_mut().item_spacing.x = 16.0;
+        ui.spacing_mut().item_spacing.x = 12.0;
         let focused = |i: usize| visible && cx.model.focus == HomeFocus::Actions(i);
         let primary = ConsoleButton::new(primary_title)
             .icon(primary_icon)
@@ -585,20 +589,22 @@ fn paint_hero(
         Some(SizeState::Known(bytes)) => byte_text(*bytes as i64, language),
         _ => byte_text(-1, language),
     };
-    let facts = [
-        (Key::Size, size_text.as_str()),
-        (Key::TitleID, game.title_id.as_str()),
-        (Key::Version, game.version.as_str()),
+    let mut facts = vec![
+        (language.text(Key::Size), size_text),
+        (language.text(Key::TitleID), game.title_id.clone()),
+        (language.text(Key::Version), game.version.clone()),
     ];
+    // Said only once there is something to say: a game never played shows no "0 min".
+    let played = cx.model.prefs.playtime(&game.id);
+    if played.is_played() {
+        facts.push((
+            Extra::Played.text(language),
+            playtime_text(played.seconds, language),
+        ));
+    }
     let mut left = x;
-    for (key, value) in facts {
-        left += fact(
-            ui,
-            pos2(left, geometry.facts_top),
-            language.text(key),
-            value,
-            language,
-        ) + FACTS_SPACING;
+    for (title, value) in &facts {
+        left += fact(ui, pos2(left, geometry.facts_top), title, value, language) + FACTS_SPACING;
     }
 }
 

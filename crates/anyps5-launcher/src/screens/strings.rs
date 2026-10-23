@@ -159,6 +159,70 @@ pub enum Extra {
     RecApplied,
     /// Toast.
     RecAppliedUnlock,
+    /// Facts line of the home screen: the label over the time played.
+    Played,
+    /// Time played, under a minute.
+    PlayedUnderMinute,
+    /// `%@` = minutes.
+    PlayedMinutes,
+    /// `%@` = hours.
+    PlayedHours,
+    /// `%@` = hours, then minutes.
+    PlayedHoursMinutes,
+    /// Game sheet row and panel subtitle.
+    SavesTitle,
+    /// Detail of the row: no backup yet.
+    SavesNone,
+    /// Detail of the row.
+    SavesOne,
+    /// Detail of the row: `%@` = how many.
+    SavesCount,
+    /// Command.
+    SavesBackUp,
+    /// Detail of the command and its toast when there is nothing to back up.
+    SavesNothing,
+    /// Note of the panel without backups.
+    SavesEmpty,
+    /// Section caption over the list.
+    SavesCaption,
+    /// Note under the list: `%@` = how many are kept.
+    SavesKept,
+    /// Why a backup was made.
+    SavesReasonManual,
+    /// Why a backup was made.
+    SavesReasonUnlock,
+    /// Why a backup was made.
+    SavesReasonRestore,
+    /// Why a backup was made.
+    SavesReasonUninstall,
+    /// Why a backup was made.
+    SavesReasonPlayed,
+    /// Toast.
+    SavesBackedUp,
+    /// Command and title of the question.
+    SavesRestore,
+    /// The question: `%@` = date of the backup.
+    SavesRestoreAsk,
+    /// Toast.
+    SavesRestored,
+    /// Note while the game runs, and the toast of a refusal.
+    SavesRunning,
+    /// Toast.
+    SavesFailed,
+    /// Toast.
+    SavesRestoreFailed,
+    /// Toast.
+    SavesCorrupt,
+    /// Added to the removal question.
+    UninstallBacksUp,
+    /// Toast: the removal did not start.
+    UninstallNeedsBackup,
+    /// Toast: the restore stopped part way.
+    SavesRestoreIncomplete,
+    /// Toast: the restore stopped part way, nothing had to be kept.
+    SavesRestoreIncompleteNone,
+    /// Toast: a backup or restore is still under way.
+    SavesBusy,
 }
 
 impl Extra {
@@ -287,6 +351,52 @@ impl Extra {
             Extra::RecUnlockHint => "After you apply this, unlock the game again.",
             Extra::RecApplied => "Applied",
             Extra::RecAppliedUnlock => "Saved. Unlock the game again to use it.",
+            Extra::Played => "Played",
+            Extra::PlayedUnderMinute => "Under 1 min",
+            Extra::PlayedMinutes => "%@ min",
+            Extra::PlayedHours => "%@ h",
+            Extra::PlayedHoursMinutes => "%@ h %@ min",
+            Extra::SavesTitle => "Save Data",
+            Extra::SavesNone => "No backups yet",
+            Extra::SavesOne => "1 backup",
+            Extra::SavesCount => "%@ backups",
+            Extra::SavesBackUp => "Back Up Now",
+            Extra::SavesNothing => "No save data to back up yet",
+            Extra::SavesEmpty => {
+                "No backups yet. Back Up Now keeps a copy of your saves and trophies."
+            }
+            Extra::SavesCaption => "Backups",
+            Extra::SavesKept => "Up to %@ backups are kept. Backups made after playing go first.",
+            Extra::SavesReasonManual => "Manual",
+            Extra::SavesReasonUnlock => "Before unlocking again",
+            Extra::SavesReasonRestore => "Before a restore",
+            Extra::SavesReasonUninstall => "Before uninstall",
+            Extra::SavesReasonPlayed => "After playing",
+            Extra::SavesBackedUp => "Saves backed up",
+            Extra::SavesRestore => "Restore",
+            Extra::SavesRestoreAsk => {
+                "This replaces the saves and trophies the game has now with the backup from %@. The current ones are backed up first, so you can undo it."
+            }
+            Extra::SavesRestored => "Saves restored",
+            Extra::SavesRunning => "Close the game to restore a backup.",
+            Extra::SavesFailed => {
+                "Could not back up the saves. Check the free disk space and try again."
+            }
+            Extra::SavesRestoreFailed => {
+                "Could not restore the backup. Your saves were not changed."
+            }
+            Extra::SavesCorrupt => {
+                "This backup is damaged. Your saves were not changed. Pick another backup."
+            }
+            Extra::UninstallBacksUp => "Your saves and trophies are backed up first.",
+            Extra::UninstallNeedsBackup => {
+                "Could not back up the saves, so the game was not removed. Check the free disk space and try again."
+            }
+            Extra::SavesRestoreIncomplete => {
+                "The restore did not finish. The saves from before are in the newest backup, Before a restore."
+            }
+            Extra::SavesRestoreIncompleteNone => "The restore did not finish. Try it again.",
+            Extra::SavesBusy => "Still working on the saves. Try again in a moment.",
         }
     }
 
@@ -415,6 +525,50 @@ impl Extra {
             Extra::RecUnlockHint => "Bunun geçerli olması için oyunun kilidini yeniden aç.",
             Extra::RecApplied => "Uygulandı",
             Extra::RecAppliedUnlock => "Kaydedildi. Kullanmak için oyunun kilidini yeniden aç.",
+            Extra::Played => "Oynama süresi",
+            Extra::PlayedUnderMinute => "1 dk altı",
+            Extra::PlayedMinutes => "%@ dk",
+            Extra::PlayedHours => "%@ sa",
+            Extra::PlayedHoursMinutes => "%@ sa %@ dk",
+            Extra::SavesTitle => "Kayıt Verileri",
+            Extra::SavesNone => "Henüz yedek yok",
+            Extra::SavesOne => "1 yedek",
+            Extra::SavesCount => "%@ yedek",
+            Extra::SavesBackUp => "Şimdi Yedekle",
+            Extra::SavesNothing => "Yedeklenecek kayıt verisi henüz yok",
+            Extra::SavesEmpty => {
+                "Henüz yedek yok. Şimdi Yedekle, kayıtlarının ve kupalarının bir kopyasını saklar."
+            }
+            Extra::SavesCaption => "Yedekler",
+            Extra::SavesKept => {
+                "En fazla %@ yedek saklanır. Oynadıktan sonra alınanlar önce silinir."
+            }
+            Extra::SavesReasonManual => "Elle",
+            Extra::SavesReasonUnlock => "Kilidi yeniden açmadan önce",
+            Extra::SavesReasonRestore => "Geri yüklemeden önce",
+            Extra::SavesReasonUninstall => "Kaldırmadan önce",
+            Extra::SavesReasonPlayed => "Oynadıktan sonra",
+            Extra::SavesBackedUp => "Kayıtlar yedeklendi",
+            Extra::SavesRestore => "Geri Yükle",
+            Extra::SavesRestoreAsk => {
+                "Oyunun şu anki kayıtları ve kupaları, %@ tarihli yedekle değiştirilir. Şu anki hâli önce yedeklenir, böylece geri alabilirsin."
+            }
+            Extra::SavesRestored => "Kayıtlar geri yüklendi",
+            Extra::SavesRunning => "Yedeği geri yüklemek için oyunu kapat.",
+            Extra::SavesFailed => {
+                "Kayıtlar yedeklenemedi. Boş disk alanını kontrol edip yeniden dene."
+            }
+            Extra::SavesRestoreFailed => "Yedek geri yüklenemedi. Kayıtların değişmedi.",
+            Extra::SavesCorrupt => "Bu yedek hasarlı. Kayıtların değişmedi. Başka bir yedek seç.",
+            Extra::UninstallBacksUp => "Kayıtların ve kupaların önce yedeklenir.",
+            Extra::UninstallNeedsBackup => {
+                "Kayıtlar yedeklenemedi, bu yüzden oyun kaldırılmadı. Boş disk alanını kontrol edip yeniden dene."
+            }
+            Extra::SavesRestoreIncomplete => {
+                "Geri yükleme tamamlanmadı. Önceki kayıtlar en yeni yedekte, \"Geri yüklemeden önce\"."
+            }
+            Extra::SavesRestoreIncompleteNone => "Geri yükleme tamamlanmadı. Yeniden dene.",
+            Extra::SavesBusy => "Kayıtlar üzerinde hâlâ çalışılıyor. Birazdan yeniden dene.",
         }
     }
 
@@ -429,7 +583,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 99] = [
+    pub const ALL: [Extra; 131] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -529,7 +683,57 @@ impl Extra {
         Extra::RecUnlockHint,
         Extra::RecApplied,
         Extra::RecAppliedUnlock,
+        Extra::Played,
+        Extra::PlayedUnderMinute,
+        Extra::PlayedMinutes,
+        Extra::PlayedHours,
+        Extra::PlayedHoursMinutes,
+        Extra::SavesTitle,
+        Extra::SavesNone,
+        Extra::SavesOne,
+        Extra::SavesCount,
+        Extra::SavesBackUp,
+        Extra::SavesNothing,
+        Extra::SavesEmpty,
+        Extra::SavesCaption,
+        Extra::SavesKept,
+        Extra::SavesReasonManual,
+        Extra::SavesReasonUnlock,
+        Extra::SavesReasonRestore,
+        Extra::SavesReasonUninstall,
+        Extra::SavesReasonPlayed,
+        Extra::SavesBackedUp,
+        Extra::SavesRestore,
+        Extra::SavesRestoreAsk,
+        Extra::SavesRestored,
+        Extra::SavesRunning,
+        Extra::SavesFailed,
+        Extra::SavesRestoreFailed,
+        Extra::SavesCorrupt,
+        Extra::UninstallBacksUp,
+        Extra::UninstallNeedsBackup,
+        Extra::SavesRestoreIncomplete,
+        Extra::SavesRestoreIncompleteNone,
+        Extra::SavesBusy,
     ];
+}
+
+/// The time played as the home screen shows it: under a minute, whole minutes below an hour, hours
+/// and minutes below ten hours, then whole hours (rounded down, so it never claims more than was
+/// played).
+pub fn playtime_text(seconds: u64, language: Language) -> String {
+    let minutes = seconds / 60;
+    if minutes == 0 {
+        return Extra::PlayedUnderMinute.text(language).to_owned();
+    }
+    let (hours, rest) = (minutes / 60, minutes % 60);
+    match (hours, rest) {
+        (0, minutes) => Extra::PlayedMinutes.format(language, &[Arg::Int(minutes as i64)]),
+        (hours, 0) => Extra::PlayedHours.format(language, &[Arg::Int(hours as i64)]),
+        (hours, rest) if hours < 10 => Extra::PlayedHoursMinutes
+            .format(language, &[Arg::Int(hours as i64), Arg::Int(rest as i64)]),
+        (hours, _) => Extra::PlayedHours.format(language, &[Arg::Int(hours as i64)]),
+    }
 }
 
 #[cfg(test)]
@@ -543,6 +747,28 @@ mod tests {
                 assert!(!extra.text(language).is_empty(), "{extra:?} {language:?}");
             }
         }
+    }
+
+    #[test]
+    fn playtime_reads_calmly_in_both_languages() {
+        let en = |s| playtime_text(s, Language::English);
+        assert_eq!(en(0), "Under 1 min");
+        assert_eq!(en(59), "Under 1 min");
+        assert_eq!(en(60), "1 min");
+        assert_eq!(en(45 * 60 + 59), "45 min");
+        assert_eq!(en(3600), "1 h");
+        assert_eq!(en(3 * 3600 + 20 * 60), "3 h 20 min");
+        assert_eq!(en(9 * 3600 + 59 * 60 + 59), "9 h 59 min");
+        // From ten hours the minutes are noise.
+        assert_eq!(en(10 * 3600 + 59 * 60), "10 h");
+        assert_eq!(en(12 * 3600 + 34 * 60), "12 h");
+        assert_eq!(en(112 * 3600 + 1800), "112 h");
+        assert_eq!(
+            playtime_text(3 * 3600 + 20 * 60, Language::Turkish),
+            "3 sa 20 dk"
+        );
+        assert_eq!(playtime_text(45 * 60, Language::Turkish), "45 dk");
+        assert_eq!(playtime_text(5, Language::Turkish), "1 dk altı");
     }
 
     #[test]

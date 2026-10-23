@@ -304,7 +304,7 @@ impl WhatsNewPanel {
     fn draw(&mut self, ui: &mut Ui, data: &WhatsNewData<'_>, clicked: &mut Vec<Pick>) {
         let language = data.language;
         let painter = ui.painter().clone();
-        let area = ui.max_rect().shrink2(vec2(pad::LOG, pad::LOG * 0.6));
+        let area = ui.max_rect().shrink2(vec2(pad::LOG, pad::PANEL_TOP));
         // Header: title on the left, the two buttons on the right.
         let header = Rect::from_min_size(area.min, vec2(area.width(), 54.0));
         text::paint(
@@ -320,7 +320,7 @@ impl WhatsNewPanel {
                 .max_rect(header)
                 .layout(Layout::right_to_left(Align::Center)),
         );
-        buttons.spacing_mut().item_spacing.x = 14.0;
+        buttons.spacing_mut().item_spacing.x = 12.0;
         if ConsoleButton::new(language.text(crate::ui::i18n::Key::Close))
             .icon(Icon::X)
             .show(&mut buttons)
@@ -329,7 +329,7 @@ impl WhatsNewPanel {
             clicked.push(Pick::Close);
         }
         if ConsoleButton::new(Extra::NotesOpenRelease.text(language))
-            .icon(Icon::ARROW_RIGHT)
+            .icon(Icon::GITHUB_LOGO)
             .show(&mut buttons)
             .clicked()
         {

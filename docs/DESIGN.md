@@ -712,8 +712,8 @@ The launcher keeps the port's structure but trims what read as noise next to the
   What each toolkit release supports is the table in `core::compat`; an older toolkit loses the
   feature (screenshots row, patch resolutions), never the launch.
 - **One way to report a problem.** The game sheet has one row, "Report a Problem" (detail: "Review
-  the report, then save it or open GitHub"), in place of "Make a Report" and "Report to AnyPS5". It
-  opens the review (the log view): Cancel, Save Report and Open GitHub, 12 dp apart, Open GitHub
+  the report, then save it or open it on GitHub"), in place of "Make a Report" and "Report to AnyPS5". It
+  opens the review (the log view): Cancel, Save Report and Open on GitHub, 12 dp apart, Open on GitHub
   the one primary. The log view's own button reads "Report a Problem" and leads to the same review.
   The sentence above the text says both ways out in one line.
 - **Recommended, grouped.** Each reason hangs directly under its `current -> recommended` line
@@ -722,8 +722,40 @@ The launcher keeps the port's structure but trims what read as noise next to the
   Now" no longer repeats "Update available" (the row above says it) and shows the last check;
   "What's New" uses the document glyph, not the menu one.
 - **Review pass.** Recommended titles are in title case like every row; its hint says what to do
-  after applying; the Apply or Close row has the double gap above it. Left as designed: the focused
-  row and button grow 3 dp (a primary next to a button looks 7 dp away), documented above.
+  after applying; the Apply or Close row has the double gap above it.
+- **Buttons keep their gap when focused.** A focused console or icon button grows a fixed 3 dp on
+  every side (`FOCUS_GROW`), and the layout reserves that room while it is focused, so the
+  neighbour moves aside by the same amount instead of the gap closing to 7 dp. Every row of
+  buttons is 12 dp apart (the hero's was 16, the notes header's 14, the onboarding's 18); the
+  top bar is one right-to-left strip so its two buttons do the same. Panel rows are a list, not
+  buttons: they keep the 3 dp grow over the 8 dp row gap. The room is the one layout motion in the
+  app: the neighbour moves on the same focus spring as the edge it makes room for, so the gap is
+  12 dp in every frame and nothing overlaps.
+- **Commands read as commands.** "Check Now" is its title and icon alone, like "Install the
+  Update"; what the last check found hangs under it as a note (`Row::attached`). A detail line
+  under a command looked like the description of a status row.
+- **Caption corner.** Full-screen panels start their header at `pad::PANEL_TOP` (the 32 dp caption
+  buttons plus 32 dp), so a button row on the right never touches the window buttons (the notes
+  header sat 3 dp off them at 1280 x 720). Settings and the log were already lower.
+- **One GitHub button.** "Open on GitHub" in the notes and in the report review has the same
+  words and the same glyph (`github-logo`).
+- **Played.** The facts line gains a fourth fact, "Played" over the playtime ("45 min", "3 h 20 min",
+  "12 h"; "Under 1 min" for a first minute), only for a game that was played. Hours are rounded down
+  and the minutes drop from ten hours on. The clock (`app::playtime`) starts when the game's
+  window shows, and adds what it counted to the preferences every minute and at the exit, so a
+  crash keeps it. The game sheet shows no second copy: the home screen stays visible behind it.
+- **Save data.** The game sheet gains one row, "Save Data" (detail: the number of backups), after
+  Trophies and only for an unlocked game. It opens a side panel: the command "Back Up Now" (with a
+  note under it while there is nothing to back up), then the backups newest first, each a row with a
+  chevron: the date, then its size and why it was made. Selecting one opens the same two-row question
+  as the removal, on Cancel, saying what is replaced and that the current state is backed up first;
+  either answer returns to the list, where the toast says what happened. A running game gets a note
+  and a refusal instead. Backups are also made, quietly, before Unlock Again and before the removal
+  of a game, and once an hour after a game ends well (not after a crash, which may have damaged the
+  saves). Gallery scenes `saves`, `saves-empty` and `restore`.
+- **A steady toolkit header.** The toolkit version row is one line always; the note about a toolkit
+  newer or older than the launcher was tested with is its own attached row below it, so the
+  title no longer moves up when it appears (gallery scene `toolkit-newer`).
 - **Gallery scenes** `about-update` (About with a staged update, focus on "Restart Now") and
   `behavior-links` (links registered here) cover the two states that had none.
 - **Start-up and idle** (docs below measured on the demo preview, release build, AMD 880M plus RTX
@@ -1247,8 +1279,8 @@ containers; a test keeps the file equal to that output.
 
 A row of the game sheet after "Make a Report" (which still writes the file). It builds the report of
 section 5.13 on a worker thread and shows the text that will be sent in the log view (the same
-full-screen panel: a sentence above it, "Cancel" and "Open GitHub" on the right, Select opens). Nothing
-is sent from the launcher and there is no token: "Open GitHub" opens the browser on
+full-screen panel: a sentence above it, "Cancel" and "Open on GitHub" on the right, Select opens). Nothing
+is sent from the launcher and there is no token: "Open on GitHub" opens the browser on
 `https://github.com/boykopovar/AnyPS5/issues/new?template=bug_report.yml` with the form's fields in
 the query (GitHub fills an issue form from the field ids `summary`, `commit`, `system`, `steps`, `log`,
 `notes`; `title` is the issue's title), and the player presses GitHub's own button. Upstream asks for

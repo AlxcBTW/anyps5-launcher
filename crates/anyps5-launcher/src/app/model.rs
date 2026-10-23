@@ -8,6 +8,7 @@
 //! outside arrives through [`Model::on_core`] and [`Model::on_pipeline`].
 
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use anyps5_core::events::CoreEvent;
 use anyps5_core::library::{ExecutableKind, Game};
@@ -18,6 +19,8 @@ use anyps5_core::trophies::{Trophy, TrophySet};
 use crate::app::clock;
 use crate::app::overlay::Overlay;
 use crate::app::pipeline::{PipelineCommand, PipelineEvent, UnlockStep};
+use crate::app::playtime::{Counted, Sessions};
+use crate::screens::strings::Extra;
 use crate::ui::focus::{HomeContext, HomeFocus, HomeIntent, PanelNav};
 use crate::ui::i18n::{Arg, Key, Language};
 use crate::ui::icons::Icon;
@@ -93,6 +96,8 @@ pub enum Effect {
     Presence(Option<String>),
     /// The toolkit changed on disk or in the preferences: the pipeline looks for it again.
     ReloadToolkit,
+    /// A game ended well: back up its saves if the last backup is old (see `anyps5_core::saves`).
+    BackUpSaves(GameId),
 }
 
 /// What became of a command.
@@ -211,6 +216,10 @@ pub struct Model {
     /// Work for the host; drained after every input pass.
     pub effects: Vec<Effect>,
 
+    /// The clock of the running game's playtime.
+    sessions: Sessions,
+    /// The game whose saves a backup or restore is working on: it is not started meanwhile.
+    pub saves_busy: Option<GameId>,
     trophies_read: HashSet<GameId>,
     last_scan: f64,
     started_without_window: bool,
@@ -250,6 +259,8 @@ impl Model {
             patches_dir: None,
             trophy_banners: Vec::new(),
             effects: Vec::new(),
+            sessions: Sessions::default(),
+            saves_busy: None,
             trophies_read: HashSet::new(),
             last_scan: f64::NEG_INFINITY,
             started_without_window: false,
@@ -308,6 +319,37 @@ impl Model {
     /// Call first thing in every frame.
     pub fn tick(&mut self, now: f64) {
         self.now = now;
+        self.checkpoint(Instant::now());
+    }
+
+    // --- playtime ----------------------------------------------------------------------------
+
+    /// A running session adds what it has counted once a minute, so what a crash or a closed
+    /// launcher cuts short is at most that.
+    fn checkpoint(&mut self, at: Instant) {
+        if self.sessions.checkpoint_due(at) {
+            let counted = self.sessions.take(at);
+            self.bank(counted);
+        }
+    }
+
+    /// The game's window showed: a session starts and is counted.
+    fn begin_session(&mut self, game: &GameId, at: Instant) {
+        let left = self.sessions.begin(game.clone(), at);
+        self.bank(left);
+        self.edit_prefs(|p| p.count_session(game));
+    }
+
+    /// The game exited, cleanly or not: what the session still has is added.
+    fn end_session(&mut self, game: &GameId, at: Instant) {
+        let counted = self.sessions.end(game, at);
+        self.bank(counted);
+    }
+
+    fn bank(&mut self, counted: Option<Counted>) {
+        if let Some((game, seconds)) = counted.filter(|(_, seconds)| *seconds > 0) {
+            self.edit_prefs(|p| p.add_playtime(&game, seconds));
+        }
     }
 
     /// Shows a toast; a warning also plays the error cue.
@@ -568,6 +610,7 @@ impl Model {
             PipelineEvent::WindowShown { game } => {
                 if self.starting.as_ref() == Some(&game) {
                     self.starting = None;
+                    self.begin_session(&game, Instant::now());
                     if self.prefs.discord_presence
                         && let Some(name) = self.game(&game).map(|g| g.name.clone())
                     {
@@ -590,6 +633,11 @@ impl Model {
                     return;
                 }
                 self.running = None;
+                let had_window = self.sessions.running() == Some(&game);
+                self.end_session(&game, Instant::now());
+                if had_window && diagnosis.is_none() {
+                    self.effects.push(Effect::BackUpSaves(game.clone()));
+                }
                 self.effects.push(Effect::Presence(None));
                 self.reload_trophies(&game);
                 if self.starting.as_ref() == Some(&game) {
@@ -636,6 +684,11 @@ impl Model {
                 self.toast(text, Icon::X_CIRCLE);
             }
         }
+    }
+
+    /// The game is starting or running: its files are in use.
+    pub fn is_active(&self, id: &GameId) -> bool {
+        self.starting.as_ref() == Some(id) || self.running.as_ref() == Some(id)
     }
 
     pub fn unlock(&mut self, id: &GameId) {
@@ -686,6 +739,11 @@ impl Model {
 
     pub fn play(&mut self, id: &GameId) {
         if self.prefs.games_folder.is_none() || self.starting.is_some() || self.running.is_some() {
+            return;
+        }
+        if self.saves_busy.as_ref() == Some(id) {
+            let text = Extra::SavesBusy.text(self.language()).to_owned();
+            self.toast(text, Icon::WARNING);
             return;
         }
         self.diagnoses.remove(id);
@@ -966,6 +1024,7 @@ impl Onboarding {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::time::Duration;
 
     use super::*;
     use crate::app::pipeline::{Pipeline, PipelineContext, SimPipeline};
@@ -1238,6 +1297,114 @@ mod tests {
         assert_eq!(m.state_of(&g), GameState::Installed { outdated: false });
         assert!(m.diagnoses.contains_key(&id));
         assert!(m.effects.contains(&Effect::RestoreWindow));
+    }
+
+    fn playtime_of(m: &Model, id: &GameId) -> (u64, u32) {
+        let time = m.prefs.playtime(id);
+        (time.seconds, time.sessions)
+    }
+
+    #[test]
+    fn playtime_counts_from_the_window_and_adds_up_over_sessions() {
+        let g = game("a", Some("v1"), ExecutableKind::Elf);
+        let id = g.id.clone();
+        let mut m = model_with(vec![g]);
+        let t0 = Instant::now();
+        assert_eq!(playtime_of(&m, &id), (0, 0));
+        // Pressing Play and the splash count for nothing: the clock starts at the window.
+        m.play(&id);
+        m.on_pipeline(PipelineEvent::Spawned { game: id.clone() });
+        assert_eq!(playtime_of(&m, &id), (0, 0));
+        m.begin_session(&id, t0);
+        assert_eq!(playtime_of(&m, &id), (0, 1));
+        m.end_session(&id, t0 + Duration::from_secs(600));
+        assert_eq!(playtime_of(&m, &id), (600, 1));
+        m.begin_session(&id, t0 + Duration::from_secs(5000));
+        m.end_session(&id, t0 + Duration::from_secs(5090));
+        assert_eq!(playtime_of(&m, &id), (690, 2));
+    }
+
+    #[test]
+    fn a_launcher_that_closes_mid_game_keeps_what_the_checkpoints_saw() {
+        let g = game("a", Some("v1"), ExecutableKind::Elf);
+        let id = g.id.clone();
+        let mut m = model_with(vec![g]);
+        let t0 = Instant::now();
+        m.begin_session(&id, t0);
+        m.checkpoint(t0 + Duration::from_secs(30));
+        assert_eq!(playtime_of(&m, &id), (0, 1), "not due yet");
+        m.checkpoint(t0 + Duration::from_secs(61));
+        m.checkpoint(t0 + Duration::from_secs(90));
+        m.checkpoint(t0 + Duration::from_secs(125));
+        // The launcher is gone here: the model is dropped without an exit.
+        assert_eq!(playtime_of(&m, &id), (125, 1));
+        assert!(m.prefs_dirty);
+    }
+
+    #[test]
+    fn a_crash_still_counts_the_time_before_it() {
+        let g = game("a", Some("v1"), ExecutableKind::Elf);
+        let id = g.id.clone();
+        let mut m = model_with(vec![g]);
+        m.handle(Command::Select);
+        m.on_pipeline(PipelineEvent::Spawned { game: id.clone() });
+        m.on_pipeline(PipelineEvent::WindowShown { game: id.clone() });
+        assert_eq!(playtime_of(&m, &id), (0, 1));
+        // Back-dated: the session began a quarter of an hour ago.
+        m.sessions
+            .begin(id.clone(), Instant::now() - Duration::from_secs(900));
+        m.on_pipeline(PipelineEvent::Exited {
+            game: id.clone(),
+            diagnosis: Some("The game crashed (0xC0000005).".into()),
+        });
+        let (seconds, sessions) = playtime_of(&m, &id);
+        assert!((900..=905).contains(&seconds), "{seconds}");
+        assert_eq!(sessions, 1);
+        assert!(m.sessions.running().is_none());
+    }
+
+    #[test]
+    fn a_clean_exit_asks_for_a_backup_but_a_crash_or_no_window_does_not() {
+        let backs_up = |m: &Model| {
+            m.effects
+                .iter()
+                .any(|e| matches!(e, Effect::BackUpSaves(_)))
+        };
+        let g = game("a", Some("v1"), ExecutableKind::Elf);
+        let id = g.id.clone();
+        for (window, diagnosis, expected) in [
+            (true, None, true),
+            (true, Some("The game crashed.".to_owned()), false),
+            (false, None, false),
+        ] {
+            let mut m = model_with(vec![g.clone()]);
+            m.play(&id);
+            m.on_pipeline(PipelineEvent::Spawned { game: id.clone() });
+            if window {
+                m.on_pipeline(PipelineEvent::WindowShown { game: id.clone() });
+            }
+            m.effects.clear();
+            m.on_pipeline(PipelineEvent::Exited {
+                game: id.clone(),
+                diagnosis,
+            });
+            assert_eq!(backs_up(&m), expected, "window {window}");
+        }
+    }
+
+    #[test]
+    fn a_game_that_never_showed_a_window_has_no_playtime() {
+        let g = game("a", Some("v1"), ExecutableKind::Elf);
+        let id = g.id.clone();
+        let mut m = model_with(vec![g]);
+        m.play(&id);
+        m.on_pipeline(PipelineEvent::Spawned { game: id.clone() });
+        m.on_pipeline(PipelineEvent::Exited {
+            game: id.clone(),
+            diagnosis: None,
+        });
+        assert_eq!(playtime_of(&m, &id), (0, 0));
+        assert!(!m.prefs.playtime(&id).is_played());
     }
 
     #[test]

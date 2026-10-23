@@ -10,7 +10,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 
 use anyps5_core::events::{CancelToken, CoreEvent, Notifier};
 use anyps5_core::library::{self, Game, LibraryWatcher};
-use anyps5_core::paths::{self, GameId};
+use anyps5_core::paths::{self, AppPaths, GameId};
+use anyps5_core::saves::{AFTER_PLAYING_EVERY, Reason, SaveData};
 use anyps5_core::settings::{ConsoleLanguage, Preferences};
 use anyps5_core::trophies::{Trophies, TrophyWatcher};
 use egui::Context;
@@ -102,6 +103,22 @@ impl Services {
                 let bytes = library::folder_size(&folder, &CancelToken::new());
                 let _ = tx.send(CoreEvent::SizeMeasured { game: id, bytes });
                 notify();
+            })
+            .ok();
+    }
+
+    /// Backs up a game's saves after it ended, unless the last backup is under an hour old. Quiet:
+    /// a failure is only logged, and nothing comes back.
+    pub fn back_up_saves(&self, game: &Game, root: &Path, paths: &AppPaths) {
+        let copy = paths::unlocked_copy_dir(root, &game.title_id, &game.id);
+        let saves = SaveData::for_title(paths, &game.title_id, copy);
+        std::thread::Builder::new()
+            .name("saves".into())
+            .spawn(move || {
+                match saves.backup_unless_recent(Reason::AfterPlaying, AFTER_PLAYING_EVERY) {
+                    Ok(_) => {}
+                    Err(error) => tracing::warn!("cannot back up the saves: {error}"),
+                }
             })
             .ok();
     }

@@ -112,6 +112,14 @@ _Avoid_: Button (sticks and wheels are not buttons)
 The numeric input settings of a game: stick deadzones, mouse-as-right-stick response, keyboard ramps.
 _Avoid_: Sensitivity (one of its values)
 
+**Session**:
+One run of a game as the launcher saw it: from the moment the game's first window showed to its exit. A game that exits before a window shows has no session.
+_Avoid_: Run, round
+
+**Playtime**:
+The total time of a game's sessions and how many there were, kept per game in the preferences. It is added to while the game runs, so a crash or a closed launcher keeps what was seen. The home screen shows it as "Played".
+_Avoid_: Time played (in code), hours, uptime
+
 **Shared settings**:
 A game's settings exported to a file so another player can import them.
 _Avoid_: Preset, profile
@@ -123,6 +131,20 @@ _Avoid_: Account, user
 **Input profile**:
 An input file the engine reads for one title ID, beside the shared input file. Not used by the launcher yet.
 _Avoid_: Controls (the launcher's own layout)
+
+### Save data
+
+**Save data**:
+What a game keeps of the player's progress in its unlocked copy: its saves in `_sd` and `_sd_mem`, and its trophies in `_trophy`. An unlock again carries it over; removing the copy deletes it.
+_Avoid_: Saves (alone, for the folders), profile
+
+**Backup**:
+A zip of a game's save data under the launcher's data folder, named by when and why it was made. The newest ten of a game are kept, those made after playing going first. A backup is made by the player, before an unlock again, before a removal, before a restore and, at most once an hour, after a game ends well.
+_Avoid_: Snapshot, save game
+
+**Restore**:
+Put a backup back in place of the game's save data. It refuses while the game runs, checks the zip before it changes anything, and backs up the current state first, so it can be undone.
+_Avoid_: Load, roll back, import
 
 ### Trophies
 

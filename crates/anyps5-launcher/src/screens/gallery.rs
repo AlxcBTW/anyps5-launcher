@@ -4,8 +4,9 @@
 //! ```text
 //! anyps5-launcher --gallery=settings|settings1..6|game-settings|confirm|controls|controls-capture|
 //!                           controls-end|advanced|trophies|banner|start|unlocking|log|report|library|
-//!                           about-update|behavior-links|toolkit|toolkit-update|toolkit-pinned|toolkit-local|
-//!                           recommended|recommended-warning|whats-new|whats-new-loading
+//!                           about-update|behavior-links|toolkit|toolkit-update|toolkit-newer|toolkit-pinned|toolkit-local|
+//!                           recommended|recommended-warning|whats-new|whats-new-loading|
+//!                           saves|saves-empty|restore
 //!                 [--screenshot=out.png] [--size=WxH] [--tr]
 //! ```
 //!
@@ -37,6 +38,7 @@ use crate::screens::game_settings::{
 use crate::screens::library::{LibraryData, LibraryEntry, LibraryGrid, StateText};
 use crate::screens::log::{LogData, LogView, ReviewData};
 use crate::screens::recommended::{RecommendedData, RecommendedPanel};
+use crate::screens::saves::{RestorePanel, SavesData, SavesPanel};
 use crate::screens::settings::{
     LauncherUpdate, SettingsEnv, SettingsPanel, UpdateState, apply_preferences,
 };
@@ -87,12 +89,19 @@ pub enum ScreenPage {
     RecommendedWarning,
     WhatsNew,
     WhatsNewLoading,
+    /// The backups of the saves of the invented game: three of them, or none.
+    Saves,
+    SavesEmpty,
+    /// The question before one is put back.
+    Restore,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolkitLook {
     Stable,
     Update,
+    /// A toolkit newer than the launcher was tested with: its note hangs under the header.
+    Newer,
     Pinned,
     Local,
 }
@@ -118,18 +127,38 @@ pub fn parse(name: &str) -> Option<ScreenPage> {
         "behavior-links" => ScreenPage::BehaviourLinks,
         "toolkit" => ScreenPage::Toolkit(ToolkitLook::Stable),
         "toolkit-update" => ScreenPage::Toolkit(ToolkitLook::Update),
+        "toolkit-newer" => ScreenPage::Toolkit(ToolkitLook::Newer),
         "toolkit-pinned" => ScreenPage::Toolkit(ToolkitLook::Pinned),
         "toolkit-local" => ScreenPage::Toolkit(ToolkitLook::Local),
         "recommended" => ScreenPage::Recommended,
         "recommended-warning" => ScreenPage::RecommendedWarning,
         "whats-new" => ScreenPage::WhatsNew,
         "whats-new-loading" => ScreenPage::WhatsNewLoading,
+        "saves" => ScreenPage::Saves,
+        "saves-empty" => ScreenPage::SavesEmpty,
+        "restore" => ScreenPage::Restore,
         other => {
             let n: usize = other.strip_prefix("settings")?.parse().ok()?;
             (n < crate::screens::settings::Category::ALL.len())
                 .then_some(ScreenPage::Settings(n))?
         }
     })
+}
+
+/// Three backups of the invented game: one before an unlock, a manual one, one after playing.
+fn sample_backups() -> Vec<anyps5_core::saves::Backup> {
+    use anyps5_core::saves::{Backup, Reason};
+    let backup = |created: i64, reason: Reason, bytes: u64| Backup {
+        path: std::path::PathBuf::new(),
+        created,
+        reason,
+        bytes,
+    };
+    vec![
+        backup(1_792_677_900, Reason::BeforeUnlock, 3_024_877),
+        backup(1_792_591_200, Reason::AfterPlaying, 2_980_112),
+        backup(1_792_245_600, Reason::Manual, 412_600),
+    ]
 }
 
 /// What the catalogue could say about the invented game: two changes, or only a warning.
@@ -369,6 +398,8 @@ pub struct ScreenGallery {
     settings: SettingsPanel,
     game_panel: GameSettingsPanel,
     uninstall: UninstallPanel,
+    saves: SavesPanel,
+    restore: RestorePanel,
     recommended: RecommendedPanel,
     whats_new: WhatsNewPanel,
     notes: Published,
@@ -401,6 +432,7 @@ impl ScreenGallery {
             match look {
                 ToolkitLook::Stable => {}
                 ToolkitLook::Update => update = UpdateState::Available("0.1.4".into()),
+                ToolkitLook::Newer => toolkit_version = "0.1.9-c0ffee".into(),
                 ToolkitLook::Pinned => {
                     prefs.toolkit_pinned = Some("v0.1.2".into());
                     toolkit_version = "0.1.2-9d1e47".into();
@@ -431,6 +463,8 @@ impl ScreenGallery {
             settings: SettingsPanel::default(),
             game_panel: GameSettingsPanel::default(),
             uninstall: UninstallPanel::default(),
+            saves: SavesPanel::default(),
+            restore: RestorePanel::default(),
             controls: ControlsPanel::default(),
             game_input: sample_game_input(),
             community: sample_community(),
@@ -542,6 +576,7 @@ impl ScreenGallery {
                 resolutions: &resolutions,
                 trophies: Some(progress),
                 installed: true,
+                saves: Some(3),
                 recommended: Some(RecommendedRow {
                     changes: 1,
                     needed: true,
@@ -556,6 +591,29 @@ impl ScreenGallery {
             self.game_panel.show(shell, &ctx, &events, &mut data);
         }
         self.uninstall.show(shell, &ctx, &events, language, accent);
+        {
+            let backups = if self.page == ScreenPage::SavesEmpty {
+                Vec::new()
+            } else {
+                sample_backups()
+            };
+            let data = SavesData {
+                title: name,
+                backups: &backups,
+                has_saves: true,
+                running: false,
+                keep: anyps5_core::saves::KEEP,
+                language,
+                accent,
+            };
+            self.saves.show(shell, &ctx, &events, &data);
+            let stamp = backups
+                .first()
+                .map(crate::screens::saves::stamp)
+                .unwrap_or_default();
+            self.restore
+                .show(shell, &ctx, &events, &stamp, language, accent);
+        }
         {
             let plan = sample_plan(matches!(self.page, ScreenPage::RecommendedWarning));
             let data = RecommendedData {
@@ -663,6 +721,8 @@ impl ScreenGallery {
             ScreenPage::Settings(n) => self.settings.open_at(n, n == 0),
             ScreenPage::GameSettings => self.game_panel.open_row(3),
             ScreenPage::Confirm => self.uninstall.open(),
+            ScreenPage::Saves | ScreenPage::SavesEmpty => self.saves.open(),
+            ScreenPage::Restore => self.restore.open(),
             ScreenPage::Controls => self.controls.open(),
             ScreenPage::ControlsCapture => {
                 self.controls.open_row(3);

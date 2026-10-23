@@ -433,6 +433,13 @@ pub fn apply_scene(app: &mut LauncherApp, scene: Scene, games: Vec<Game>) {
             crate::app::model::SizeState::Known(8_390_000_000 + i as u64 * 1_730_000_000),
         );
     }
+    // The first two have been played: a made-up 45 minutes and 12 hours; the rest never.
+    m.edit_prefs(|p| {
+        for (i, seconds) in [(0, 45 * 60), (1, 12 * 3600 + 34 * 60)] {
+            p.count_session(&ids[at(i)]);
+            p.add_playtime(&ids[at(i)], seconds);
+        }
+    });
     let trophy_game = m.games[at(1)].clone();
     m.trophies
         .insert(trophy_game.id.clone(), make_trophies(&trophy_game, 8));
