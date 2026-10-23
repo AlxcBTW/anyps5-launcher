@@ -20,6 +20,7 @@ use crate::app::clock;
 use crate::app::overlay::Overlay;
 use crate::app::pipeline::{PipelineCommand, PipelineEvent, UnlockStep};
 use crate::app::playtime::{Counted, Sessions};
+use crate::screens::strings::Extra;
 use crate::ui::focus::{HomeContext, HomeFocus, HomeIntent, PanelNav};
 use crate::ui::i18n::{Arg, Key, Language};
 use crate::ui::icons::Icon;
@@ -217,6 +218,8 @@ pub struct Model {
 
     /// The clock of the running game's playtime.
     sessions: Sessions,
+    /// The game whose saves a backup or restore is working on: it is not started meanwhile.
+    pub saves_busy: Option<GameId>,
     trophies_read: HashSet<GameId>,
     last_scan: f64,
     started_without_window: bool,
@@ -257,6 +260,7 @@ impl Model {
             trophy_banners: Vec::new(),
             effects: Vec::new(),
             sessions: Sessions::default(),
+            saves_busy: None,
             trophies_read: HashSet::new(),
             last_scan: f64::NEG_INFINITY,
             started_without_window: false,
@@ -735,6 +739,11 @@ impl Model {
 
     pub fn play(&mut self, id: &GameId) {
         if self.prefs.games_folder.is_none() || self.starting.is_some() || self.running.is_some() {
+            return;
+        }
+        if self.saves_busy.as_ref() == Some(id) {
+            let text = Extra::SavesBusy.text(self.language()).to_owned();
+            self.toast(text, Icon::WARNING);
             return;
         }
         self.diagnoses.remove(id);

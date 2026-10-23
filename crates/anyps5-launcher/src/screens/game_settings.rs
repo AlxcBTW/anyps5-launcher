@@ -485,9 +485,15 @@ impl UninstallPanel {
             }
         }
         let mut rows = build();
+        // The saves go with the copy, so the question says they are kept first.
+        let ask = format!(
+            "{} {}",
+            language.text(Key::UninstallConfirm),
+            Extra::UninstallBacksUp.text(language)
+        );
         let view = SideView {
             title: language.text(Key::Uninstall),
-            subtitle: Some(language.text(Key::UninstallConfirm)),
+            subtitle: Some(&ask),
             list_id: "uninstall-rows",
             nav: &self.side.nav,
             accent,

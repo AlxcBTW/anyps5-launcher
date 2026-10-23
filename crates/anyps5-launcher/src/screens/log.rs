@@ -6,7 +6,7 @@
 //! * [`diagnosis_summary`]: the pipeline's `Diagnosis` as a sentence in the launcher's language.
 //! * [`save_report_with_dialog`]: the report text goes through a native save dialog.
 //! * [`ReviewData`]: the same view shows the text of a report to AnyPS5 before the browser opens
-//!   on the issue form (docs/DESIGN.md 5.19); its buttons are "Open GitHub", "Save Report" and
+//!   on the issue form (docs/DESIGN.md 5.19); its buttons are "Open on GitHub", "Save Report" and
 //!   "Cancel".
 
 use std::path::{Path, PathBuf};
@@ -128,7 +128,7 @@ pub enum LogAction {
     MakeReport,
     /// "Save Report" of the review: write the report as a file.
     SaveReport,
-    /// "Open GitHub" of the review: copy what is to be pasted and open the form.
+    /// "Open on GitHub" of the review: copy what is to be pasted and open the form.
     OpenReport,
 }
 

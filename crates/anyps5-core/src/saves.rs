@@ -93,6 +93,14 @@ pub enum SavesError {
     /// The zip cannot be read, fails its checksums or holds something else than save folders.
     #[error("the backup is damaged")]
     Corrupt,
+    /// The swap began and could not finish: the save folders may be missing or half replaced.
+    /// `kept`: what they held before is in the newest backup.
+    #[error("the restore stopped part way: {source}")]
+    Incomplete {
+        kept: bool,
+        #[source]
+        source: io::Error,
+    },
     #[error("{context}: {source}")]
     Io {
         context: &'static str,
@@ -254,12 +262,16 @@ impl SaveData {
         };
         for name in FOLDERS {
             let current = self.copy.join(name);
+            let stopped = |source| SavesError::Incomplete {
+                kept: safety.is_some(),
+                source,
+            };
             if current.exists() {
-                fsx::remove_tree_retry(&current).map_err(io_error("remove the current saves"))?;
+                fsx::remove_tree_retry(&current).map_err(stopped)?;
             }
             let unpacked = staging.join(name);
             if unpacked.is_dir() {
-                fsx::rename_retry(&unpacked, &current).map_err(io_error("put the saves back"))?;
+                fsx::rename_retry(&unpacked, &current).map_err(stopped)?;
             }
         }
         Ok(safety)

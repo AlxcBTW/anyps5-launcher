@@ -52,6 +52,13 @@ impl SavesPanel {
         self.side.open_at(0);
     }
 
+    /// Opens on the backup at `index` (coming back from the question about it).
+    pub fn open_backup(&mut self, data: &SavesData<'_>, index: usize) {
+        let first = rows::position(&build_rows(data), "restore").unwrap_or(0);
+        self.side
+            .open_at(first + index.min(data.backups.len().saturating_sub(1)));
+    }
+
     pub fn close(&mut self) {
         self.side.close();
     }
@@ -100,13 +107,17 @@ impl SavesPanel {
         }
         if self.side.is_open() {
             let rows = build_rows(data);
-            let driven = rows::drive(shell, &mut self.side.nav, &rows, &side::commands(events));
-            for change in &driven.changes {
-                self.handle(change, data, &mut actions);
-            }
-            if driven.close {
-                self.side.close();
-                actions.push(SavesAction::Close);
+            // One command at a time: a change names the row that was focused when it ran.
+            for command in side::commands(events) {
+                let driven = rows::drive(shell, &mut self.side.nav, &rows, &[command]);
+                for change in &driven.changes {
+                    self.handle(change, data, &mut actions);
+                }
+                if driven.close {
+                    self.side.close();
+                    actions.push(SavesAction::Close);
+                    break;
+                }
             }
         }
         let mut rows = build_rows(data);
@@ -386,7 +397,10 @@ mod tests {
             Some("12.3 MB · Before a restore")
         );
         assert_eq!(rows[3].detail.as_deref(), Some("900 bytes · Manual"));
-        assert_eq!(rows[4].title, "The newest 10 backups are kept.");
+        assert_eq!(
+            rows[4].title,
+            "Up to 10 backups are kept. Backups made after playing go first."
+        );
     }
 
     #[test]

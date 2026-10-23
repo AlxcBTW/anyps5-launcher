@@ -127,10 +127,12 @@ pub struct PanelHost {
     restore: RestorePanel,
     save_view: Option<SaveView>,
     saves_stale: bool,
-    /// A backup or a restore is under way: one at a time.
-    saves_busy: bool,
-    /// The backup the question before a restore is about.
-    pending_restore: Option<Backup>,
+    /// The backup the question before a restore is about, and its place in the list.
+    pending_restore: Option<(usize, Backup)>,
+    /// Its date, kept while the question slides out.
+    restore_stamp: String,
+    /// The backup to land on when the list opens again after the question.
+    saves_return: Option<usize>,
     whats_new: WhatsNewPanel,
     /// The release the notes panel is about, without a leading `v`.
     whats_new_tag: String,
@@ -192,8 +194,9 @@ impl PanelHost {
             restore: RestorePanel::default(),
             save_view: None,
             saves_stale: true,
-            saves_busy: false,
             pending_restore: None,
+            restore_stamp: String::new(),
+            saves_return: None,
             whats_new: WhatsNewPanel::default(),
             whats_new_tag: String::new(),
             settings_return: None,
@@ -549,7 +552,7 @@ impl PanelHost {
                         model.prefs.games_folder.clone(),
                     ) {
                         let backups = model.paths.game_backups_dir(&game.title_id);
-                        self.start_uninstall(&game, root, backups);
+                        self.start_uninstall(&game, root, backups, model.language());
                     }
                 }
             }
@@ -590,13 +593,6 @@ impl PanelHost {
         };
         if wanted && !self.saves.is_active() {
             self.saves_stale = true;
-            self.saves.open();
-        } else if !wanted && self.saves.is_active() {
-            if side_next {
-                self.saves.dismiss();
-            } else {
-                self.saves.close();
-            }
         }
         self.refresh_saves(cx.model, &game);
         let (language, accent) = (cx.model.language(), cx.shell.accent_color());
@@ -615,6 +611,18 @@ impl PanelHost {
             language,
             accent,
         };
+        if wanted && !self.saves.is_active() {
+            match self.saves_return.take() {
+                Some(index) => self.saves.open_backup(&data, index),
+                None => self.saves.open(),
+            }
+        } else if !wanted && self.saves.is_active() {
+            if side_next {
+                self.saves.dismiss();
+            } else {
+                self.saves.close();
+            }
+        }
         for action in self.saves.show(cx.shell, cx.ctx, &events, &data) {
             match action {
                 SavesAction::BackUp if !has_saves => {
@@ -628,7 +636,8 @@ impl PanelHost {
                 }
                 SavesAction::Ask(index) => {
                     if let Some(backup) = backups.get(index) {
-                        self.pending_restore = Some(backup.clone());
+                        self.restore_stamp = saves_screen::stamp(backup);
+                        self.pending_restore = Some((index, backup.clone()));
                         cx.model.switch_overlay(Overlay::ConfirmRestore);
                     }
                 }
@@ -649,24 +658,19 @@ impl PanelHost {
             }
         }
         let (language, accent) = (cx.model.language(), cx.shell.accent_color());
-        let stamp = self
-            .pending_restore
-            .as_ref()
-            .map(saves_screen::stamp)
-            .unwrap_or_default();
+        let stamp = self.restore_stamp.clone();
         for action in self
             .restore
             .show(cx.shell, cx.ctx, &events, &stamp, language, accent)
         {
             let model = &mut *cx.model;
-            if let (RestoreAction::Confirm, Some(backup), Some(game)) = (
-                action,
-                self.pending_restore.take(),
-                model.selected_game().cloned(),
-            ) {
+            let asked = self.pending_restore.take();
+            self.saves_return = asked.as_ref().map(|(index, _)| *index);
+            if let (RestoreAction::Confirm, Some((_, backup)), Some(game)) =
+                (action, asked, model.selected_game().cloned())
+            {
                 self.start_restore(model, &game, backup);
             }
-            self.pending_restore = None;
             // Either answer goes back to the list, where the result shows.
             model.switch_overlay(Overlay::Saves);
         }
@@ -674,13 +678,15 @@ impl PanelHost {
 
     /// Zips the saves on a worker thread.
     fn start_backup(&mut self, model: &mut Model, game: &Game) {
-        if self.saves_busy {
+        if model.saves_busy.is_some() {
+            let text = Extra::SavesBusy.text(model.language());
+            model.toast(text, Icon::INFO);
             return;
         }
         let Some(data) = Self::save_data(model, game) else {
             return;
         };
-        self.saves_busy = true;
+        model.saves_busy = Some(game.id.clone());
         let (tx, ctx) = (self.work_tx.clone(), self.ctx.clone());
         spawn("backup", move || {
             let _ = tx.send(Work::BackedUp(data.backup(Reason::Manual)));
@@ -695,17 +701,18 @@ impl PanelHost {
             model.toast(Extra::SavesRunning.text(language), Icon::WARNING);
             return;
         }
-        if self.saves_busy {
+        if model.saves_busy.is_some() {
+            model.toast(Extra::SavesBusy.text(language), Icon::INFO);
             return;
         }
         let Some(data) = Self::save_data(model, game) else {
             return;
         };
-        self.saves_busy = true;
+        model.saves_busy = Some(game.id.clone());
         let (tx, ctx) = (self.work_tx.clone(), self.ctx.clone());
         spawn("restore", move || {
-            // The model checked that the game is not running; a launch cannot start in between,
-            // as the launcher is the one that starts it and it is waiting for this panel.
+            // The model checked that the game is not running, and it does not start one while
+            // `saves_busy` is set.
             let _ = tx.send(Work::Restored(data.restore(&backup, false)));
             ctx.request_repaint();
         });
@@ -1173,15 +1180,27 @@ impl PanelHost {
     }
 
     /// Deletes the unlocked copy on a worker thread (a game can be tens of gigabytes). Its saves go
-    /// with it, so they are backed up first; that failing does not stop the removal.
-    fn start_uninstall(&mut self, game: &Game, root: PathBuf, backups: PathBuf) {
+    /// with it, so they are backed up first, and when that fails nothing is removed.
+    fn start_uninstall(
+        &mut self,
+        game: &Game,
+        root: PathBuf,
+        backups: PathBuf,
+        language: Language,
+    ) {
         let (tx, ctx) = (self.work_tx.clone(), self.ctx.clone());
         let (title_id, id) = (game.title_id.clone(), game.id.clone());
         spawn("uninstall", move || {
             let copy = anyps5_core::paths::unlocked_copy_dir(&root, &title_id, &id);
             match SaveData::new(copy, backups).backup(Reason::BeforeUninstall) {
                 Ok(_) | Err(SavesError::NothingToSave) => {}
-                Err(error) => tracing::warn!("cannot back up the saves before removing: {error}"),
+                Err(error) => {
+                    tracing::warn!("cannot back up the saves before removing: {error}");
+                    let result = Err(Extra::UninstallNeedsBackup.text(language).to_owned());
+                    let _ = tx.send(Work::Uninstalled { game: id, result });
+                    ctx.request_repaint();
+                    return;
+                }
             }
             let result = unlock::remove_unlocked(&title_id, &id, &root).map_err(|e| e.to_string());
             let _ = tx.send(Work::Uninstalled { game: id, result });
@@ -1224,7 +1243,7 @@ impl PanelHost {
                 }
                 Work::Catalog(catalog) => self.catalog = *catalog,
                 Work::BackedUp(result) => {
-                    self.saves_busy = false;
+                    model.saves_busy = None;
                     self.saves_stale = true;
                     match result {
                         Ok(_) => {
@@ -1237,7 +1256,7 @@ impl PanelHost {
                     }
                 }
                 Work::Restored(result) => {
-                    self.saves_busy = false;
+                    model.saves_busy = None;
                     self.saves_stale = true;
                     match result {
                         Ok(_) => {
@@ -1461,6 +1480,8 @@ fn saves_failure(error: &SavesError, restoring: bool, language: Language) -> &'s
         SavesError::NothingToSave => Extra::SavesNothing,
         SavesError::GameRunning => Extra::SavesRunning,
         SavesError::Corrupt => Extra::SavesCorrupt,
+        SavesError::Incomplete { kept: true, .. } => Extra::SavesRestoreIncomplete,
+        SavesError::Incomplete { kept: false, .. } => Extra::SavesRestoreIncompleteNone,
         SavesError::Io { .. } if restoring => Extra::SavesRestoreFailed,
         SavesError::Io { .. } => Extra::SavesFailed,
     }
@@ -1870,7 +1891,7 @@ mod tests {
             "Close the game to restore a backup."
         );
         assert_eq!(std::fs::read(copy.join("_sd/slot0.sav")).unwrap(), b"LIVE");
-        assert!(!host.saves_busy);
+        assert!(rig.app.model.saves_busy.is_none());
     }
 
     #[test]
@@ -1881,12 +1902,49 @@ mod tests {
         std::fs::write(copy.join("eboot.bin"), b"x").unwrap();
         let root = rig.dir.join("games");
         let backups = rig.app.model.paths.game_backups_dir(&game.title_id);
-        host.start_uninstall(&game, root, backups.clone());
+        host.start_uninstall(&game, root, backups.clone(), Language::English);
         wait_for_toast(&mut host, &mut rig.app.model);
         assert!(!copy.exists());
         let kept = SaveData::new(copy, backups).list();
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].reason, Reason::BeforeUninstall);
+    }
+
+    #[test]
+    fn a_removal_that_cannot_keep_the_saves_does_not_remove_anything() {
+        let mut rig = Rig::new("saves-uninstall-fails");
+        let mut host = PanelHost::new(&rig.ctx, true);
+        let (game, copy) = game_with_save(&mut rig);
+        std::fs::write(copy.join("eboot.bin"), b"x").unwrap();
+        let root = rig.dir.join("games");
+        // A file where the backup folder should be: no backup can be written.
+        let backups = rig.dir.join("not-a-folder");
+        std::fs::write(&backups, b"x").unwrap();
+        host.start_uninstall(&game, root, backups, Language::English);
+        let text = wait_for_toast(&mut host, &mut rig.app.model);
+        assert!(text.starts_with("Could not back up the saves"), "{text}");
+        assert_eq!(std::fs::read(copy.join("_sd/slot0.sav")).unwrap(), b"ONE");
+        assert!(
+            rig.app
+                .model
+                .selected_game()
+                .unwrap()
+                .unlocked_with
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_game_is_not_started_while_its_saves_are_being_worked_on() {
+        let mut rig = Rig::new("saves-busy");
+        let game = rig.app.model.selected_game().cloned().unwrap();
+        rig.app.model.saves_busy = Some(game.id.clone());
+        rig.app.model.play(&game.id);
+        assert!(rig.app.model.starting.is_none());
+        assert_eq!(
+            rig.app.model.toast.as_ref().unwrap().text,
+            "Still working on the saves. Try again in a moment."
+        );
     }
 
     #[test]
@@ -1899,7 +1957,7 @@ mod tests {
         std::fs::create_dir_all(&copy).unwrap();
         std::fs::write(copy.join("eboot.bin"), b"x").unwrap();
         let backups = rig.app.model.paths.game_backups_dir(&game.title_id);
-        host.start_uninstall(&game, root, backups);
+        host.start_uninstall(&game, root, backups, Language::English);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while std::time::Instant::now() < deadline {
             host.poll_work(&mut rig.app.model);

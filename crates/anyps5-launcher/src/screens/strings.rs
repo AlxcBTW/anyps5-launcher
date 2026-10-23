@@ -213,6 +213,16 @@ pub enum Extra {
     SavesRestoreFailed,
     /// Toast.
     SavesCorrupt,
+    /// Added to the removal question.
+    UninstallBacksUp,
+    /// Toast: the removal did not start.
+    UninstallNeedsBackup,
+    /// Toast: the restore stopped part way.
+    SavesRestoreIncomplete,
+    /// Toast: the restore stopped part way, nothing had to be kept.
+    SavesRestoreIncompleteNone,
+    /// Toast: a backup or restore is still under way.
+    SavesBusy,
 }
 
 impl Extra {
@@ -356,9 +366,9 @@ impl Extra {
                 "No backups yet. Back Up Now keeps a copy of your saves and trophies."
             }
             Extra::SavesCaption => "Backups",
-            Extra::SavesKept => "The newest %@ backups are kept.",
+            Extra::SavesKept => "Up to %@ backups are kept. Backups made after playing go first.",
             Extra::SavesReasonManual => "Manual",
-            Extra::SavesReasonUnlock => "Before Unlock Again",
+            Extra::SavesReasonUnlock => "Before unlocking again",
             Extra::SavesReasonRestore => "Before a restore",
             Extra::SavesReasonUninstall => "Before uninstall",
             Extra::SavesReasonPlayed => "After playing",
@@ -369,11 +379,24 @@ impl Extra {
             }
             Extra::SavesRestored => "Saves restored",
             Extra::SavesRunning => "Close the game to restore a backup.",
-            Extra::SavesFailed => "Could not back up the saves",
+            Extra::SavesFailed => {
+                "Could not back up the saves. Check the free disk space and try again."
+            }
             Extra::SavesRestoreFailed => {
                 "Could not restore the backup. Your saves were not changed."
             }
-            Extra::SavesCorrupt => "This backup is damaged. Your saves were not changed.",
+            Extra::SavesCorrupt => {
+                "This backup is damaged. Your saves were not changed. Pick another backup."
+            }
+            Extra::UninstallBacksUp => "Your saves and trophies are backed up first.",
+            Extra::UninstallNeedsBackup => {
+                "Could not back up the saves, so the game was not removed. Check the free disk space and try again."
+            }
+            Extra::SavesRestoreIncomplete => {
+                "The restore did not finish. The saves from before are in the newest backup, Before a restore."
+            }
+            Extra::SavesRestoreIncompleteNone => "The restore did not finish. Try it again.",
+            Extra::SavesBusy => "Still working on the saves. Try again in a moment.",
         }
     }
 
@@ -507,7 +530,7 @@ impl Extra {
             Extra::PlayedMinutes => "%@ dk",
             Extra::PlayedHours => "%@ sa",
             Extra::PlayedHoursMinutes => "%@ sa %@ dk",
-            Extra::SavesTitle => "Kayıt verileri",
+            Extra::SavesTitle => "Kayıt Verileri",
             Extra::SavesNone => "Henüz yedek yok",
             Extra::SavesOne => "1 yedek",
             Extra::SavesCount => "%@ yedek",
@@ -517,22 +540,35 @@ impl Extra {
                 "Henüz yedek yok. Şimdi Yedekle, kayıtlarının ve kupalarının bir kopyasını saklar."
             }
             Extra::SavesCaption => "Yedekler",
-            Extra::SavesKept => "En yeni %@ yedek saklanır.",
+            Extra::SavesKept => {
+                "En fazla %@ yedek saklanır. Oynadıktan sonra alınanlar önce silinir."
+            }
             Extra::SavesReasonManual => "Elle",
-            Extra::SavesReasonUnlock => "Yeniden kilit açmadan önce",
+            Extra::SavesReasonUnlock => "Kilidi yeniden açmadan önce",
             Extra::SavesReasonRestore => "Geri yüklemeden önce",
             Extra::SavesReasonUninstall => "Kaldırmadan önce",
             Extra::SavesReasonPlayed => "Oynadıktan sonra",
             Extra::SavesBackedUp => "Kayıtlar yedeklendi",
             Extra::SavesRestore => "Geri Yükle",
             Extra::SavesRestoreAsk => {
-                "Oyunun şu anki kayıtları ve kupaları, %@ tarihli yedekle değiştirilir. Geri almak için önce şu anki hâli yedeklenir."
+                "Oyunun şu anki kayıtları ve kupaları, %@ tarihli yedekle değiştirilir. Şu anki hâli önce yedeklenir, böylece geri alabilirsin."
             }
             Extra::SavesRestored => "Kayıtlar geri yüklendi",
             Extra::SavesRunning => "Yedeği geri yüklemek için oyunu kapat.",
-            Extra::SavesFailed => "Kayıtlar yedeklenemedi",
+            Extra::SavesFailed => {
+                "Kayıtlar yedeklenemedi. Boş disk alanını kontrol edip yeniden dene."
+            }
             Extra::SavesRestoreFailed => "Yedek geri yüklenemedi. Kayıtların değişmedi.",
-            Extra::SavesCorrupt => "Bu yedek hasarlı. Kayıtların değişmedi.",
+            Extra::SavesCorrupt => "Bu yedek hasarlı. Kayıtların değişmedi. Başka bir yedek seç.",
+            Extra::UninstallBacksUp => "Kayıtların ve kupaların önce yedeklenir.",
+            Extra::UninstallNeedsBackup => {
+                "Kayıtlar yedeklenemedi, bu yüzden oyun kaldırılmadı. Boş disk alanını kontrol edip yeniden dene."
+            }
+            Extra::SavesRestoreIncomplete => {
+                "Geri yükleme tamamlanmadı. Önceki kayıtlar en yeni yedekte, \"Geri yüklemeden önce\"."
+            }
+            Extra::SavesRestoreIncompleteNone => "Geri yükleme tamamlanmadı. Yeniden dene.",
+            Extra::SavesBusy => "Kayıtlar üzerinde hâlâ çalışılıyor. Birazdan yeniden dene.",
         }
     }
 
@@ -547,7 +583,7 @@ impl Extra {
         substitute(self.text(language), args)
     }
 
-    pub const ALL: [Extra; 126] = [
+    pub const ALL: [Extra; 131] = [
         Extra::Toolkit,
         Extra::UpdateCheck,
         Extra::UpdateCheckDetail,
@@ -674,6 +710,11 @@ impl Extra {
         Extra::SavesFailed,
         Extra::SavesRestoreFailed,
         Extra::SavesCorrupt,
+        Extra::UninstallBacksUp,
+        Extra::UninstallNeedsBackup,
+        Extra::SavesRestoreIncomplete,
+        Extra::SavesRestoreIncompleteNone,
+        Extra::SavesBusy,
     ];
 }
 

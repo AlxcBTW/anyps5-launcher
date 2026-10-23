@@ -712,8 +712,8 @@ The launcher keeps the port's structure but trims what read as noise next to the
   What each toolkit release supports is the table in `core::compat`; an older toolkit loses the
   feature (screenshots row, patch resolutions), never the launch.
 - **One way to report a problem.** The game sheet has one row, "Report a Problem" (detail: "Review
-  the report, then save it or open GitHub"), in place of "Make a Report" and "Report to AnyPS5". It
-  opens the review (the log view): Cancel, Save Report and Open GitHub, 12 dp apart, Open GitHub
+  the report, then save it or open it on GitHub"), in place of "Make a Report" and "Report to AnyPS5". It
+  opens the review (the log view): Cancel, Save Report and Open on GitHub, 12 dp apart, Open on GitHub
   the one primary. The log view's own button reads "Report a Problem" and leads to the same review.
   The sentence above the text says both ways out in one line.
 - **Recommended, grouped.** Each reason hangs directly under its `current -> recommended` line
@@ -728,7 +728,9 @@ The launcher keeps the port's structure but trims what read as noise next to the
   neighbour moves aside by the same amount instead of the gap closing to 7 dp. Every row of
   buttons is 12 dp apart (the hero's was 16, the notes header's 14, the onboarding's 18); the
   top bar is one right-to-left strip so its two buttons do the same. Panel rows are a list, not
-  buttons: they keep the 3 dp grow over the 8 dp row gap.
+  buttons: they keep the 3 dp grow over the 8 dp row gap. The room is the one layout motion in the
+  app: the neighbour moves on the same focus spring as the edge it makes room for, so the gap is
+  12 dp in every frame and nothing overlaps.
 - **Commands read as commands.** "Check Now" is its title and icon alone, like "Install the
   Update"; what the last check found hangs under it as a note (`Row::attached`). A detail line
   under a command looked like the description of a status row.
@@ -1277,8 +1279,8 @@ containers; a test keeps the file equal to that output.
 
 A row of the game sheet after "Make a Report" (which still writes the file). It builds the report of
 section 5.13 on a worker thread and shows the text that will be sent in the log view (the same
-full-screen panel: a sentence above it, "Cancel" and "Open GitHub" on the right, Select opens). Nothing
-is sent from the launcher and there is no token: "Open GitHub" opens the browser on
+full-screen panel: a sentence above it, "Cancel" and "Open on GitHub" on the right, Select opens). Nothing
+is sent from the launcher and there is no token: "Open on GitHub" opens the browser on
 `https://github.com/boykopovar/AnyPS5/issues/new?template=bug_report.yml` with the form's fields in
 the query (GitHub fills an issue form from the field ids `summary`, `commit`, `system`, `steps`, `log`,
 `notes`; `title` is the issue's title), and the player presses GitHub's own button. Upstream asks for
