@@ -29,7 +29,7 @@ use crate::paths::AppPaths;
 use crate::toolkit::{self, Asset, ToolkitError};
 
 /// Where the releases live.
-pub const REPOSITORY: &str = "AlxcBTW/anyps5-launcher";
+pub const REPOSITORY: &str = "anyplay-gg/launcher";
 
 const SUMS_NAME: &str = "SHA256SUMS.txt";
 const EXE_PREFIX: &str = "AnyPS5-Launcher-";

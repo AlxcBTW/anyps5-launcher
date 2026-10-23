@@ -8,7 +8,7 @@ This is a port of the macOS launcher from [utkuhalis/AnyPS5-ARM](https://github.
   <img src="docs/media/preview.webp" width="800" alt="The launcher fades in like a PS5, then moves between Minecraft Dungeons II, Sword of the Sea and Hollow Knight: Silksong">
 </p>
 
-<p align="center"><a href="https://github.com/AlxcBTW/anyps5-launcher/releases/download/v0.1.0/AnyPS5-Launcher-Update.mp4"><b>Watch the update video with sound</b></a></p>
+<p align="center"><a href="https://github.com/anyplay-gg/launcher/releases/download/v0.1.0/AnyPS5-Launcher-Update.mp4"><b>Watch the update video with sound</b></a></p>
 
 | | |
 |---|---|
@@ -28,7 +28,7 @@ This is a port of the macOS launcher from [utkuhalis/AnyPS5-ARM](https://github.
 
 ## Download
 
-Get the latest version from the [releases page](https://github.com/AlxcBTW/anyps5-launcher/releases/latest). On Windows it needs 64-bit Windows 10 or 11. There is nothing else to install first.
+Get the latest version from the [releases page](https://github.com/anyplay-gg/launcher/releases/latest). On Windows it needs 64-bit Windows 10 or 11. There is nothing else to install first.
 
 - **`AnyPS5-Launcher-<version>-Setup.exe`** installs the launcher for your user account (no administrator rights). It adds a Start menu entry, an optional desktop shortcut and an uninstaller.
 - **`AnyPS5-Launcher-<version>-x64.exe`** is the same launcher as a single file. Put it anywhere and run it.
