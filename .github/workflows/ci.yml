@@ -87,6 +87,9 @@ jobs:
         run: cargo test --workspace --no-fail-fast
       - name: Release build
         run: cargo build --release
+      # A crate whose licence cannot be read would stop the next release; find it here first.
+      - name: Third-party licences
+        run: tools/notices.sh "$RUNNER_TEMP/THIRD-PARTY-LICENSES.txt"
       # Renders the real UI on a software Vulkan device (lavapipe) in a virtual X server.
       - name: Smoke packages
         run: |

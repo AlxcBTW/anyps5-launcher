@@ -1,11 +1,16 @@
 ; Inno Setup script for the AnyPS5 Launcher (a per-user install: no administrator rights).
-; Build: iscc /DAppVersion=0.1.0 /DExeSource=<path to the release exe> /DOutputDir=<folder> anyps5-launcher.iss
+; Build: iscc /DAppVersion=0.1.0 /DExeSource=<path to the release exe>
+;   /DNoticesSource=<path to THIRD-PARTY-LICENSES.txt from tools/notices.sh> /DOutputDir=<folder>
+;   anyps5-launcher.iss
 
 #ifndef AppVersion
   #error Pass /DAppVersion=<x.y.z>
 #endif
 #ifndef ExeSource
   #error Pass /DExeSource=<path to anyps5-launcher.exe>
+#endif
+#ifndef NoticesSource
+  #error Pass /DNoticesSource=<path to THIRD-PARTY-LICENSES.txt>
 #endif
 #ifndef OutputDir
   #define OutputDir "."
@@ -52,6 +57,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#ExeSource}"; DestDir: "{app}"; DestName: "{#AppExe}"; Flags: ignoreversion
+Source: "..\..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+Source: "{#NoticesSource}"; DestDir: "{app}"; DestName: "THIRD-PARTY-LICENSES.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"

@@ -21,7 +21,35 @@ env:
   ANYPLAY_DEFAULT_CLOUD: ${{ vars.ANYPLAY_DEFAULT_CLOUD }}
 
 jobs:
+  # The licences of every third-party crate in the launcher and the net service it carries. Every
+  # package ships the file, and the release carries it beside the portable exe.
+  notices:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: launcher
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          path: launcher
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: anyplay-gg/network
+          ref: ${{ env.NETWORK_REF }}
+          path: network
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: Third-party licences
+        run: tools/notices.sh dist/THIRD-PARTY-LICENSES.txt
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: dist-notices
+          path: launcher/dist/THIRD-PARTY-LICENSES.txt
+          if-no-files-found: error
+
   windows:
+    needs: notices
     runs-on: windows-latest
     defaults:
       run:
@@ -101,10 +129,16 @@ jobs:
           if (-not (Test-Path "$dir/ISCC.exe")) { throw 'Inno Setup did not install' }
           "INNO_DIR=$dir" >> $env:GITHUB_ENV
 
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: dist-notices
+          path: launcher/notices
+
       - name: Installer
         run: |
           $exe = (Resolve-Path "dist/AnyPS5-Launcher-${{ steps.version.outputs.version }}-x64.exe").Path
-          & "$env:INNO_DIR/ISCC.exe" "/DAppVersion=${{ steps.version.outputs.version }}" "/DExeSource=$exe" "/DOutputDir=$((Resolve-Path dist).Path)" tools/installer/anyps5-launcher.iss
+          $notices = (Resolve-Path notices/THIRD-PARTY-LICENSES.txt).Path
+          & "$env:INNO_DIR/ISCC.exe" "/DAppVersion=${{ steps.version.outputs.version }}" "/DExeSource=$exe" "/DNoticesSource=$notices" "/DOutputDir=$((Resolve-Path dist).Path)" tools/installer/anyps5-launcher.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
 
       - uses: actions/upload-artifact@v7.0.2
@@ -116,6 +150,7 @@ jobs:
   # Built on the oldest runner image still offered: a binary links against the glibc it is built
   # with, and an older one runs on more distributions.
   linux:
+    needs: notices
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -166,8 +201,13 @@ jobs:
       - name: Build
         run: cargo build --release --locked
 
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: dist-notices
+          path: launcher/notices
+
       - name: Package
-        run: tools/linux/package.sh "${{ steps.version.outputs.version }}" target/release/anyps5-launcher dist
+        run: tools/linux/package.sh "${{ steps.version.outputs.version }}" target/release/anyps5-launcher notices/THIRD-PARTY-LICENSES.txt dist
 
       - name: Check the AppImage
         run: |
@@ -187,7 +227,7 @@ jobs:
 
   # One checksum file for everything, and the release itself (tags only).
   publish:
-    needs: [windows, linux]
+    needs: [notices, windows, linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8.0.2
@@ -199,7 +239,7 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: |
-          sha256sum -b AnyPS5-Launcher-* > SHA256SUMS.txt
+          sha256sum -b AnyPS5-Launcher-* THIRD-PARTY-LICENSES.txt > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v7.0.2
@@ -219,4 +259,5 @@ jobs:
             dist/AnyPS5-Launcher-${{ needs.windows.outputs.version }}-Setup.exe
             dist/AnyPS5-Launcher-${{ needs.windows.outputs.version }}-x86_64.AppImage
             dist/AnyPS5-Launcher-${{ needs.windows.outputs.version }}-linux-x86_64.tar.gz
+            dist/THIRD-PARTY-LICENSES.txt
             dist/SHA256SUMS.txt
