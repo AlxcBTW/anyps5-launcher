@@ -289,15 +289,15 @@ impl Extra {
             Extra::LauncherUpdateFailed => {
                 "Could not install the launcher update. Download it from GitHub instead."
             }
-            Extra::Links => "Open AnyPS5 Links with This Launcher",
+            Extra::Links => "Open AnyPlay Links with This Launcher",
             Extra::LinksDetail => {
-                "Links on websites and in messages open here, and folders get an \"Open with AnyPS5\" entry."
+                "Links on websites and in messages open here, and folders get an \"Open with AnyPlay Launcher\" entry."
             }
             Extra::LinksDetailOther => {
                 "Another copy of the launcher opens them now. Turn this on to use this one."
             }
             Extra::LinksFailed => "Could not change the link settings. Try again.",
-            Extra::LinkInvalid => "This is not a valid AnyPS5 link.",
+            Extra::LinkInvalid => "This is not a valid AnyPlay link.",
             Extra::LinkNoGame => "%@ is not in your library. Check the games folder in Settings.",
             Extra::LinkNotADump => {
                 "This folder is not a game dump. Open the folder that holds eboot.bin."
@@ -459,15 +459,15 @@ impl Extra {
             Extra::LauncherUpdateFailed => {
                 "Başlatıcı güncellemesi kurulamadı. Bunun yerine GitHub'dan indir."
             }
-            Extra::Links => "AnyPS5 bağlantılarını bu başlatıcıyla aç",
+            Extra::Links => "AnyPlay bağlantılarını bu başlatıcıyla aç",
             Extra::LinksDetail => {
-                "Web sitelerindeki ve mesajlardaki bağlantılar burada açılır, klasörlere \"AnyPS5 ile aç\" girişi eklenir."
+                "Web sitelerindeki ve mesajlardaki bağlantılar burada açılır, klasörlere \"AnyPlay Launcher ile aç\" girişi eklenir."
             }
             Extra::LinksDetailOther => {
                 "Şu an bunları başka bir başlatıcı kopyası açıyor. Bunu kullanmak için aç."
             }
             Extra::LinksFailed => "Bağlantı ayarları değiştirilemedi. Yeniden dene.",
-            Extra::LinkInvalid => "Bu geçerli bir AnyPS5 bağlantısı değil.",
+            Extra::LinkInvalid => "Bu geçerli bir AnyPlay bağlantısı değil.",
             Extra::LinkNoGame => "%@ kitaplığında yok. Ayarlar'daki oyun klasörünü denetle.",
             Extra::LinkNotADump => "Bu klasör bir oyun dökümü değil. eboot.bin içeren klasörü aç.",
             Extra::LinkOutside => "%@ oyun klasörünün dışında. Eklemek için oraya taşı.",
@@ -739,6 +739,16 @@ pub fn playtime_text(seconds: u64, language: Language) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_text_names_the_old_product() {
+        for extra in Extra::ALL {
+            for language in Language::ALL {
+                let text = extra.text(language);
+                assert!(!text.contains("AnyPS5"), "{extra:?} {language:?}: {text}");
+            }
+        }
+    }
 
     #[test]
     fn every_text_exists_in_both_languages() {

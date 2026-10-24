@@ -103,14 +103,16 @@ const fn elsewhere(language: Language, key: Key) -> Option<&'static str> {
         }
         (Language::English, Key::StepRelink) => "Converting for Linux",
         (Language::English, Key::ShowInFinder) => "Show in file manager",
-        (Language::English, Key::AboutText) => "AnyPS5 runs PS5 games natively on Linux.",
+        (Language::English, Key::AboutText) => {
+            "AnyPlay Launcher runs PS5 games natively on Linux with AnyPS5."
+        }
         (Language::Turkish, Key::StartingText) => {
             "Oyun açılıyor, lütfen bekle. İlk açılış, oyun Linux için hazırlanırken birkaç dakika sürebilir."
         }
         (Language::Turkish, Key::StepRelink) => "Linux için çevriliyor",
         (Language::Turkish, Key::ShowInFinder) => "Dosya yöneticisinde göster",
         (Language::Turkish, Key::AboutText) => {
-            "AnyPS5, PS5 oyunlarını Linux'ta yerel olarak çalıştırır."
+            "AnyPlay Launcher, PS5 oyunlarını AnyPS5 ile Linux'ta yerel olarak çalıştırır."
         }
         _ => return None,
     })
@@ -270,8 +272,33 @@ mod tests {
         );
         assert_eq!(
             Language::English.text(Key::AboutText),
-            "AnyPS5 runs PS5 games natively on Windows."
+            "AnyPlay Launcher runs PS5 games natively on Windows with AnyPS5."
         );
+    }
+
+    #[test]
+    fn no_visible_string_uses_the_old_name() {
+        for key in Key::ALL {
+            if key.is_macos_only() {
+                continue;
+            }
+            for language in Language::ALL {
+                let text = language.text(key);
+                assert!(
+                    !text.contains("AnyPS5 Launcher"),
+                    "{} ({language:?}): {text}",
+                    key.name()
+                );
+                // AnyPS5 is still the engine (the About text) and the store folder of games.
+                if !matches!(key, Key::AboutText | Key::InstalledSize) {
+                    assert!(
+                        !text.contains("AnyPS5"),
+                        "{} ({language:?}) names AnyPS5: {text}",
+                        key.name()
+                    );
+                }
+            }
+        }
     }
 
     #[test]

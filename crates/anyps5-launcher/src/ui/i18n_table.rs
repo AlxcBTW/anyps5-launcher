@@ -656,7 +656,7 @@ impl Key {
 
     const fn english(self) -> &'static str {
         match self {
-            Key::Welcome => "Welcome to AnyPS5",
+            Key::Welcome => "Welcome to AnyPlay",
             Key::WelcomeSubtitle => "Play PS5 games on your PC. Let's set a few things up first.",
             Key::ChooseLanguage => "Language",
             Key::ChooseTheme => "Pick a theme",
@@ -743,7 +743,7 @@ impl Key {
             Key::Rescan => "Scan Again",
             Key::InstalledSize => "Unlocked games are kept in the .AnyPS5 folder inside your games folder.",
             Key::About => "About",
-            Key::AboutText => "AnyPS5 runs PS5 games natively on Windows.",
+            Key::AboutText => "AnyPlay Launcher runs PS5 games natively on Windows with AnyPS5.",
             Key::ToolkitVersion => "Toolkit",
             Key::ProfileName => "Profile Name",
             Key::Behaviour => "Behavior",
@@ -859,7 +859,7 @@ impl Key {
             Key::SettingsExported => "Settings exported",
             Key::SettingsImported => "Settings imported",
             Key::SettingsImportedOther => "Settings from %@ imported",
-            Key::SettingsFileFailed => "This is not an AnyPS5 settings file",
+            Key::SettingsFileFailed => "This is not an AnyPlay settings file",
             Key::StickModifier => "Slow Movement",
             Key::DiagnosisMissingModule => "Missing module: %@. Unlocking the game again may fix it.",
             Key::DiagnosisUnsupported => "The game asked for a system function that is not supported yet: %@",
@@ -873,7 +873,7 @@ impl Key {
 
     const fn turkish(self) -> &'static str {
         match self {
-            Key::Welcome => "AnyPS5'e hoş geldin",
+            Key::Welcome => "AnyPlay'e hoş geldin",
             Key::WelcomeSubtitle => "PS5 oyunlarını PC'nde oyna. Önce birkaç şeyi ayarlayalım.",
             Key::ChooseLanguage => "Dil",
             Key::ChooseTheme => "Bir tema seç",
@@ -960,7 +960,7 @@ impl Key {
             Key::Rescan => "Yeniden Tara",
             Key::InstalledSize => "Kilidi açılan oyunlar oyun klasörünün içindeki .AnyPS5 klasöründe saklanır.",
             Key::About => "Hakkında",
-            Key::AboutText => "AnyPS5, PS5 oyunlarını Windows'ta yerel olarak çalıştırır.",
+            Key::AboutText => "AnyPlay Launcher, PS5 oyunlarını AnyPS5 ile Windows'ta yerel olarak çalıştırır.",
             Key::ToolkitVersion => "Araç seti",
             Key::ProfileName => "Profil Adı",
             Key::Behaviour => "Davranış",
@@ -1076,7 +1076,7 @@ impl Key {
             Key::SettingsExported => "Ayarlar dışa aktarıldı",
             Key::SettingsImported => "Ayarlar içe aktarıldı",
             Key::SettingsImportedOther => "%@ ayarları içe aktarıldı",
-            Key::SettingsFileFailed => "Bu dosya bir AnyPS5 ayar dosyası değil",
+            Key::SettingsFileFailed => "Bu dosya bir AnyPlay ayar dosyası değil",
             Key::StickModifier => "Yavaş Hareket",
             Key::DiagnosisMissingModule => "Eksik modül: %@. Kilidi yeniden açmak çözebilir.",
             Key::DiagnosisUnsupported => "Oyun henüz desteklenmeyen bir sistem fonksiyonu istedi: %@",
