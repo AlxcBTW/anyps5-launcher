@@ -138,6 +138,8 @@ pub enum OnlineText {
     // Settings
     RecordNetwork,
     RecordNetworkDetail,
+    RelayOnly,
+    RelayOnlyNote,
 }
 
 impl OnlineText {
@@ -274,6 +276,10 @@ impl OnlineText {
             OnlineText::RecordNetworkDetail => {
                 "Games write what they ask the network for to the Logs folder, to help build online support. Nothing is uploaded."
             }
+            OnlineText::RelayOnly => "Hide Your IP Address",
+            OnlineText::RelayOnlyNote => {
+                "Other players reach you only through a relay and never see your IP address. Games can respond a little slower."
+            }
         }
     }
 
@@ -403,6 +409,10 @@ impl OnlineText {
             OnlineText::RecordNetwork => "Ağ Çağrılarını Kaydet",
             OnlineText::RecordNetworkDetail => {
                 "Oyunlar ağdan ne istediklerini Logs klasörüne yazar; çevrimiçi desteğin geliştirilmesine yardım eder. Hiçbir şey yüklenmez."
+            }
+            OnlineText::RelayOnly => "IP Adresini Gizle",
+            OnlineText::RelayOnlyNote => {
+                "Diğer oyuncular sana yalnızca bir aktarıcı üzerinden ulaşır ve IP adresini hiç görmez. Oyunlar biraz daha geç tepki verebilir."
             }
         }
     }

@@ -2062,7 +2062,7 @@ The launcher's side of the AnyPlay network ([anyplay-gg/network](https://github.
 | Home | the handle / Online, Connecting… or Offline, trying again | Invitations, Friend Requests, Playing Together (members with Direct, Through a relay or Connecting…), Friends (joinable first, then playing, online, offline; by name), Add a Friend, Sent Requests, Account |
 | Friend | the handle / what they play | Join Game (only when their session is open to friends; detail "2 of 4 players"), Invite to Your Game (when you are in a session they are not), Remove Friend, Block (destructive), Report |
 | Request, Sent, Blocked, Invitation | the handle or "… invites you" | Accept / Decline / Block; Withdraw Request; Unblock; Join Game / Decline |
-| Add a Friend, Report, Account, Delete | | the name field and Send Request; the reason choice and Send Report; e-mail, cloud, the blocked, Sign Out, Delete Account; the deletion asks on its own page, opened on Delete with Cancel below |
+| Add a Friend, Report, Account, Delete | | the name field and Send Request; the reason choice and Send Report; e-mail, cloud, Hide Your IP Address (toggle) with its note, the blocked, Sign Out, Delete Account; the deletion asks on its own page, opened on Delete with Cancel below |
 | Invitation picker | "Invite to …" / "Pick up to … friends" | one toggle per online friend, Send Invitations, Cancel |
 
 Hints that explain a text field or a toggle stand under it with the normal 8 dp row gap, not attached: the focused row grows 3 dp and would touch an attached note. A command waiting for the net service says "Sending…" in its detail line.
@@ -2078,5 +2078,6 @@ Hints that explain a text field or a toggle stand under it with the normal 8 dp 
 - Toasts: signed in, signed out, request sent, now friends, a request or an invitation arrived, blocked, report sent, account deleted, joining; failures say what to do (code wrong or expired, name taken, no such account, too many tries, cloud unreachable, game full, version mismatch naming both sides).
 - The net service is found through `ANYPLAY_NET`, next to the launcher, or in the launcher itself: a release build embeds it (`ANYPLAY_NET_EMBED` at build time) and writes it once per version to `Network\bin`, removing older copies. Its log goes to `Logs\network.log`.
 - *Record Network Calls* (Settings, Advanced, off by default) adds `ANYPS5_NET_OBSERVE=Logs\<TITLEID>-network.jsonl` to every game start, signed in or not.
+- *Hide Your IP Address* (Account page, off by default; `Preferences::online_relay_only`) keeps every tunnel on a relay, so other players never learn the PC's address. The net service starts with `--relay-only`; a change while it runs goes out as `relay_only`, which starts its tunnels again, so during a game it waits for the game's end.
 
 Gallery scenes: `online`, `online-code`, `online-handle`, `online-friends`, `online-friend`, `online-account`, `online-picker`.

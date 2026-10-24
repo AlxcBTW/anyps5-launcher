@@ -31,6 +31,7 @@ fn the_net_service_answers_over_its_standard_streams() {
     let mut process = NetProcess::spawn(
         &binary,
         &dir.path().join("Network"),
+        false,
         &dir.path().join("network.log"),
         Arc::new(|| {}),
     )

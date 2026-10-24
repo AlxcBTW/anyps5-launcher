@@ -47,6 +47,8 @@ pub enum OnlineAction {
     DeleteAccount,
     /// The friends picked for the game's invitation dialog, or `None` when it was closed.
     Dialog(Option<Vec<AccountId>>),
+    /// Keep every tunnel on a relay, or let them go direct again.
+    RelayOnly(bool),
     Close,
 }
 
@@ -80,6 +82,8 @@ pub struct OnlineData<'a> {
     pub custom_cloud: bool,
     /// AnyPlay runs a cloud this build knows.
     pub official_cloud: bool,
+    /// Tunnels to other players go only through a relay (`Preferences::online_relay_only`).
+    pub relay_only: bool,
     pub language: Language,
     pub accent: Color32,
 }
@@ -316,6 +320,10 @@ impl OnlinePanel {
                 ctx.request_repaint();
             }
             Change::Toggle { row: "age", on } => self.age_confirmed = *on,
+            Change::Toggle {
+                row: "relayOnly",
+                on,
+            } => actions.push(OnlineAction::RelayOnly(*on)),
             Change::Toggle { row: "pick", on } => {
                 let index = self.nth(data, "pick");
                 if let Some(friend) = picker_friends(online).get(index) {
@@ -677,6 +685,12 @@ impl OnlinePanel {
                     t(T::Cloud),
                     data.cloud.map(str::to_owned),
                 ));
+                rows.push(
+                    Row::toggle("relayOnly", t(T::RelayOnly), data.relay_only)
+                        .icon(Icon::EYE_SLASH)
+                        .group_start(),
+                );
+                rows.push(Row::info("relayOnlyNote", t(T::RelayOnlyNote), None));
                 if !online.friends.blocked.is_empty() {
                     rows.push(Row::caption("blockedCaption", t(T::Blocked)).group_start());
                     for blocked in &online.friends.blocked {
@@ -944,6 +958,7 @@ mod tests {
             cloud: Some("https://cloud.example.org"),
             custom_cloud: true,
             official_cloud: false,
+            relay_only: false,
             language: Language::English,
             accent: Color32::WHITE,
         }
@@ -1046,6 +1061,25 @@ mod tests {
         panel.age_confirmed = true;
         panel.run("create", &data(&online), &mut actions);
         assert_eq!(actions, [OnlineAction::SignUp("Alec".into())]);
+    }
+
+    #[test]
+    fn the_account_page_turns_relay_only_on() {
+        let online = signed_in();
+        let mut panel = OnlinePanel::default();
+        panel.go(Page::Account, &data(&online));
+        let rows = panel.rows(&data(&online)).2;
+        let toggle = rows.iter().position(|r| r.id == "relayOnly").unwrap();
+        assert_eq!(rows[toggle + 1].id, "relayOnlyNote");
+        assert_eq!(rows[toggle].title, "Hide Your IP Address");
+        let on = OnlineData {
+            relay_only: true,
+            ..data(&online)
+        };
+        assert_eq!(
+            panel.rows(&on).2[toggle].control,
+            crate::screens::rows::Control::Toggle(true)
+        );
     }
 
     #[test]

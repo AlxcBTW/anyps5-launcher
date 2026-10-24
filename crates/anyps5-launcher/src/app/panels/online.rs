@@ -32,6 +32,7 @@ impl PanelHost {
                 cloud: cloud.as_deref(),
                 custom_cloud: cx.model.prefs.online_cloud.is_some(),
                 official_cloud: net::DEFAULT_CLOUD.is_some(),
+                relay_only: cx.model.prefs.online_relay_only,
                 language,
                 accent,
             };
@@ -69,6 +70,10 @@ fn online_action(model: &mut Model, action: OnlineAction) {
         OnlineAction::UseOfficialCloud => {
             model.edit_prefs(|p| p.online_cloud = None);
             model.effects.push(Effect::StartOnline);
+        }
+        OnlineAction::RelayOnly(on) => {
+            model.edit_prefs(|p| p.online_relay_only = on);
+            model.effects.push(Effect::RelayOnlyChanged);
         }
         OnlineAction::Email(email) => {
             online.send(Purpose::Email(email.clone()), Command::Email { email });

@@ -46,6 +46,8 @@ pub struct OnlineService {
     join: Option<Join>,
     /// The game the net service was told about and that has not ended yet.
     started: Option<GameId>,
+    /// Relay only changed while that game played: the net service hears of it at the end.
+    relay_only_later: bool,
 }
 
 /// A game ready to start, with the variables it gets beyond its settings.
@@ -64,6 +66,7 @@ impl OnlineService {
             starts: 0,
             join: None,
             started: None,
+            relay_only_later: false,
         }
     }
 
@@ -84,9 +87,11 @@ impl OnlineService {
             model.online.status = Status::Missing;
             return;
         };
+        self.relay_only_later = false;
         match NetProcess::spawn(
             &binary,
             &model.paths.network_dir(),
+            model.prefs.online_relay_only,
             &model.paths.network_log(),
             self.wake.clone(),
         ) {
@@ -113,7 +118,22 @@ impl OnlineService {
         self.process = None;
         self.waiting = None;
         self.started = None;
+        self.relay_only_later = false;
         model.online.stopped(Status::Off);
+    }
+
+    /// Relay only changed in the preferences. A stopped net service gets it when it starts. A
+    /// running one starts its tunnels again, which a game in a session would notice, so during
+    /// a game the change waits for its end.
+    pub fn relay_only_changed(&mut self, model: &mut Model) {
+        if model.online.status != Status::Running {
+            return;
+        }
+        if self.started.is_some() {
+            self.relay_only_later = true;
+        } else {
+            send_relay_only(model);
+        }
     }
 
     pub fn is_running(&self) -> bool {
@@ -200,6 +220,9 @@ impl OnlineService {
                 self.waiting = None;
             }
             model.online.send(Purpose::GameEnd, Command::GameEnd);
+            if std::mem::take(&mut self.relay_only_later) {
+                send_relay_only(model);
+            }
         }
     }
 
@@ -471,6 +494,13 @@ fn bundled(_paths: &anyps5_core::paths::AppPaths) -> Option<std::path::PathBuf> 
 }
 
 /// The AnyPS5 build the version guard compares: the toolkit's version.
+fn send_relay_only(model: &mut Model) {
+    let on = model.prefs.online_relay_only;
+    model
+        .online
+        .send(Purpose::RelayOnly, Command::RelayOnly { on });
+}
+
 fn build(model: &Model) -> String {
     model
         .toolkit
@@ -649,6 +679,33 @@ mod tests {
         );
         assert_eq!(ready.len(), 1);
         assert!(ready[0].env.is_empty());
+    }
+
+    #[test]
+    fn relay_only_reaches_the_net_service_at_once_or_after_the_game() {
+        let mut model = signed_in_model();
+        let mut online = service();
+        model.prefs.online_relay_only = true;
+        online.relay_only_changed(&mut model);
+        let sent = model.online.take_outbox();
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].contains("\"do\":\"relay_only\",\"on\":true"));
+
+        // During a game the tunnels stay as they are until it ends.
+        assert_eq!(online.on_play(&mut model, &game()), None);
+        model.online.take_outbox();
+        model.prefs.online_relay_only = false;
+        online.relay_only_changed(&mut model);
+        assert!(model.online.take_outbox().is_empty());
+        online.on_exited(&mut model, &game().id);
+        let sent = model.online.take_outbox();
+        assert!(sent[0].contains("game_end"));
+        assert!(sent[1].contains("\"do\":\"relay_only\",\"on\":false"));
+
+        // A stopped service hears of it when it starts.
+        model.online.status = Status::Off;
+        online.relay_only_changed(&mut model);
+        assert!(model.online.take_outbox().is_empty());
     }
 
     #[test]
