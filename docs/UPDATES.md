@@ -178,3 +178,14 @@ The new manifest has its own attestation, made by `resign.yml`; `gh attestation 
 | `verify --manifest <file> --sig <file> --keys <file> [--current <v>]` | What the launcher does, for a release candidate. |
 
 Tests use throwaway keys made inside the test; the repository holds no private key and no real public key yet.
+
+## Client-side hardening
+
+Rules of the client that go beyond the list under [What the launcher checks](#what-the-launcher-checks):
+
+- **Size, time and redirects.** A signed download stops as soon as it is longer than the manifest's `size`; a connection that cannot be opened in 15 seconds or a transfer that makes no progress for 30 seconds is dropped. Downloads follow at most three redirects and only over https. The manifest and its signature must come from `github.com` or `*.githubusercontent.com` (also after redirects); the exe may be on any https host because its hash is signed. An address with a user name in it (`https://github.com@evil.example/`) is refused. Plain http to this machine exists only in the test build.
+- **Staged updates are verified again.** The manifest and signature are kept beside the staged exe (`<exe>.manifest`, `<exe>.manifest.sig`). At the next start [`pending`] checks signature, expiry, version and the exe's size and SHA-256 before it offers the update again; a file or marker alone is never trusted, and a staged update whose manifest has expired is not offered (the next check fetches a fresh one). The swap hashes its own copy against the manifest's hash before renaming it into place.
+- **Validity window.** `expires` may be at most 90 days after `published`, checked by `Manifest::validate` (so `update-sign sign` refuses a longer one too), and the client refuses a `published` more than a day ahead of its clock.
+- **Order of refusals.** A launcher that already runs the offered version or a newer one gets "nothing to update" even when the manifest has expired; only a manifest that would offer an update is refused as expired.
+- **The key list** may start with a UTF-8 byte order mark. The build of `anyps5-core` parses `data/update-keys.txt` with the launcher's own parser (`build.rs`) and fails on an unreadable list.
+- **`update-sign keygen` on Windows.** The secret file is created with the access rules of the folder it is written to (on Unix, mode 0600). Write it into a private folder, not a shared or synced one, and move it to the password manager at once.

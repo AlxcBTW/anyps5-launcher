@@ -50,7 +50,8 @@ fn a_running_exe_is_replaced_and_its_old_file_removed_after_it_stops() {
         staged,
         Staged {
             version: "0.2.0".into(),
-            path
+            path,
+            sha256: None
         }
     );
 
@@ -124,6 +125,7 @@ fn restart_swaps_and_starts_the_new_exe() {
     let staged = Staged {
         version: "0.2.0".into(),
         path,
+        sha256: None,
     };
     staged
         .restart(&exe, ["--fake-sleeper".into()])

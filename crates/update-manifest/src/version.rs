@@ -67,7 +67,12 @@ impl Version {
                     if !valid {
                         None
                     } else if part.bytes().all(|b| b.is_ascii_digit()) {
-                        part.parse().ok().map(Part::Number)
+                        // A numeric identifier has no leading zeros (semver 9).
+                        if part.len() > 1 && part.starts_with('0') {
+                            None
+                        } else {
+                            part.parse().ok().map(Part::Number)
+                        }
                     } else {
                         Some(Part::Text(part.to_owned()))
                     }
