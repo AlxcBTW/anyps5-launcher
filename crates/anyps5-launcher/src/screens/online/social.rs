@@ -952,6 +952,9 @@ mod tests {
                 .map(|(id, handle)| PartyMember {
                     account: account(*id, handle),
                     joined: 0,
+                    endpoint: String::new(),
+                    relay: None,
+                    voice: false,
                 })
                 .collect(),
             max_members: 8,

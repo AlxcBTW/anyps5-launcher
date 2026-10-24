@@ -891,6 +891,9 @@ impl Online {
                 }
             }
             Event::ConversationGone { id } => self.social.remove(&id),
+            // Party voice has no controls in the launcher yet; the net service keeps it off
+            // until a `voice` command switches it on.
+            Event::Voice { .. } => {}
             Event::Unknown => {}
         }
         notices
@@ -1569,6 +1572,9 @@ mod tests {
             members: vec![api::PartyMember {
                 account: account(1, "Alec"),
                 joined: 0,
+                endpoint: String::new(),
+                relay: None,
+                voice: false,
             }],
             max_members: 8,
             conversation: "pc".into(),
