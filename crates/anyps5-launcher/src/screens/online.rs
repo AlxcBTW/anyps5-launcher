@@ -23,11 +23,16 @@ pub enum OnlineAction {
     SetCloud(String),
     /// Back to the cloud AnyPlay runs.
     UseOfficialCloud,
-    Email(String),
-    Code(String),
-    SignUp(String),
-    /// Back from the code to the address.
-    OtherAddress,
+    /// Sign in, or create an account, on the cloud's page in the system browser.
+    BrowserSignIn {
+        create: bool,
+    },
+    /// Open the sign-in page again, as the net service gave it.
+    OpenSignInPage,
+    /// Stop waiting for the browser.
+    CancelSignIn,
+    /// Open the account web: e-mail, passkeys, devices and deleting the account.
+    ManageAccount,
     AddFriend(String),
     Accept(AccountId),
     Decline(AccountId),
@@ -44,7 +49,6 @@ pub enum OnlineAction {
         accept: bool,
     },
     SignOut,
-    DeleteAccount,
     /// The friends picked for the game's invitation dialog, or `None` when it was closed.
     Dialog(Option<Vec<AccountId>>),
     /// Keep every tunnel on a relay, or let them go direct again.
@@ -60,8 +64,8 @@ pub enum Page {
     #[default]
     Start,
     Cloud,
-    Code,
-    Handle,
+    /// Signing in in the browser.
+    Browser,
     Home,
     Friend(AccountId),
     Request(AccountId),
@@ -70,7 +74,6 @@ pub enum Page {
     Invitation(String),
     AddFriend,
     Account,
-    ConfirmDelete,
     Report(AccountId),
     Picker,
 }
@@ -107,15 +110,9 @@ pub struct OnlinePanel {
     side: SideState,
     pub page: Page,
     pub cloud_text: String,
-    pub email: String,
-    pub code: String,
-    pub handle: String,
-    pub age_confirmed: bool,
     pub friend_text: String,
     reason: usize,
     picked: BTreeSet<AccountId>,
-    /// The player went back from the code to the address: stay there, though a code is out.
-    other_address: bool,
 }
 
 impl OnlinePanel {
@@ -176,17 +173,10 @@ impl OnlinePanel {
     fn follow(&mut self, data: &OnlineData<'_>) {
         let online = data.online;
         let wanted = match &self.page {
-            Page::Start | Page::Code | Page::Handle if online.is_signed_in() => Some(Page::Home),
-            Page::Start if online.pending == Some(Pending::Code) && !self.other_address => {
-                Some(Page::Code)
-            }
-            Page::Start | Page::Code if online.pending == Some(Pending::Handle) => {
-                Some(Page::Handle)
-            }
-            Page::Code | Page::Handle if online.pending.is_none() && !online.is_signed_in() => {
-                Some(Page::Start)
-            }
-            Page::Cloud | Page::Start | Page::Code | Page::Handle => None,
+            Page::Start | Page::Browser if online.is_signed_in() => Some(Page::Home),
+            Page::Start if online.pending == Some(Pending::Browser) => Some(Page::Browser),
+            Page::Browser if online.pending.is_none() => Some(Page::Start),
+            Page::Cloud | Page::Start | Page::Browser => None,
             _ if !online.is_signed_in() => Some(Page::Start),
             Page::Friend(id) if online.friend(*id).is_none() => Some(Page::Home),
             Page::Request(id) if !online.friends.incoming.iter().any(|r| r.account.id == *id) => {
@@ -214,8 +204,9 @@ impl OnlinePanel {
         match self.page {
             Page::Start | Page::Home | Page::Picker => None,
             Page::Cloud => Some(Page::Start),
-            Page::Code | Page::Handle => Some(entry_page(data)).filter(|p| *p != self.page),
-            Page::Blocked(_) | Page::ConfirmDelete => Some(Page::Account),
+            // Leaving the page leaves the sign-in waiting; Cancel stops it.
+            Page::Browser => Some(entry_page(data)).filter(|p| *p != self.page),
+            Page::Blocked(_) => Some(Page::Account),
             Page::Report(id) => Some(Page::Friend(id)),
             _ => Some(Page::Home),
         }
@@ -295,9 +286,6 @@ impl OnlinePanel {
     fn typed(&mut self, row: RowId, value: String) {
         let field = match row {
             "cloud" => &mut self.cloud_text,
-            "email" => &mut self.email,
-            "code" => &mut self.code,
-            "handle" => &mut self.handle,
             "friend" => &mut self.friend_text,
             _ => return,
         };
@@ -324,7 +312,6 @@ impl OnlinePanel {
                 ctx.data_mut(|d| d.insert_temp(egui::Id::unique("panel-text-focus"), true));
                 ctx.request_repaint();
             }
-            Change::Toggle { row: "age", on } => self.age_confirmed = *on,
             Change::Toggle {
                 row: "relayOnly",
                 on,
@@ -368,20 +355,18 @@ impl OnlinePanel {
                 actions.push(OnlineAction::UseOfficialCloud);
                 self.go(Page::Start, data);
             }
-            ("sendCode", _) if data.cloud.is_some() => {
-                self.other_address = false;
-                actions.push(OnlineAction::Email(self.email.trim().into()));
+            ("signIn", _) if data.cloud.is_some() => {
+                actions.push(OnlineAction::BrowserSignIn { create: false });
             }
-            ("signIn", _) => actions.push(OnlineAction::Code(self.code.trim().into())),
-            ("otherAddress", _) => {
-                self.code.clear();
-                self.other_address = true;
-                actions.push(OnlineAction::OtherAddress);
+            ("createAccount", _) if data.cloud.is_some() => {
+                actions.push(OnlineAction::BrowserSignIn { create: true });
+            }
+            ("cancelSignIn", Page::Browser) => {
+                actions.push(OnlineAction::CancelSignIn);
                 self.go(Page::Start, data);
             }
-            ("create", _) if self.age_confirmed => {
-                actions.push(OnlineAction::SignUp(self.handle.trim().into()));
-            }
+            ("openAgain", Page::Browser) => actions.push(OnlineAction::OpenSignInPage),
+            ("manageAccount", Page::Account) => actions.push(OnlineAction::ManageAccount),
             ("invitation", _) => {
                 let index = self.nth(data, "invitation");
                 if let Some(invitation) = online.invitations.get(index) {
@@ -421,9 +406,6 @@ impl OnlinePanel {
             }
             ("account", _) => self.go(Page::Account, data),
             ("signOut", _) => actions.push(OnlineAction::SignOut),
-            ("delete", Page::Account) => self.go(Page::ConfirmDelete, data),
-            ("delete", Page::ConfirmDelete) => actions.push(OnlineAction::DeleteAccount),
-            ("cancel", Page::ConfirmDelete) => self.go(Page::Account, data),
             ("cancel", Page::Picker) => {
                 actions.push(OnlineAction::Dialog(None));
                 self.go(Page::Home, data);
@@ -490,28 +472,31 @@ impl OnlinePanel {
         };
         let (title, subtitle) = match &self.page {
             Page::Start => {
+                let mut sign_in = busy(
+                    Row::command("signIn", t(T::SignIn)).icon(Icon::SIGN_IN),
+                    |p| matches!(p, Purpose::BrowserSignIn { create: false } | Purpose::Hello),
+                );
+                let mut create = busy(
+                    Row::command("createAccount", t(T::CreateAccount)).icon(Icon::USER_PLUS),
+                    |p| matches!(p, Purpose::BrowserSignIn { create: true }),
+                );
+                if data.cloud.is_none() {
+                    sign_in = sign_in.detail(t(T::NeedsCloud));
+                    create = create.detail(t(T::NeedsCloud));
+                }
+                rows.push(sign_in);
+                rows.push(create);
                 let shown = match data.cloud {
                     Some(_) if !data.custom_cloud => t(T::CloudOfficial),
                     Some(url) => url,
                     None => t(T::CloudNotSet),
                 };
-                let cloud = Row::action("cloudPage", t(T::Cloud))
-                    .icon(Icon::CLOUD)
-                    .detail(shown);
-                rows.push(cloud);
                 rows.push(
-                    Row::text("email", t(T::Email), self.email.clone())
-                        .icon(Icon::ENVELOPE_SIMPLE)
+                    Row::action("cloudPage", t(T::Cloud))
+                        .icon(Icon::CLOUD)
+                        .detail(shown)
                         .group_start(),
                 );
-                let mut send = busy(
-                    Row::command("sendCode", t(T::SendCode)).icon(Icon::PAPER_PLANE_RIGHT),
-                    |p| matches!(p, Purpose::Email(_) | Purpose::Hello),
-                );
-                if data.cloud.is_none() {
-                    send = send.detail(t(T::NeedsCloud));
-                }
-                rows.push(send);
                 rows.push(Row::info("note", t(T::SignInNote), None).group_start());
                 (t(T::Online).to_owned(), Some(t(T::Subtitle).to_owned()))
             }
@@ -535,51 +520,13 @@ impl OnlinePanel {
                 rows.push(Row::info("hint", t(T::CloudHint), None).group_start());
                 (t(T::Cloud).to_owned(), Some(t(T::CloudSubtitle).to_owned()))
             }
-            Page::Code => {
-                rows.push(Row::text("code", t(T::Code), self.code.clone()).icon(Icon::KEY));
-                rows.push(busy(
-                    Row::command("signIn", t(T::SignIn)).icon(Icon::SIGN_IN),
-                    |p| matches!(p, Purpose::Code),
-                ));
-                rows.push(Row::info("hint", t(T::CodeHint), None));
-                rows.push(
-                    Row::command("otherAddress", t(T::OtherAddress))
-                        .icon(Icon::ARROW_LEFT)
-                        .group_start(),
-                );
-                let to = if online.email.is_empty() {
-                    &self.email
-                } else {
-                    &online.email
-                };
+            Page::Browser => {
+                rows.push(Row::command("openAgain", t(T::OpenAgain)).icon(Icon::GLOBE));
+                rows.push(Row::command("cancelSignIn", language.text(Key::Cancel)).icon(Icon::X));
+                rows.push(Row::info("note", t(T::BrowserNote), None).group_start());
                 (
                     t(T::Online).to_owned(),
-                    Some(f(T::CodeSent, &[Arg::Str(to)])),
-                )
-            }
-            Page::Handle => {
-                rows.push(
-                    Row::text("handle", t(T::Handle), self.handle.clone()).icon(Icon::USER_CIRCLE),
-                );
-                rows.push(Row::info("handleHint", t(T::HandleHint), None));
-                rows.push(
-                    Row::toggle("age", t(T::AgeConfirm), self.age_confirmed)
-                        .icon(Icon::CHECK_CIRCLE)
-                        .group_start(),
-                );
-                rows.push(Row::info("ageNote", t(T::AgeNote), None));
-                let mut create = busy(
-                    Row::command("create", t(T::CreateAccount)).icon(Icon::USER_PLUS),
-                    |p| matches!(p, Purpose::SignUp),
-                )
-                .group_start();
-                if !self.age_confirmed {
-                    create = create.detail(t(T::AgeNeeded));
-                }
-                rows.push(create);
-                (
-                    t(T::NewAccount).to_owned(),
-                    Some(t(T::NewAccountSubtitle).to_owned()),
+                    Some(t(T::ContinueInBrowser).to_owned()),
                 )
             }
             Page::Home => {
@@ -691,11 +638,13 @@ impl OnlinePanel {
             }
             Page::Account => {
                 let account = online.account.as_ref();
-                rows.push(Row::info(
-                    "email",
-                    t(T::Email),
-                    account.map(|a| a.email.clone()),
-                ));
+                rows.push(
+                    busy(
+                        Row::command("manageAccount", t(T::ManageAccount)).icon(Icon::GLOBE),
+                        |p| matches!(p, Purpose::AccountPage),
+                    )
+                    .detail(t(T::ManageAccountDetail)),
+                );
                 rows.push(Row::info(
                     "cloud",
                     t(T::Cloud),
@@ -742,25 +691,7 @@ impl OnlinePanel {
                     )
                     .group_start(),
                 );
-                rows.push(
-                    Row::action("delete", t(T::DeleteAccount))
-                        .icon(Icon::TRASH)
-                        .destructive(),
-                );
                 (t(T::Account).to_owned(), account.map(|a| a.handle.clone()))
-            }
-            Page::ConfirmDelete => {
-                rows.push(busy(
-                    Row::command("delete", t(T::DeleteAccount))
-                        .icon(Icon::TRASH)
-                        .destructive(),
-                    |p| matches!(p, Purpose::DeleteAccount),
-                ));
-                rows.push(Row::command("cancel", language.text(Key::Cancel)).icon(Icon::X));
-                (
-                    t(T::DeleteAccount).to_owned(),
-                    Some(t(T::DeleteAsk).to_owned()),
-                )
             }
             Page::Report(id) => {
                 let reasons = [
@@ -894,9 +825,9 @@ fn entry_page(data: &OnlineData<'_>) -> Page {
         Page::Home
     } else {
         match online.pending {
-            Some(Pending::Code) => Page::Code,
-            Some(Pending::Handle) => Page::Handle,
-            None => Page::Start,
+            Some(Pending::Browser) => Page::Browser,
+            // The e-mail code pages are the cloud's web site now.
+            Some(Pending::Code | Pending::Handle) | None => Page::Start,
         }
     }
 }
@@ -1037,7 +968,7 @@ mod tests {
     }
 
     #[test]
-    fn before_sign_in_the_panel_asks_for_the_cloud_and_the_address() {
+    fn before_sign_in_the_panel_offers_the_browser_and_the_cloud() {
         let online = Online::default();
         let mut panel = OnlinePanel::default();
         panel.open(&data(&online));
@@ -1048,28 +979,56 @@ mod tests {
             subtitle.as_deref(),
             Some("Play with your friends over the internet")
         );
-        assert_eq!(ids(&rows), ["cloudPage", "email", "sendCode", "note"]);
-        assert_eq!(rows[0].detail.as_deref(), Some("https://cloud.example.org"));
-        // Without a cloud the command says what to do first.
+        assert_eq!(ids(&rows), ["signIn", "createAccount", "cloudPage", "note"]);
+        assert_eq!(rows[2].detail.as_deref(), Some("https://cloud.example.org"));
+        let mut actions = Vec::new();
+        panel.run("signIn", &data(&online), &mut actions);
+        panel.run("createAccount", &data(&online), &mut actions);
+        assert_eq!(
+            actions,
+            [
+                OnlineAction::BrowserSignIn { create: false },
+                OnlineAction::BrowserSignIn { create: true }
+            ]
+        );
+        // Without a cloud the commands say what to do first, and do nothing.
         let none = OnlineData {
             cloud: None,
             ..data(&online)
         };
         let rows = panel.rows(&none).2;
-        assert_eq!(rows[2].detail.as_deref(), Some("Set up the cloud first."));
+        assert_eq!(rows[0].detail.as_deref(), Some("Set up the cloud first."));
+        let mut actions = Vec::new();
+        panel.run("signIn", &none, &mut actions);
+        assert!(actions.is_empty());
     }
 
     #[test]
-    fn the_pages_follow_the_sign_in() {
+    fn the_pages_follow_the_browser_sign_in() {
         let mut online = Online::default();
         let mut panel = OnlinePanel::default();
         panel.open(&data(&online));
-        online.pending = Some(Pending::Code);
+        online.pending = Some(Pending::Browser);
         panel.follow(&data(&online));
-        assert_eq!(panel.page, Page::Code);
-        online.pending = Some(Pending::Handle);
+        assert_eq!(panel.page, Page::Browser);
+        let (_, subtitle, rows) = panel.rows(&data(&online));
+        assert_eq!(subtitle.as_deref(), Some("Continue in your browser"));
+        assert_eq!(ids(&rows), ["openAgain", "cancelSignIn", "note"]);
+        let mut actions = Vec::new();
+        panel.run("openAgain", &data(&online), &mut actions);
+        assert_eq!(actions, [OnlineAction::OpenSignInPage]);
+        // Stopped or timed out: back to the start.
+        online.pending = None;
         panel.follow(&data(&online));
-        assert_eq!(panel.page, Page::Handle);
+        assert_eq!(panel.page, Page::Start);
+        online.pending = Some(Pending::Browser);
+        panel.follow(&data(&online));
+        let mut actions = Vec::new();
+        panel.run("cancelSignIn", &data(&online), &mut actions);
+        assert_eq!(actions, [OnlineAction::CancelSignIn]);
+        assert_eq!(panel.page, Page::Start);
+        // Finished in the browser: the friends.
+        panel.go(Page::Browser, &data(&online));
         let online = signed_in();
         panel.follow(&data(&online));
         assert_eq!(panel.page, Page::Home);
@@ -1190,21 +1149,6 @@ mod tests {
     }
 
     #[test]
-    fn a_creation_needs_the_age_confirmation() {
-        let mut online = Online::default();
-        online.pending = Some(Pending::Handle);
-        let mut panel = OnlinePanel::default();
-        panel.open(&data(&online));
-        panel.handle = "Alec".into();
-        let mut actions = Vec::new();
-        panel.run("create", &data(&online), &mut actions);
-        assert!(actions.is_empty());
-        panel.age_confirmed = true;
-        panel.run("create", &data(&online), &mut actions);
-        assert_eq!(actions, [OnlineAction::SignUp("Alec".into())]);
-    }
-
-    #[test]
     fn the_account_page_turns_relay_only_on() {
         let online = signed_in();
         let mut panel = OnlinePanel::default();
@@ -1224,18 +1168,19 @@ mod tests {
     }
 
     #[test]
-    fn deleting_the_account_asks_first_and_opens_on_the_question() {
+    fn the_account_is_managed_on_the_web() {
         let online = signed_in();
         let mut panel = OnlinePanel::default();
         panel.go(Page::Account, &data(&online));
-        let mut actions = Vec::new();
-        panel.run("delete", &data(&online), &mut actions);
-        assert!(actions.is_empty());
-        assert_eq!(panel.page, Page::ConfirmDelete);
         let rows = panel.rows(&data(&online)).2;
-        assert!(rows[0].destructive);
-        panel.run("delete", &data(&online), &mut actions);
-        assert_eq!(actions, [OnlineAction::DeleteAccount]);
+        assert_eq!(rows[0].id, "manageAccount");
+        assert!(
+            !ids(&rows).contains(&"delete") && !ids(&rows).contains(&"email"),
+            "the e-mail and the deletion live on the web"
+        );
+        let mut actions = Vec::new();
+        panel.run("manageAccount", &data(&online), &mut actions);
+        assert_eq!(actions, [OnlineAction::ManageAccount]);
     }
 
     #[test]

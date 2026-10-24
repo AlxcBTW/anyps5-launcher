@@ -78,22 +78,23 @@ fn online_action(model: &mut Model, action: OnlineAction) {
         OnlineAction::TrophyAudience(trophies) => {
             online.set_trophy_audience(trophies);
         }
-        OnlineAction::Email(email) => {
-            online.send(Purpose::Email(email.clone()), Command::Email { email });
-        }
-        OnlineAction::Code(code) => {
-            online.send(Purpose::Code, Command::Code { code });
-        }
-        OnlineAction::SignUp(handle) => {
+        OnlineAction::BrowserSignIn { create } => {
             online.send(
-                Purpose::SignUp,
-                Command::SignUp {
-                    handle,
-                    age_confirmed: true,
-                },
+                Purpose::BrowserSignIn { create },
+                Command::BrowserSignIn { create },
             );
         }
-        OnlineAction::OtherAddress => {}
+        OnlineAction::OpenSignInPage => {
+            if let Some(url) = model.online.sign_in_url.clone() {
+                OnlineService::open_cloud_page(model, &url);
+            }
+        }
+        OnlineAction::CancelSignIn => {
+            online.send(Purpose::CancelSignIn, Command::CancelSignIn);
+        }
+        OnlineAction::ManageAccount => {
+            online.send(Purpose::AccountPage, Command::AccountPage);
+        }
         OnlineAction::AddFriend(handle) => {
             online.send(
                 Purpose::AddFriend(handle.clone()),
@@ -169,9 +170,6 @@ fn online_action(model: &mut Model, action: OnlineAction) {
         }
         OnlineAction::SignOut => {
             online.send(Purpose::SignOut, Command::SignOut);
-        }
-        OnlineAction::DeleteAccount => {
-            online.send(Purpose::DeleteAccount, Command::DeleteAccount);
         }
         OnlineAction::Dialog(accounts) => {
             if let Some(dialog) = online.dialog.take() {

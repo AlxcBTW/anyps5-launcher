@@ -7,7 +7,7 @@
 //!                           about-update|behavior-links|toolkit|toolkit-update|toolkit-newer|toolkit-pinned|toolkit-local|
 //!                           recommended|recommended-warning|whats-new|whats-new-loading|
 //!                           saves|saves-empty|restore|
-//!                           online|online-code|online-handle|online-friends|online-friend|
+//!                           online|online-browser|online-friends|online-friend|
 //!                           online-account|online-picker
 //!                 [--screenshot=out.png] [--size=WxH] [--tr]
 //! ```
@@ -103,8 +103,8 @@ pub enum ScreenPage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OnlineLook {
     Start,
-    Code,
-    Handle,
+    /// The browser sign-in waits.
+    Browser,
     Friends,
     Friend,
     Account,
@@ -153,8 +153,7 @@ pub fn parse(name: &str) -> Option<ScreenPage> {
         "saves-empty" => ScreenPage::SavesEmpty,
         "restore" => ScreenPage::Restore,
         "online" => ScreenPage::Online(OnlineLook::Start),
-        "online-code" => ScreenPage::Online(OnlineLook::Code),
-        "online-handle" => ScreenPage::Online(OnlineLook::Handle),
+        "online-browser" => ScreenPage::Online(OnlineLook::Browser),
         "online-friends" => ScreenPage::Online(OnlineLook::Friends),
         "online-friend" => ScreenPage::Online(OnlineLook::Friend),
         "online-account" => ScreenPage::Online(OnlineLook::Account),
@@ -224,13 +223,8 @@ fn sample_online(look: OnlineLook) -> anyps5_core::online::Online {
     state.cloud = Some(Cloud::Online);
     match look {
         OnlineLook::Start => return state,
-        OnlineLook::Code => {
-            state.pending = Some(Pending::Code);
-            state.email = "mira@example.org".into();
-            return state;
-        }
-        OnlineLook::Handle => {
-            state.pending = Some(Pending::Handle);
+        OnlineLook::Browser => {
+            state.pending = Some(Pending::Browser);
             return state;
         }
         _ => {}
@@ -883,16 +877,10 @@ impl ScreenGallery {
                 let data = online_data(&self.online, language, shell.accent_color());
                 self.online_panel.open(&data);
                 match look {
-                    OnlineLook::Code => self.online_panel.code = "4817".into(),
-                    OnlineLook::Handle => {
-                        self.online_panel.handle = "Mira".into();
-                        self.online_panel.age_confirmed = true;
-                    }
                     OnlineLook::Friend => self
                         .online_panel
                         .show_page(Page::Friend(anyps5_core::online::api::AccountId(2)), &data),
                     OnlineLook::Account => self.online_panel.show_page(Page::Account, &data),
-                    OnlineLook::Start => self.online_panel.email = "mira@example.org".into(),
                     _ => {}
                 }
             }

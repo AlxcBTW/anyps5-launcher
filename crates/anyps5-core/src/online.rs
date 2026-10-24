@@ -238,11 +238,14 @@ pub struct Join {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Purpose {
     Hello,
-    Email(String),
-    Code,
-    SignUp,
+    /// Signing in, or creating an account, in the browser.
+    BrowserSignIn {
+        create: bool,
+    },
+    CancelSignIn,
+    /// A link to the account web.
+    AccountPage,
     SignOut,
-    DeleteAccount,
     AddFriend(String),
     Accept(AccountId),
     Decline(AccountId),
@@ -295,6 +298,10 @@ pub enum Notice {
     Dialog(Dialog),
     /// The net service ended.
     Ended,
+    /// The browser sign-in finished: the account is signed in.
+    SignedIn,
+    /// The browser sign-in ran out of time.
+    SignInTimedOut,
 }
 
 /// What the launcher knows about the player's online state.
@@ -304,8 +311,8 @@ pub struct Online {
     pub cloud: Option<Cloud>,
     pub account: Option<SignedIn>,
     pub pending: Option<Pending>,
-    /// The address the last code went to.
-    pub email: String,
+    /// The sign-in page the net service gave, while the browser sign-in waits.
+    pub sign_in_url: Option<String>,
     pub friends: FriendLists,
     pub invitations: Vec<Invitation>,
     pub session: Option<Session>,
@@ -396,7 +403,11 @@ impl Online {
     /// Keeps what a successful answer tells about the account.
     fn answered(&mut self, purpose: &Purpose, value: &serde_json::Value) {
         match purpose {
-            Purpose::Email(email) => self.email.clone_from(email),
+            Purpose::BrowserSignIn { .. } => {
+                if let Ok(opened) = serde_json::from_value::<control::Opened>(value.clone()) {
+                    self.sign_in_url = Some(opened.url);
+                }
+            }
             Purpose::UploadTrophies { title_id, count } => {
                 let known = self.uploaded.entry(title_id.clone()).or_default();
                 *known = (*known).max(*count);
@@ -551,9 +562,13 @@ impl Online {
                 pending,
             } => {
                 let was_online = self.is_online();
+                let was_waiting = self.pending == Some(Pending::Browser);
                 self.cloud = Some(cloud);
                 self.account = account;
                 self.pending = pending;
+                if self.pending != Some(Pending::Browser) {
+                    self.sign_in_url = None;
+                }
                 if self.account.is_none() {
                     self.friends = FriendLists::default();
                     self.invitations.clear();
@@ -562,6 +577,9 @@ impl Online {
                     self.privacy = None;
                     self.uploaded.clear();
                     self.playtime_sent.clear();
+                }
+                if was_waiting && self.account.is_some() {
+                    notices.push(Notice::SignedIn);
                 }
                 if !was_online && self.is_online() {
                     self.send(Purpose::Privacy, Command::Privacy);
@@ -596,6 +614,9 @@ impl Online {
             }
             Event::Notice { code, message } => {
                 tracing::info!("net service: {code}: {message}");
+                if code == "sign_in_timed_out" {
+                    notices.push(Notice::SignInTimedOut);
+                }
             }
             // Parties and messages get their own screens; until then the launcher leaves them.
             Event::Party { .. }
@@ -740,24 +761,26 @@ mod tests {
     fn answers_come_back_with_what_they_were_for() {
         let mut online = Online::default();
         let id = online.send(
-            Purpose::Email("a@example.org".into()),
-            Command::Email {
-                email: "a@example.org".into(),
-            },
+            Purpose::BrowserSignIn { create: true },
+            Command::BrowserSignIn { create: true },
         );
         let lines = online.take_outbox();
         assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains("\"do\":\"email\""));
-        assert!(online.is_waiting(|p| matches!(p, Purpose::Email(_))));
+        assert!(lines[0].contains("\"do\":\"browser_sign_in\""));
+        assert!(online.is_waiting(|p| matches!(p, Purpose::BrowserSignIn { .. })));
+        let url = "https://cloud.example.org/web/authorize?x=1";
         let notices = online.apply(Line::Output(Output::Answer(control::Answer::ok(
             id,
-            control::EmailSent { code_length: 6 },
+            control::Opened { url: url.into() },
         ))));
         assert!(matches!(
             &notices[..],
-            [Notice::Answered(Purpose::Email(_), Ok(_))]
+            [Notice::Answered(
+                Purpose::BrowserSignIn { create: true },
+                Ok(_)
+            )]
         ));
-        assert_eq!(online.email, "a@example.org");
+        assert_eq!(online.sign_in_url.as_deref(), Some(url));
         assert!(!online.is_waiting(|_| true));
         // A stray answer is ignored.
         assert!(
