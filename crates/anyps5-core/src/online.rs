@@ -14,6 +14,8 @@
 //! Nothing here goes online by itself: the launcher starts the process only once the player asks
 //! to sign in, or when they signed in on this PC before.
 
+mod social;
+
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -25,7 +27,8 @@ pub use anyplay_control::anyplay_api as api;
 pub use anyplay_control::{
     self as control, Cloud, Command, Event, Failure, Link, Output, Pending, Session, SignedIn,
 };
-use api::{Account, AccountId, FriendLists, Invitation};
+use api::{Account, AccountId, Conversation, FriendLists, Invitation, Message, PartyInvitation};
+pub use social::{Fetch, Ingested, KEPT, Listed, Social, others, plain, read_by_other, snippet};
 
 use crate::events::Notifier;
 use crate::trophies::{Earned, Grade};
@@ -275,6 +278,35 @@ pub enum Purpose {
     SetPrivacy,
     /// Minutes per title and day, as sent.
     UploadPlaytime(Vec<api::PlaytimeEntry>),
+    // Parties and messages
+    Party,
+    PartyInvite,
+    PartyAnswer {
+        id: String,
+        accept: bool,
+    },
+    PartyLeave,
+    PartyKick(AccountId),
+    PartyLeader(AccountId),
+    PartyMove,
+    Conversations,
+    OpenConversation(AccountId),
+    /// A fetch of messages; `announce` when a new-message event asked for it, so the player is
+    /// told of what arrived.
+    Messages {
+        conversation: String,
+        fetch: Fetch,
+        announce: bool,
+    },
+    SendMessage {
+        conversation: String,
+        text: String,
+    },
+    MarkRead {
+        conversation: String,
+    },
+    AcceptRequest(String),
+    LeaveConversation(String),
 }
 
 /// The game's invitation dialog, waiting for the player to pick friends.
@@ -302,6 +334,15 @@ pub enum Notice {
     SignedIn,
     /// The browser sign-in ran out of time.
     SignInTimedOut,
+    /// The leader of a party invited the player.
+    PartyInvitation(PartyInvitation),
+    /// A new message in a conversation, the newest one the player has not read.
+    Message {
+        conversation: String,
+        message: Message,
+    },
+    /// A stranger wrote to the player for the first time.
+    MessageRequest(Conversation),
 }
 
 /// What the launcher knows about the player's online state.
@@ -317,6 +358,8 @@ pub struct Online {
     pub invitations: Vec<Invitation>,
     pub session: Option<Session>,
     pub dialog: Option<Dialog>,
+    /// The party, the conversations and their messages.
+    pub social: Social,
     /// Friends' trophy counts by grade; `None` when they hide them from the player.
     pub cards: BTreeMap<AccountId, Option<api::Count>>,
     /// Who sees the player's trophies; `None` until the cloud said.
@@ -391,17 +434,24 @@ impl Online {
                     return Vec::new();
                 };
                 let result = answer.into_result::<serde_json::Value>();
+                let mut notices = Vec::new();
                 if let Ok(value) = &result {
-                    self.answered(&purpose, value);
+                    self.answered(&purpose, value, &mut notices);
                 }
-                vec![Notice::Answered(purpose, result)]
+                notices.push(Notice::Answered(purpose, result));
+                notices
             }
             Line::Output(Output::Event(event)) => self.event(event),
         }
     }
 
     /// Keeps what a successful answer tells about the account.
-    fn answered(&mut self, purpose: &Purpose, value: &serde_json::Value) {
+    fn answered(
+        &mut self,
+        purpose: &Purpose,
+        value: &serde_json::Value,
+        notices: &mut Vec<Notice>,
+    ) {
         match purpose {
             Purpose::BrowserSignIn { .. } => {
                 if let Ok(opened) = serde_json::from_value::<control::Opened>(value.clone()) {
@@ -433,7 +483,199 @@ impl Online {
                     *known = (*known).max(entry.minutes);
                 }
             }
+            Purpose::Party => {
+                if let Ok(state) = serde_json::from_value::<control::PartyState>(value.clone()) {
+                    self.party_changed(state.party);
+                }
+            }
+            Purpose::PartyAnswer { id, accept } => {
+                self.social.drop_party_invitation(id);
+                // A refusal answers an empty object: it says nothing about the player's party.
+                if *accept
+                    && let Ok(state) = serde_json::from_value::<control::PartyState>(value.clone())
+                {
+                    self.party_changed(state.party);
+                }
+            }
+            Purpose::Conversations => {
+                if let Ok(lists) = serde_json::from_value::<api::Conversations>(value.clone()) {
+                    self.listed(lists, notices);
+                }
+            }
+            Purpose::OpenConversation(_) | Purpose::AcceptRequest(_) => {
+                if let Ok(conversation) = serde_json::from_value::<Conversation>(value.clone()) {
+                    self.social.upsert(conversation);
+                }
+            }
+            Purpose::LeaveConversation(id) => self.social.remove(id),
+            Purpose::Messages {
+                conversation,
+                fetch,
+                announce,
+            } => {
+                if let Ok(page) = serde_json::from_value::<api::Messages>(value.clone()) {
+                    let got = self.social.ingest(conversation, *fetch, page);
+                    if let Some(next) = got.follow {
+                        self.fetch(conversation, next, *announce);
+                    }
+                    if *announce {
+                        self.announce(conversation, &got.new, notices);
+                    }
+                }
+            }
+            Purpose::SendMessage { conversation, text } => {
+                if let Ok(message) = serde_json::from_value::<Message>(value.clone()) {
+                    self.social.sent(conversation, text);
+                    let seq = message.seq;
+                    let got = self.social.ingest_sent(message);
+                    // Writing reads up to the message written.
+                    self.social.mark_read(conversation, seq);
+                    if let Some(next) = got.follow {
+                        self.fetch(conversation, next, false);
+                    }
+                }
+            }
             _ => {}
+        }
+    }
+
+    /// Keeps a party the service reported or answered, unless it is an older copy.
+    fn party_changed(&mut self, party: Option<api::Party>) {
+        let chat = party.as_ref().map(|p| p.conversation.clone());
+        if self.social.apply_party(party)
+            && let Some(chat) = chat
+            && self.social.get(&chat).is_none()
+        {
+            self.refresh_conversations();
+        }
+    }
+
+    /// Takes a fresh list of conversations and fetches what loaded threads missed.
+    fn listed(&mut self, lists: api::Conversations, notices: &mut Vec<Notice>) {
+        let listed = self.social.set_conversations(lists);
+        for (id, fetch) in listed.fetches {
+            self.fetch(&id, fetch, false);
+        }
+        notices.extend(listed.new_requests.into_iter().map(Notice::MessageRequest));
+    }
+
+    /// Asks for the list of conversations, unless that question waits already.
+    pub fn refresh_conversations(&mut self) {
+        if !self.is_waiting(|p| *p == Purpose::Conversations) {
+            self.send(Purpose::Conversations, Command::Conversations);
+        }
+    }
+
+    /// Fetches messages of a conversation. A fetch of the same kind that waits already is not
+    /// repeated; its answer asks for more when the conversation is still ahead.
+    pub fn fetch(&mut self, conversation: &str, fetch: Fetch, announce: bool) {
+        let same = |f: &Fetch| std::mem::discriminant(f) == std::mem::discriminant(&fetch);
+        let mut waiting = false;
+        for purpose in self.waiting.values_mut() {
+            if let Purpose::Messages {
+                conversation: c,
+                fetch: f,
+                announce: a,
+            } = purpose
+                && c == conversation
+                && same(f)
+            {
+                *a |= announce;
+                waiting = true;
+            }
+        }
+        if !waiting {
+            self.send(
+                Purpose::Messages {
+                    conversation: conversation.to_owned(),
+                    fetch,
+                    announce,
+                },
+                fetch.command(conversation),
+            );
+        }
+    }
+
+    /// The newest message the player has not read and did not write, as a notice.
+    fn announce(&self, conversation: &str, new: &[Message], notices: &mut Vec<Notice>) {
+        let me = self.account.as_ref().map(|a| a.id);
+        let read = self.social.get(conversation).map_or(0, |c| c.read);
+        if let Some(message) = new
+            .iter()
+            .rev()
+            .find(|m| Some(m.sender.id) != me && m.seq > read)
+        {
+            notices.push(Notice::Message {
+                conversation: conversation.to_owned(),
+                message: message.clone(),
+            });
+        }
+    }
+
+    /// Starts reading a conversation: fetches what the thread lacks.
+    pub fn open_thread(&mut self, conversation: &str) {
+        if let Some(fetch) = self.social.plan(conversation) {
+            self.fetch(conversation, fetch, false);
+        }
+    }
+
+    /// Reads further back in a conversation.
+    pub fn load_earlier(&mut self, conversation: &str) {
+        if let Some(fetch) = self.social.plan_earlier(conversation) {
+            self.fetch(conversation, fetch, false);
+        }
+    }
+
+    /// The player looks at the conversation: its newest message held counts as read, here at once
+    /// and in the cloud.
+    pub fn mark_read(&mut self, conversation: &str) {
+        if let Some(seq) = self.social.read_target(conversation)
+            && self.social.mark_read(conversation, seq)
+        {
+            self.send(
+                Purpose::MarkRead {
+                    conversation: conversation.to_owned(),
+                },
+                Command::MarkRead {
+                    conversation: conversation.to_owned(),
+                    seq,
+                },
+            );
+        }
+    }
+
+    /// Sends the draft of a conversation. False when there is nothing to send, the text is not
+    /// one the cloud takes, or the draft is on its way already.
+    pub fn send_draft(&mut self, conversation: &str) -> bool {
+        let text = self.social.draft(conversation).to_owned();
+        let sending = |p: &Purpose| matches!(p, Purpose::SendMessage { conversation: c, .. } if c == conversation);
+        if !api::is_message_text(&text) || self.is_waiting(sending) {
+            return false;
+        }
+        self.send(
+            Purpose::SendMessage {
+                conversation: conversation.to_owned(),
+                text: text.clone(),
+            },
+            Command::SendMessage {
+                conversation: conversation.to_owned(),
+                text,
+            },
+        );
+        true
+    }
+
+    /// Opens the direct conversation with a friend, unless there is one.
+    pub fn open_direct(&mut self, account: AccountId) {
+        let opening = |p: &Purpose| matches!(p, Purpose::OpenConversation(a) if *a == account);
+        if self.social.direct_with(account).is_none() && !self.is_waiting(opening) {
+            self.send(
+                Purpose::OpenConversation(account),
+                Command::OpenConversation {
+                    accounts: vec![account],
+                    name: None,
+                },
+            );
         }
     }
 
@@ -572,6 +814,7 @@ impl Online {
                 if self.account.is_none() {
                     self.friends = FriendLists::default();
                     self.invitations.clear();
+                    self.social = Social::default();
                     self.session = None;
                     self.cards.clear();
                     self.privacy = None;
@@ -618,17 +861,37 @@ impl Online {
                     notices.push(Notice::SignInTimedOut);
                 }
             }
-            // Parties and messages get their own screens; until then the launcher leaves them.
-            Event::Party { .. }
-            | Event::PartyInvitation { .. }
-            | Event::PartyInvitationGone { .. }
-            | Event::Conversations(_)
-            | Event::Message { .. }
-            | Event::MessageRequest { .. }
-            | Event::Read { .. }
-            | Event::Conversation { .. }
-            | Event::ConversationGone { .. }
-            | Event::Unknown => {}
+            Event::Party { party } => self.party_changed(party),
+            Event::PartyInvitation { invitation } => {
+                self.social.add_party_invitation(invitation.clone());
+                notices.push(Notice::PartyInvitation(invitation));
+            }
+            Event::PartyInvitationGone { id } => self.social.drop_party_invitation(&id),
+            Event::Conversations(lists) => self.listed(lists, &mut notices),
+            Event::Message { conversation, seq } => {
+                if self.social.note_last(&conversation, seq) {
+                    if let Some(fetch) = self.social.plan(&conversation) {
+                        self.fetch(&conversation, fetch, true);
+                    }
+                } else {
+                    self.refresh_conversations();
+                }
+            }
+            // The request is in the list the cloud gives; reading it announces what is new.
+            Event::MessageRequest { .. } | Event::Conversation { .. } => {
+                self.refresh_conversations();
+            }
+            Event::Read {
+                conversation,
+                account,
+                seq,
+            } => {
+                if let Some(me) = self.account.as_ref().map(|a| a.id) {
+                    self.social.apply_read(&conversation, account, seq, me);
+                }
+            }
+            Event::ConversationGone { id } => self.social.remove(&id),
+            Event::Unknown => {}
         }
         notices
     }
@@ -1110,6 +1373,347 @@ mod tests {
             .map(|f| f.account.handle.as_str())
             .collect();
         assert_eq!(order, ["Zoe", "amy", "Bea", "Abe", "zed"]);
+    }
+
+    fn chat(id: &str, last: u64, read: u64, request: bool) -> api::Conversation {
+        api::Conversation {
+            id: id.into(),
+            kind: api::ConversationKind::Direct,
+            name: None,
+            members: vec![account(1, "Alec"), account(2, "Lumen")],
+            last,
+            read,
+            marks: Vec::new(),
+            updated: last,
+            request,
+            party: None,
+        }
+    }
+
+    fn texts(id: &str, from: u64, to: u64, sender: u64) -> api::Messages {
+        api::Messages {
+            messages: (from..=to)
+                .map(|seq| api::Message {
+                    conversation: id.into(),
+                    seq,
+                    sender: account(sender, "x"),
+                    text: format!("m{seq}"),
+                    created: seq,
+                })
+                .collect(),
+            last: to,
+        }
+    }
+
+    fn list(
+        online: &mut Online,
+        conversations: Vec<api::Conversation>,
+        requests: Vec<api::Conversation>,
+    ) -> Vec<Notice> {
+        online.apply(event(Event::Conversations(api::Conversations {
+            conversations,
+            requests,
+        })))
+    }
+
+    /// Answers the newest command in the outbox and returns the notices.
+    fn answer_last(online: &mut Online, value: impl serde::Serialize) -> Vec<Notice> {
+        let id = online.next;
+        online.apply(Line::Output(Output::Answer(control::Answer::ok(id, value))))
+    }
+
+    #[test]
+    fn a_new_message_is_fetched_after_the_number_held_and_announced_once() {
+        let mut online = Online::default();
+        signed_in(&mut online);
+        online.take_outbox();
+        list(&mut online, vec![chat("c", 4, 4, false)], vec![]);
+        online.open_thread("c");
+        let lines = online.take_outbox();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("\"do\":\"messages\"") && lines[0].contains("\"after\":null"));
+        let notices = answer_last(&mut online, texts("c", 1, 4, 2));
+        assert!(
+            !notices.iter().any(|n| matches!(n, Notice::Message { .. })),
+            "opening a conversation is not news"
+        );
+
+        // A message arrives while the panel shows something else.
+        online.apply(event(Event::Message {
+            conversation: "c".into(),
+            seq: 5,
+        }));
+        assert_eq!(
+            online.social.unread("c"),
+            1,
+            "the mark shows before the text is here"
+        );
+        let lines = online.take_outbox();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("\"after\":4") && lines[0].contains("\"limit\":100"));
+        // A second event for the same number does not send a second fetch.
+        online.apply(event(Event::Message {
+            conversation: "c".into(),
+            seq: 5,
+        }));
+        assert!(online.take_outbox().is_empty());
+        let notices = answer_last(&mut online, texts("c", 5, 5, 2));
+        let announced: Vec<_> = notices
+            .iter()
+            .filter_map(|n| match n {
+                Notice::Message { message, .. } => Some(message.seq),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(announced, [5]);
+        assert_eq!(online.social.messages("c").len(), 5);
+
+        // The player's own messages, from another device, are no news.
+        online.apply(event(Event::Message {
+            conversation: "c".into(),
+            seq: 6,
+        }));
+        online.take_outbox();
+        let notices = answer_last(&mut online, texts("c", 6, 6, 1));
+        assert!(!notices.iter().any(|n| matches!(n, Notice::Message { .. })));
+    }
+
+    #[test]
+    fn a_message_for_an_unknown_conversation_reads_the_list() {
+        let mut online = Online::default();
+        signed_in(&mut online);
+        online.take_outbox();
+        online.apply(event(Event::Message {
+            conversation: "new".into(),
+            seq: 1,
+        }));
+        let lines = online.take_outbox();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("\"do\":\"conversations\""));
+        online.apply(event(Event::Conversation { id: "new".into() }));
+        assert!(
+            online.take_outbox().is_empty(),
+            "the question waits already"
+        );
+    }
+
+    #[test]
+    fn after_a_reconnect_loaded_conversations_catch_up_silently() {
+        let mut online = Online::default();
+        signed_in(&mut online);
+        online.take_outbox();
+        list(
+            &mut online,
+            vec![chat("a", 3, 3, false), chat("b", 2, 2, false)],
+            vec![],
+        );
+        online.open_thread("a");
+        online.take_outbox();
+        answer_last(&mut online, texts("a", 1, 3, 2));
+        // The connection came back with news in both conversations.
+        let notices = list(
+            &mut online,
+            vec![chat("a", 5, 3, false), chat("b", 4, 2, false)],
+            vec![],
+        );
+        assert!(notices.is_empty());
+        let lines = online.take_outbox();
+        assert_eq!(lines.len(), 1, "b was never opened: its count is enough");
+        assert!(lines[0].contains("\"after\":3"));
+        let notices = answer_last(&mut online, texts("a", 4, 5, 2));
+        assert!(
+            !notices.iter().any(|n| matches!(n, Notice::Message { .. })),
+            "a recovery does not toast every missed message"
+        );
+        assert_eq!(online.social.unread("a"), 2);
+        assert_eq!(online.social.unread("b"), 2);
+        assert_eq!(online.social.unread_total(), 4);
+    }
+
+    #[test]
+    fn a_stranger_is_announced_after_the_first_list_only() {
+        let mut online = Online::default();
+        signed_in(&mut online);
+        online.take_outbox();
+        let first = list(&mut online, vec![], vec![chat("r1", 1, 0, true)]);
+        assert!(first.is_empty());
+        online.apply(event(Event::MessageRequest {
+            conversation: "r2".into(),
+        }));
+        assert!(online.take_outbox()[0].contains("\"do\":\"conversations\""));
+        let notices = answer_last(
+            &mut online,
+            api::Conversations {
+                conversations: vec![],
+                requests: vec![chat("r2", 1, 0, true), chat("r1", 1, 0, true)],
+            },
+        );
+        let announced: Vec<_> = notices
+            .iter()
+            .filter_map(|n| match n {
+                Notice::MessageRequest(c) => Some(c.id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(announced, ["r2"]);
+    }
+
+    #[test]
+    fn the_party_follows_its_revision_and_a_declined_invitation_keeps_it() {
+        let mut online = Online::default();
+        signed_in(&mut online);
+        online.take_outbox();
+        let party = |revision, leader| api::Party {
+            id: "p".into(),
+            leader: AccountId(leader),
+            members: vec![api::PartyMember {
+                account: account(1, "Alec"),
+                joined: 0,
+            }],
+            max_members: 8,
+            conversation: "pc".into(),
+            created: 0,
+            revision,
+        };
+        online.apply(event(Event::Party {
+            party: Some(party(2, 1)),
+        }));
+        assert!(
+            online.take_outbox()[0].contains("\"do\":\"conversations\""),
+            "the party's chat is not in the list yet"
+        );
+        online.apply(event(Event::Party {
+            party: Some(party(1, 9)),
+        }));
+        assert_eq!(online.social.party.as_ref().unwrap().leader, AccountId(1));
+
+        let id = online.send(
+            Purpose::PartyAnswer {
+                id: "i".into(),
+                accept: false,
+            },
+            Command::PartyAnswer {
+                id: "i".into(),
+                accept: false,
+            },
+        );
+        online.apply(Line::Output(Output::Answer(control::Answer::ok(id, ()))));
+        assert!(
+            online.social.party.is_some(),
+            "declining answers an empty object and changes nothing"
+        );
+
+        let invitation = api::PartyInvitation {
+            id: "i2".into(),
+            from: account(2, "Lumen"),
+            party: "p9".into(),
+            members: 2,
+            expires: 0,
+        };
+        let notices = online.apply(event(Event::PartyInvitation {
+            invitation: invitation.clone(),
+        }));
+        assert_eq!(notices, vec![Notice::PartyInvitation(invitation)]);
+        online.apply(event(Event::PartyInvitationGone { id: "i2".into() }));
+        assert!(online.social.party_invitations.is_empty());
+
+        online.apply(event(Event::Party { party: None }));
+        assert!(online.social.party.is_none());
+    }
+
+    #[test]
+    fn signing_out_forgets_the_party_and_the_messages() {
+        let mut online = Online::default();
+        signed_in(&mut online);
+        list(&mut online, vec![chat("c", 1, 0, false)], vec![]);
+        online.social.set_draft("c", "hi".into());
+        online.apply(event(Event::State {
+            cloud: Cloud::Online,
+            account: None,
+            pending: None,
+        }));
+        assert_eq!(online.social, Social::default());
+    }
+
+    #[test]
+    fn a_draft_is_sent_once_and_leaves_when_the_cloud_took_it() {
+        let mut online = Online::default();
+        signed_in(&mut online);
+        online.take_outbox();
+        list(&mut online, vec![chat("c", 2, 2, false)], vec![]);
+        online.open_thread("c");
+        online.take_outbox();
+        answer_last(&mut online, texts("c", 1, 2, 2));
+        assert!(!online.send_draft("c"), "nothing to send");
+        online.social.set_draft("c", "  \n ".into());
+        assert!(!online.send_draft("c"), "only white space");
+        online.social.set_draft("c", "On my way".into());
+        assert!(online.send_draft("c"));
+        assert!(!online.send_draft("c"), "it is on its way");
+        let lines = online.take_outbox();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("\"do\":\"send_message\"") && lines[0].contains("On my way"));
+        // A refusal keeps the text for another try.
+        let id = online.next;
+        online.apply(Line::Output(Output::Answer(control::Answer::error(
+            id,
+            Failure::new("restricted", "New account."),
+        ))));
+        assert_eq!(online.social.draft("c"), "On my way");
+        assert!(online.send_draft("c"));
+        let notices = answer_last(
+            &mut online,
+            api::Message {
+                conversation: "c".into(),
+                seq: 3,
+                sender: account(1, "Alec"),
+                text: "On my way".into(),
+                created: 3,
+            },
+        );
+        assert!(!notices.iter().any(|n| matches!(n, Notice::Message { .. })));
+        assert_eq!(online.social.draft("c"), "");
+        assert_eq!(online.social.messages("c").last().unwrap().seq, 3);
+        assert_eq!(
+            online.social.unread("c"),
+            0,
+            "writing reads up to the message"
+        );
+    }
+
+    #[test]
+    fn looking_at_a_conversation_marks_it_read_once() {
+        let mut online = Online::default();
+        signed_in(&mut online);
+        online.take_outbox();
+        list(&mut online, vec![chat("c", 3, 0, false)], vec![]);
+        online.mark_read("c");
+        assert!(online.take_outbox().is_empty(), "nothing is held to mark");
+        online.open_thread("c");
+        online.take_outbox();
+        answer_last(&mut online, texts("c", 1, 3, 2));
+        online.mark_read("c");
+        online.mark_read("c");
+        let lines = online.take_outbox();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("\"do\":\"mark_read\"") && lines[0].contains("\"seq\":3"));
+        assert_eq!(online.social.unread("c"), 0);
+    }
+
+    #[test]
+    fn a_conversation_with_a_friend_is_opened_once() {
+        let mut online = Online::default();
+        signed_in(&mut online);
+        online.take_outbox();
+        online.open_direct(AccountId(2));
+        online.open_direct(AccountId(2));
+        let lines = online.take_outbox();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("\"do\":\"open_conversation\""));
+        answer_last(&mut online, chat("c", 0, 0, false));
+        assert_eq!(online.social.direct_with(AccountId(2)).unwrap().id, "c");
+        online.open_direct(AccountId(2));
+        assert!(online.take_outbox().is_empty());
     }
 
     #[test]

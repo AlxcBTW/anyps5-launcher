@@ -70,6 +70,8 @@ pub struct Row {
     pub group_start: bool,
     /// A note that belongs to the row above: no gap between them.
     pub attached: bool,
+    /// A text row whose field takes the room the title leaves, written from the left.
+    pub wide: bool,
 }
 
 impl Row {
@@ -84,6 +86,7 @@ impl Row {
             destructive: false,
             group_start: false,
             attached: false,
+            wide: false,
         }
     }
 
@@ -105,6 +108,12 @@ impl Row {
     /// Sits right under the row above it, as its note.
     pub fn attached(mut self) -> Row {
         self.attached = true;
+        self
+    }
+
+    /// A text row whose field takes the room the title leaves.
+    pub fn wide(mut self) -> Row {
+        self.wide = true;
         self
     }
 
@@ -222,6 +231,10 @@ pub enum Change {
     Edit {
         row: RowId,
     },
+    /// Enter ended the editing of a text row.
+    Submit {
+        row: RowId,
+    },
 }
 
 impl Change {
@@ -232,14 +245,18 @@ impl Change {
             | Change::Stepper { row, .. }
             | Change::Run { row }
             | Change::Capture { row }
-            | Change::Edit { row } => row,
+            | Change::Edit { row }
+            | Change::Submit { row } => row,
         }
     }
 
     /// Value changes tick, actions and captures confirm (section 7.1).
     pub fn cue(&self) -> Cue {
         match self {
-            Change::Run { .. } | Change::Capture { .. } | Change::Edit { .. } => Cue::Select,
+            Change::Run { .. }
+            | Change::Capture { .. }
+            | Change::Edit { .. }
+            | Change::Submit { .. } => Cue::Select,
             _ => Cue::Move,
         }
     }
@@ -363,6 +380,8 @@ pub enum ListEvent {
         row: usize,
         value: String,
     },
+    /// Enter ended the editing of a text field.
+    Submit(usize),
 }
 
 /// How [`list`] draws.
@@ -439,6 +458,9 @@ pub fn list(
 
     let mut events = Vec::new();
     let mut geometry: Vec<(f32, f32)> = Vec::with_capacity(rows.len());
+    // A row keeps its identity when others come or go above it: a message arriving does not
+    // move the caret out of the field below.
+    let mut seen: std::collections::HashMap<RowId, usize> = std::collections::HashMap::new();
     let mut area = ScrollArea::vertical()
         .id_salt(id)
         .auto_shrink([false, false])
@@ -462,6 +484,11 @@ pub fn list(
                     let next_attached = rows.get(index + 1).is_some_and(|next| next.attached);
                     ui.spacing_mut().item_spacing.y =
                         if next_attached { 0.0 } else { size::ROW_GAP };
+                    let occurrence = {
+                        let count = seen.entry(rows[index].id).or_default();
+                        *count += 1;
+                        *count - 1
+                    };
                     let row = &mut rows[index];
                     if row.group_start && index > 0 {
                         ui.add_space(size::ROW_GAP);
@@ -479,7 +506,15 @@ pub fn list(
                     let out = ui
                         .scope(|ui| {
                             ui.multiply_opacity(fade);
-                            show_row(ui, row, index, focused, force, options, &mut events)
+                            show_row(
+                                ui,
+                                row,
+                                (index, occurrence),
+                                focused,
+                                force,
+                                options,
+                                &mut events,
+                            )
                         })
                         .inner;
                     geometry.push((out.rect.min.y - origin, out.rect.height()));
@@ -505,7 +540,7 @@ struct Shown {
 fn show_row(
     ui: &mut Ui,
     row: &mut Row,
-    index: usize,
+    (index, occurrence): (usize, usize),
     focused: bool,
     force: Option<Force>,
     options: &ListOptions,
@@ -522,6 +557,7 @@ fn show_row(
         destructive,
         group_start: _,
         attached,
+        wide,
     } = row;
     let caps;
     let none_label = language.text(Key::NoKey);
@@ -574,6 +610,7 @@ fn show_row(
         .focused(focused)
         .destructive(*destructive)
         .attached(*attached)
+        .wide(*wide)
         .force(force);
     if let Some(icon) = icon {
         panel_row = panel_row.icon(*icon);
@@ -584,8 +621,7 @@ fn show_row(
     if let Some(glyph) = pad_glyph {
         panel_row = panel_row.pad_glyph(*glyph);
     }
-    let _ = id;
-    let out = ui.push_id(index, |ui| panel_row.show(ui)).inner;
+    let out = ui.push_id((*id, occurrence), |ui| panel_row.show(ui)).inner;
     let rect = out.response.rect;
     if let Some(direction) = out.step {
         events.push(ListEvent::Focus(index));
@@ -614,6 +650,9 @@ fn show_row(
                 row: index,
                 value: value.clone(),
             });
+        }
+        if out.submitted {
+            events.push(ListEvent::Submit(index));
         }
     }
     Shown { rect }
@@ -644,6 +683,11 @@ pub fn apply_mouse(
             ListEvent::Text { row, value } => {
                 if let Some(r) = rows.get(row) {
                     texts.push((r.id, value));
+                }
+            }
+            ListEvent::Submit(row) => {
+                if let Some(r) = rows.get(row) {
+                    changes.push(Change::Submit { row: r.id });
                 }
             }
         }

@@ -19,10 +19,14 @@ use anyps5_core::paths::GameId;
 
 use crate::app::model::{Effect, Model};
 use crate::app::overlay::Overlay;
+use crate::screens::online_social_strings::SocialText as S;
 use crate::screens::online_strings::OnlineText as T;
 use crate::ui::focus::HomeFocus;
 use crate::ui::i18n::{Arg, Language};
 use crate::ui::icons::Icon;
+
+/// How much of a message a toast shows.
+const MESSAGE_TOAST_CHARS: usize = 60;
 
 /// How long a game start waits for the bridge's variables.
 const START_PATIENCE: Duration = Duration::from_secs(3);
@@ -290,6 +294,32 @@ impl OnlineService {
                 );
                 model.toast(text, Icon::ENVELOPE_SIMPLE);
             }
+            Notice::PartyInvitation(invitation) => {
+                let text = S::PartyInvitationArrived
+                    .format(language, &[Arg::Str(&invitation.from.handle)]);
+                model.toast(text, Icon::USERS);
+            }
+            // A message toast only tells what the open panel does not already show.
+            Notice::Message { message, .. } if model.overlay != Some(Overlay::Online) => {
+                let text = S::MessageArrived.format(
+                    language,
+                    &[
+                        Arg::Str(&message.sender.handle),
+                        Arg::Str(&net::snippet(&message.text, MESSAGE_TOAST_CHARS)),
+                    ],
+                );
+                model.toast(text, Icon::ENVELOPE_SIMPLE);
+            }
+            Notice::MessageRequest(request) if model.overlay != Some(Overlay::Online) => {
+                let me = model.online.account.as_ref().map(|a| a.id);
+                let from = net::others(&request, me.unwrap_or(net::api::AccountId(0)))
+                    .first()
+                    .map(|a| a.handle.clone())
+                    .unwrap_or_default();
+                let text = S::MessageRequestArrived.format(language, &[Arg::Str(&from)]);
+                model.toast(text, Icon::ENVELOPE_SIMPLE);
+            }
+            Notice::Message { .. } | Notice::MessageRequest(_) => {}
             Notice::Dialog(_) => {
                 // The game asked to invite friends: the launcher comes forward with the picker.
                 model.effects.push(Effect::RestoreWindow);
@@ -431,6 +461,10 @@ impl OnlineService {
                 model.toast(text, Icon::FLAG);
             }
             (Purpose::Invite | Purpose::Dialog, Ok(_)) => {}
+            (Purpose::PartyInvite | Purpose::PartyMove, Ok(_)) => {
+                let text = T::InvitationsSent.text(language).to_owned();
+                model.toast(text, Icon::PAPER_PLANE_RIGHT);
+            }
             (
                 Purpose::Hello
                 | Purpose::Playing
@@ -438,7 +472,11 @@ impl OnlineService {
                 | Purpose::UploadTrophies { .. }
                 | Purpose::UploadPlaytime(_)
                 | Purpose::Cards
-                | Purpose::Privacy,
+                | Purpose::Privacy
+                | Purpose::Party
+                | Purpose::Conversations
+                | Purpose::Messages { .. }
+                | Purpose::MarkRead { .. },
                 Err(failure),
             ) => {
                 tracing::info!("net service: {}: {}", failure.code, failure.message);
@@ -572,6 +610,9 @@ fn record_env(model: &Model, game: &GameId) -> BTreeMap<String, String> {
 /// What a failure means for the player, and what to do about it.
 pub fn failure_text(failure: &Failure, language: Language) -> String {
     let code = |c: ErrorCode| failure.is(c);
+    if code(ErrorCode::Restricted) {
+        return S::Restricted.text(language).to_owned();
+    }
     let text = if failure.code == Failure::OFFLINE {
         T::Offline
     } else if code(ErrorCode::CodeWrong) {
@@ -750,6 +791,121 @@ mod tests {
         model.online.status = Status::Off;
         online.relay_only_changed(&mut model);
         assert!(model.online.take_outbox().is_empty());
+    }
+
+    fn message(from: u64, handle: &str, text: &str) -> net::api::Message {
+        net::api::Message {
+            conversation: "c".into(),
+            seq: 1,
+            sender: net::api::Account {
+                id: AccountId(from),
+                handle: handle.into(),
+            },
+            text: text.into(),
+            created: 0,
+        }
+    }
+
+    #[test]
+    fn a_new_message_toasts_only_while_the_panel_is_closed() {
+        let mut model = signed_in_model();
+        let mut ready = Vec::new();
+        let notice = || Notice::Message {
+            conversation: "c".into(),
+            message: message(2, "Lumen", "Ready when you are.\n\nSee you at the lobby"),
+        };
+        service().notice(&mut model, notice(), &mut ready);
+        assert_eq!(
+            model.toast.as_ref().map(|t| t.text.as_str()),
+            Some("Lumen: Ready when you are. See you at the lobby"),
+            "one line, the sender first"
+        );
+        model.toast = None;
+        model.open(Overlay::Online);
+        service().notice(&mut model, notice(), &mut ready);
+        assert!(model.toast.is_none(), "the open panel shows it already");
+    }
+
+    #[test]
+    fn a_long_message_is_cut_for_the_toast() {
+        let mut model = signed_in_model();
+        let mut ready = Vec::new();
+        let text = "word ".repeat(40);
+        service().notice(
+            &mut model,
+            Notice::Message {
+                conversation: "c".into(),
+                message: message(2, "Lumen", &text),
+            },
+            &mut ready,
+        );
+        let shown = model.toast.as_ref().unwrap().text.clone();
+        assert!(shown.starts_with("Lumen: word word"));
+        assert!(
+            shown.ends_with('…') && shown.chars().count() <= "Lumen: ".len() + MESSAGE_TOAST_CHARS
+        );
+    }
+
+    #[test]
+    fn a_party_invitation_and_a_stranger_toast() {
+        let mut model = signed_in_model();
+        let mut ready = Vec::new();
+        service().notice(
+            &mut model,
+            Notice::PartyInvitation(net::api::PartyInvitation {
+                id: "i".into(),
+                from: net::api::Account {
+                    id: AccountId(2),
+                    handle: "Lumen".into(),
+                },
+                party: "p".into(),
+                members: 2,
+                expires: 0,
+            }),
+            &mut ready,
+        );
+        assert_eq!(
+            model.toast.as_ref().map(|t| t.text.as_str()),
+            Some("Lumen invites you to a party"),
+            "even with the panel open: the invitation expires"
+        );
+        model.toast = None;
+        let request = net::api::Conversation {
+            id: "r".into(),
+            kind: net::api::ConversationKind::Direct,
+            name: None,
+            members: vec![
+                net::api::Account {
+                    id: AccountId(1),
+                    handle: "Alec".into(),
+                },
+                net::api::Account {
+                    id: AccountId(9),
+                    handle: "Vale".into(),
+                },
+            ],
+            last: 1,
+            read: 0,
+            marks: Vec::new(),
+            updated: 0,
+            request: true,
+            party: None,
+        };
+        service().notice(&mut model, Notice::MessageRequest(request), &mut ready);
+        assert_eq!(
+            model.toast.as_ref().map(|t| t.text.as_str()),
+            Some("Vale wants to message you")
+        );
+    }
+
+    #[test]
+    fn a_restricted_account_is_told_plainly() {
+        let restricted = Failure::new("restricted", "Too new.");
+        assert_eq!(
+            failure_text(&restricted, Language::English),
+            "New accounts can write to people who are not friends after 24 hours."
+        );
+        assert!(failure_text(&restricted, Language::Turkish).contains("24 saat"));
     }
 
     #[test]

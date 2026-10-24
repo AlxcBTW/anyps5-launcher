@@ -71,6 +71,29 @@ pub fn local_date_text(unix_micros: i64, language: Language) -> String {
     date_text(unix_micros, local_offset_seconds(unix_micros), language)
 }
 
+/// The time of a message, on a 24-hour clock: `14:32` on the day of `now`, else the day first,
+/// `Oct 22, 14:32` in English and `22 Eki 14:32` in Turkish. `offset_seconds` is the local UTC
+/// offset.
+pub fn message_time(unix: i64, now: i64, offset_seconds: i32, language: Language) -> String {
+    let local = unix + i64::from(offset_seconds);
+    let today = (now + i64::from(offset_seconds)).div_euclid(86_400);
+    let days = local.div_euclid(86_400);
+    let second_of_day = local.rem_euclid(86_400);
+    let clock = format!(
+        "{:02}:{:02}",
+        second_of_day / 3600,
+        second_of_day % 3600 / 60
+    );
+    if days == today {
+        return clock;
+    }
+    let (_, month, day) = civil_from_days(days);
+    match language {
+        Language::English => format!("{} {day}, {clock}", MONTHS_EN[month as usize - 1]),
+        Language::Turkish => format!("{day} {} {clock}", MONTHS_TR[month as usize - 1]),
+    }
+}
+
 /// `m:ss` of the start timer.
 pub fn elapsed_text(seconds: u64) -> String {
     format!("{}:{:02}", seconds / 60, seconds % 60)
@@ -175,6 +198,22 @@ mod tests {
     #[test]
     fn turkish_dates_use_month_names_and_24_hours() {
         assert_eq!(date_text(OCT_17, 0, Language::Turkish), "17 Eki 2026 21:14");
+    }
+
+    #[test]
+    fn a_message_shows_the_day_only_when_it_is_not_today() {
+        let noon = 1_792_670_400; // 2026-10-22 12:00 UTC
+        let en = Language::English;
+        assert_eq!(message_time(noon + 150, noon, 0, en), "12:02");
+        assert_eq!(message_time(noon - 86_400, noon, 0, en), "Oct 21, 12:00");
+        assert_eq!(
+            message_time(noon - 86_400, noon, 0, Language::Turkish),
+            "21 Eki 12:00"
+        );
+        // Half past eleven in the evening, UTC, is already tomorrow two hours east.
+        let late = noon + 11 * 3600 + 1800;
+        assert_eq!(message_time(late, late, 7200, en), "01:30");
+        assert_eq!(message_time(noon, late, 7200, en), "Oct 22, 14:00");
     }
 
     #[test]

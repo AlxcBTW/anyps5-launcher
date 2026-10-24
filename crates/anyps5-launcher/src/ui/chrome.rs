@@ -346,6 +346,8 @@ pub struct PanelRow<'a> {
     pub force: Option<Force>,
     /// A note directly under the row above: it keeps no air over its text.
     pub attached: bool,
+    /// A text field that takes the room the title leaves, written from the left: a message.
+    pub wide: bool,
     /// Language of the accessible names of the chevrons.
     pub language: Language,
 }
@@ -360,6 +362,8 @@ pub struct RowOutput {
     pub toggled: bool,
     /// The text field changed.
     pub text_changed: bool,
+    /// Enter ended the text field's editing.
+    pub submitted: bool,
 }
 
 /// Chevrons rest quiet on a card and come up on the focused row.
@@ -379,11 +383,16 @@ impl<'a> PanelRow<'a> {
             pad_glyph: None,
             force: None,
             attached: false,
+            wide: false,
             language: Language::English,
         }
     }
     pub fn attached(mut self, attached: bool) -> Self {
         self.attached = attached;
+        self
+    }
+    pub fn wide(mut self, wide: bool) -> Self {
+        self.wide = wide;
         self
     }
     pub fn pad_glyph(mut self, glyph: components::PadGlyph) -> Self {
@@ -447,6 +456,7 @@ impl<'a> PanelRow<'a> {
             step: None,
             toggled: false,
             text_changed: false,
+            submitted: false,
         }
     }
 
@@ -456,10 +466,13 @@ impl<'a> PanelRow<'a> {
         match &self.control {
             RowControl::Caption => WidgetInfo::labeled(Role::Label, true, self.title),
             RowControl::Info { value } => {
-                let name = match value {
+                let mut name = match value {
                     Some(v) => format!("{}: {v}", self.title),
                     None => self.title.to_owned(),
                 };
+                if let Some(detail) = self.detail {
+                    name = format!("{name}, {detail}");
+                }
                 WidgetInfo::labeled(Role::Label, true, name)
             }
             RowControl::Toggle { on, .. } => {
@@ -488,7 +501,10 @@ impl<'a> PanelRow<'a> {
                 info
             }
             RowControl::Action | RowControl::Command | RowControl::Text { .. } => {
-                WidgetInfo::labeled(Role::Button, true, self.title)
+                // What the row says under its title is read after its name.
+                let mut info = WidgetInfo::labeled(Role::Button, true, self.title);
+                info.current_text_value = self.detail.map(str::to_owned);
+                info
             }
         }
     }
@@ -523,13 +539,19 @@ impl<'a> PanelRow<'a> {
         };
         let text_width =
             (width - 2.0 * pad - icon_block - glyph_block - value_width - 12.0).max(40.0);
+        // A wide field shows its title as the hint inside the field, not beside it.
+        let title_text = if self.wide && matches!(self.control, RowControl::Text { .. }) {
+            ""
+        } else {
+            self.title
+        };
         let title_style = ty::ROW_TITLE;
         let title_galley = {
             let shrink = {
                 let natural = text::layout(
                     &painter,
                     title_style,
-                    self.title,
+                    title_text,
                     Color32::WHITE,
                     text_width,
                 );
@@ -537,7 +559,7 @@ impl<'a> PanelRow<'a> {
             };
             let style = text::scaled(title_style, shrink);
             let mut job = LayoutJob::simple(
-                self.title.to_owned(),
+                title_text.to_owned(),
                 style.font(),
                 Color32::PLACEHOLDER,
                 text_width,
@@ -580,6 +602,7 @@ impl<'a> PanelRow<'a> {
             step: None,
             toggled: false,
             text_changed: false,
+            submitted: false,
         };
         if !ui.is_rect_visible(rect) {
             return out;
@@ -600,6 +623,15 @@ impl<'a> PanelRow<'a> {
 
         let fg = mix(Color32::WHITE, Color32::BLACK, t);
         let dim = |factor: f32| fade(fg, factor);
+        if self.wide && matches!(self.control, RowControl::Text { .. }) {
+            // A field that fills the row would pass for one more row: its outline says it takes text.
+            painter.rect_stroke(
+                bg_rect,
+                corner(radius::ROW),
+                egui::Stroke::new(1.0, dim(0.22)),
+                egui::StrokeKind::Inside,
+            );
+        }
         let destructive = self.destructive;
         let mut x = rect.min.x + pad;
         if let Some(icon) = self.icon {
@@ -675,6 +707,15 @@ impl<'a> PanelRow<'a> {
             RowControl::Info { value } => value.map_or(0.0, |v| {
                 text::width(painter, ty::ROW_INFO, v).min(row_width * 0.4)
             }),
+            RowControl::Text { .. } if self.wide => {
+                // The field takes the whole row; the title is its hint while it is empty.
+                let icon = if self.icon.is_some() || self.pad_glyph.is_some() {
+                    size::ROW_ICON_BOX + 14.0
+                } else {
+                    0.0
+                };
+                (row_width - 2.0 * size::ROW_PADDING_X - icon).max(size::TEXT_FIELD_WIDTH)
+            }
             RowControl::Text { .. } => size::TEXT_FIELD_WIDTH,
             RowControl::Keys {
                 caps,
@@ -717,6 +758,7 @@ impl<'a> PanelRow<'a> {
         let chevron_box = size::CHEVRON_BOX;
         let row_id = out.response.id;
         let title = self.title;
+        let wide = self.wide;
         let language = self.language;
         let chevron = |ui: &mut Ui, at: Rect, icon: Icon, enabled: bool, step: i8, glyph: f32| {
             let r = ui.interact(
@@ -902,18 +944,25 @@ impl<'a> PanelRow<'a> {
             }
             RowControl::Text { value } => {
                 let field = Rect::from_center_size(rect.center(), vec2(rect.width(), 30.0));
+                let (align, layout) = if wide {
+                    (Align2::LEFT_CENTER, Layout::left_to_right(Align::Center))
+                } else {
+                    (Align2::RIGHT_CENTER, Layout::right_to_left(Align::Center))
+                };
                 let edit = TextEdit::singleline(*value)
                     .font(ty::CHOICE_VALUE.font())
-                    .align(Align2::RIGHT_CENTER)
+                    .hint_text(
+                        egui::RichText::new(if wide { title } else { "" })
+                            .font(ty::CHOICE_VALUE.font()),
+                    )
+                    .align(align)
                     .frame(egui::Frame::NONE)
                     .desired_width(field.width())
                     .text_color(fg)
                     .margin(egui::Margin::ZERO);
-                let mut child = ui.new_child(
-                    UiBuilder::new()
-                        .max_rect(field)
-                        .layout(Layout::right_to_left(Align::Center)),
-                );
+                let mut child = ui.new_child(UiBuilder::new().max_rect(field).layout(layout));
+                // The hint takes the row's ink, a little dimmer, on the light focused row too.
+                child.visuals_mut().weak_text_color = Some(fade(fg, 0.62));
                 // A keyboard or pad "select" on the row asks for the caret (see `screens::rows`).
                 let edit_id = row_id.with("text-edit");
                 let want_focus = ctx
@@ -924,6 +973,8 @@ impl<'a> PanelRow<'a> {
                 }
                 let response = child.add(edit.id(edit_id));
                 out.text_changed = response.changed();
+                out.submitted =
+                    response.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter));
             }
             RowControl::Keys {
                 caps,

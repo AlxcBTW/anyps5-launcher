@@ -138,7 +138,8 @@ impl Gallery {
         };
         let page = options.page;
         let mut shell = Shell::headless(cc, theme);
-        shell.language = options.language;
+        let language = options.language;
+        shell.language = language;
         let clock =
             BackgroundClock::starting_at(f64::from(options.time.unwrap_or(STILL_TIME_FULL)));
         shell.backdrop = crate::ui::background::Backdrop::with_clock(theme, clock);
@@ -150,7 +151,9 @@ impl Gallery {
             shot_requested: false,
             sample_art: None,
             screens: match page {
-                Page::Screen(page) => Some(crate::screens::gallery::ScreenGallery::new(page)),
+                Page::Screen(page) => {
+                    Some(crate::screens::gallery::ScreenGallery::new(page, language))
+                }
                 _ => None,
             },
         }

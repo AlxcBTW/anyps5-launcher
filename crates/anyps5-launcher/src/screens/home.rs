@@ -216,8 +216,28 @@ fn top_bar(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<P
         .as_ref()
         .map_or(cx.model.prefs.profile_name.as_str(), |a| a.handle.as_str());
     let focused = visible && cx.model.focus == HomeFocus::Top(2);
-    let label = crate::screens::online_strings::OnlineText::Online.text(language);
-    if profile_button(&mut row, name, accent, focused, online.is_online(), label).clicked() {
+    let unread = online.social.unread_total();
+    let mut label = crate::screens::online_strings::OnlineText::Online
+        .text(language)
+        .to_owned();
+    if unread > 0 {
+        label = format!(
+            "{label}, {}",
+            crate::screens::online_social_strings::SocialText::ProfileUnread
+                .format(language, &[crate::ui::i18n::Arg::Int(unread as i64)])
+        );
+    }
+    if profile_button(
+        &mut row,
+        name,
+        accent,
+        focused,
+        online.is_online(),
+        unread,
+        &label,
+    )
+    .clicked()
+    {
         presses.push(Press::Focus(HomeFocus::Top(2)));
     }
     row.add_space(group_gap - button_gap);
@@ -239,12 +259,25 @@ fn profile_button(
     accent: Color32,
     focused: bool,
     online: bool,
+    unread: u64,
     label: &str,
 ) -> egui::Response {
     let painter = ui.painter().clone();
     let inset = (size::ICON_BUTTON - size::AVATAR) * 0.5;
     let name_width = text::width(&painter, ty::PROFILE, name);
-    let width = inset + size::AVATAR + 10.0 + name_width + 16.0;
+    // Unread messages: a small count in ink after the name, so the dot of being online stays the
+    // accent's alone.
+    let count = match unread {
+        0 => String::new(),
+        1..=9 => unread.to_string(),
+        _ => "9+".to_owned(),
+    };
+    let badge_width = if count.is_empty() {
+        0.0
+    } else {
+        (text::width(&painter, BADGE, &count) + 12.0).max(BADGE_HEIGHT) + 8.0
+    };
+    let width = inset + size::AVATAR + 10.0 + name_width + 16.0 + badge_width;
     let it = components::interact(
         ui,
         vec2(width, size::ICON_BUTTON),
@@ -297,7 +330,7 @@ fn profile_button(
         painter.circle_filled(dot, 6.0 * s, ring);
         painter.circle_filled(dot, 4.0 * s, accent);
     }
-    text::paint(
+    let shown = text::paint(
         &painter,
         pos2(avatar.x + avatar_r + 10.0 * s, rect.center().y),
         Align2::LEFT_CENTER,
@@ -305,8 +338,34 @@ fn profile_button(
         name,
         theme::mix(white(0.9), Color32::BLACK, it.focus),
     );
+    if !count.is_empty() {
+        // Light on the dark pill, dark on the light one it becomes when focused.
+        let w = (text::width(&painter, BADGE, &count) + 12.0).max(BADGE_HEIGHT) * s;
+        let h = BADGE_HEIGHT * s;
+        let badge = Rect::from_min_size(
+            pos2(shown.max.x + 8.0 * s, rect.center().y - h * 0.5),
+            vec2(w, h),
+        );
+        painter.rect_filled(
+            badge,
+            components::corner(h * 0.5),
+            theme::mix(white(0.92), Color32::BLACK, it.focus),
+        );
+        text::paint(
+            &painter,
+            badge.center(),
+            Align2::CENTER_CENTER,
+            BADGE,
+            &count,
+            theme::mix(Color32::BLACK, Color32::WHITE, it.focus),
+        );
+    }
     it.response
 }
+
+/// The unread count's type and height.
+const BADGE: theme::TextStyle = theme::TextStyle::new(13.0, Weight::Bold);
+const BADGE_HEIGHT: f32 = 20.0;
 
 // ---------------------------------------------------------------------------------------------
 // Tile row

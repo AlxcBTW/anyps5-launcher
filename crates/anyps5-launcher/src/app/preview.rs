@@ -7,7 +7,8 @@
 //!
 //! Scenes: `onboarding0`, `onboarding1`, `onboarding2` (folder chosen), `onboarding2-empty`,
 //! `home`, `home-actions`, `home-trophies`, `home-locked`, `home-unlocking`, `home-relinking`,
-//! `home-failed`, `home-queued`, `home-running`, `home-outdated`, `home-diagnosis`, `home-theme1`,
+//! `home-failed`, `home-queued`, `home-running`, `home-outdated`, `home-diagnosis`, `home-messages` (the
+//! profile button with unread messages), `home-theme1`,
 //! `home-theme2`, `home-noartwork`, `home-empty`, `home-scanning`, `home-nofolder`, `starting`,
 //! `toast`. The games, their icons and artwork are generated here (nothing of any real game is in
 //! the repository); the clock of the backdrop is fixed, so a scene always renders the same.
@@ -50,6 +51,8 @@ pub enum Scene {
     HomeRunning,
     HomeOutdated,
     HomeDiagnosis,
+    /// Signed in with unread messages: the count on the profile button.
+    HomeMessages,
     HomeTheme(u32),
     HomeNoArtwork,
     HomeEmpty,
@@ -77,6 +80,7 @@ impl Scene {
             "home-running" => Scene::HomeRunning,
             "home-outdated" => Scene::HomeOutdated,
             "home-diagnosis" => Scene::HomeDiagnosis,
+            "home-messages" => Scene::HomeMessages,
             "home-theme1" => Scene::HomeTheme(1),
             "home-theme2" => Scene::HomeTheme(2),
             "home-noartwork" => Scene::HomeNoArtwork,
@@ -89,7 +93,7 @@ impl Scene {
         })
     }
 
-    pub const ALL_NAMES: [&'static str; 23] = [
+    pub const ALL_NAMES: [&'static str; 24] = [
         "onboarding0",
         "onboarding1",
         "onboarding2",
@@ -105,6 +109,7 @@ impl Scene {
         "home-running",
         "home-outdated",
         "home-diagnosis",
+        "home-messages",
         "home-theme1",
         "home-theme2",
         "home-noartwork",
@@ -486,6 +491,41 @@ pub fn apply_scene(app: &mut LauncherApp, scene: Scene, games: Vec<Game>) {
                 "The game crashed (0xC0000005 ACCESS_VIOLATION).".to_owned(),
             );
             m.focus = HomeFocus::Actions(0);
+        }
+        Scene::HomeMessages => {
+            use anyps5_core::online::api::{
+                Account, AccountId, Conversation, ConversationKind, Conversations,
+            };
+            use anyps5_core::online::{Cloud, SignedIn, Status};
+            m.online.status = Status::Running;
+            m.online.cloud = Some(Cloud::Online);
+            m.online.account = Some(SignedIn {
+                id: AccountId(1),
+                handle: "Mira".into(),
+                email: "mira@example.org".into(),
+            });
+            let chat = |id: &str, with: (u64, &str), last, read, request| Conversation {
+                id: id.into(),
+                kind: ConversationKind::Direct,
+                name: None,
+                members: [(1, "Mira"), with]
+                    .iter()
+                    .map(|(id, handle)| Account {
+                        id: AccountId(*id),
+                        handle: (*handle).into(),
+                    })
+                    .collect(),
+                last,
+                read,
+                marks: Vec::new(),
+                updated: last,
+                request,
+                party: None,
+            };
+            m.online.social.set_conversations(Conversations {
+                conversations: vec![chat("a", (2, "Lumen"), 7, 5, false)],
+                requests: vec![chat("r", (9, "Nyx"), 1, 0, true)],
+            });
         }
         Scene::Starting => {
             m.starting = Some(ids[at(1)].clone());

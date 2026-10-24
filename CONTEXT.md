@@ -222,11 +222,23 @@ _Avoid_: Lock, mutex (how it is done)
 
 ### Online
 
-The network's own words (account, handle, friend, presence, session, invitation, join intent, version guard, cloud) are defined in [anyplay-gg/network](https://github.com/anyplay-gg/network/blob/main/CONTEXT.md). The launcher adds these:
+The network's own words (account, handle, friend, presence, session, invitation, join intent, version guard, cloud, party, party leader, conversation, message, message number, read mark, message request) are defined in [anyplay-gg/network](https://github.com/anyplay-gg/network/blob/main/CONTEXT.md). The launcher adds these:
 
 **Online area**:
 The side panel the profile opens: signing in, the friends and their presence, requests, invitations and the account.
 _Avoid_: Social, community (that is the layout gallery), friends list (one part of it)
+
+**Unread mark**:
+The count on the profile button, and the same number on the Messages row and page: every message the player has not read, those of message requests included. It is an upper bound, since a block can hide some message numbers. Opening a conversation reads it.
+_Avoid_: Badge (the code's word), notification count
+
+**Draft**:
+The text the player typed in a conversation and has not sent. The launcher keeps it per conversation until the cloud took the message, so a refusal or a closed panel loses nothing.
+_Avoid_: Unsent message
+
+**Plain text**:
+How the launcher shows every message: as the characters the sender wrote, minus control and direction-changing characters. Nothing in it is interpreted: no link opens, no markup applies, nothing loads.
+_Avoid_: Sanitised, escaped (those say how, not what the player sees)
 
 **Net service**:
 The program `anyplay-net` that the launcher starts as its child once the player signs in on a PC, and talks to over its standard streams. A release build of the launcher carries it inside and writes it to `Network\bin` on first use.
