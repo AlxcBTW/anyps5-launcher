@@ -66,13 +66,13 @@ FILETYPE 0x1
     {{
         BLOCK "040904B0"
         {{
-            VALUE "CompanyName", "AnyPS5 Launcher contributors"
-            VALUE "FileDescription", "AnyPS5 Launcher"
+            VALUE "CompanyName", "AnyPlay Launcher contributors"
+            VALUE "FileDescription", "AnyPlay Launcher"
             VALUE "FileVersion", "{version}"
-            VALUE "InternalName", "anyps5-launcher"
+            VALUE "InternalName", "anyplay-launcher"
             VALUE "LegalCopyright", "GPL-2.0-only"
-            VALUE "OriginalFilename", "anyps5-launcher.exe"
-            VALUE "ProductName", "AnyPS5 Launcher"
+            VALUE "OriginalFilename", "anyplay-launcher.exe"
+            VALUE "ProductName", "AnyPlay Launcher"
             VALUE "ProductVersion", "{version}"
         }}
     }}

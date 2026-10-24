@@ -1,6 +1,6 @@
 [package]
 name = "anyps5-launcher"
-description = "Native Windows launcher for AnyPS5"
+description = "AnyPlay Launcher, the native launcher for AnyPS5 on Windows and Linux"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,7 +10,7 @@ publish = false
 build = "build.rs"
 
 [[bin]]
-name = "anyps5-launcher"
+name = "anyplay-launcher"
 path = "src/main.rs"
 
 [dependencies]

@@ -159,7 +159,7 @@ pub enum SettingsAction {
     OpenWhatsNew(String),
     /// "Restart Now" on the About page: close, and start the staged launcher.
     RestartNow,
-    /// "Open AnyPS5 Links with This Launcher" was switched: write or remove the registration.
+    /// "Open AnyPlay Links with This Launcher" was switched: write or remove the registration.
     SetLinks(bool),
     Quit,
 }
