@@ -20,25 +20,20 @@ pub enum OnlineText {
     CloudHint,
     /// Toast: the address is not an http or https URL.
     CloudInvalid,
-    Email,
-    SendCode,
     Sending,
     SignInNote,
     NeedsCloud,
-    /// `%@` = the address.
-    CodeSent,
-    Code,
     SignIn,
-    OtherAddress,
-    CodeHint,
-    NewAccount,
-    NewAccountSubtitle,
     Handle,
-    HandleHint,
-    AgeConfirm,
-    AgeNote,
-    AgeNeeded,
     CreateAccount,
+    /// Subtitle while the browser sign-in waits.
+    ContinueInBrowser,
+    OpenAgain,
+    BrowserNote,
+    /// Toast: the browser sign-in ran out of time.
+    SignInTimedOut,
+    ManageAccount,
+    ManageAccountDetail,
     StatusOnline,
     StatusConnecting,
     StatusOffline,
@@ -89,8 +84,6 @@ pub enum OnlineText {
     You,
     Account,
     SignOut,
-    DeleteAccount,
-    DeleteAsk,
     /// `%@` = the game.
     PickerTitle,
     /// `%@` = how many at most.
@@ -111,7 +104,6 @@ pub enum OnlineText {
     /// `%@` = the handle.
     BlockedToast,
     Reported,
-    Deleted,
     /// `%@` = the friend, `%@` = the game.
     Joining,
     InvitationsSent,
@@ -167,30 +159,20 @@ impl OnlineText {
                 "A cloud of your own, or of friends who run one. Ask whoever runs it for its address, such as https://cloud.example.org."
             }
             OnlineText::CloudInvalid => "Enter an address that starts with https://",
-            OnlineText::Email => "E-mail",
-            OnlineText::SendCode => "Send Code",
             OnlineText::Sending => "Sending…",
             OnlineText::SignInNote => {
-                "There is no password: each PC signs in with a code sent to your e-mail. The launcher contacts the cloud only once you sign in."
+                "You sign in or create your account on the cloud's page in your browser. Nothing goes online before that."
             }
             OnlineText::NeedsCloud => "Set up the cloud first.",
-            OnlineText::CodeSent => "Code sent to %@",
-            OnlineText::Code => "Code",
             OnlineText::SignIn => "Sign In",
-            OnlineText::OtherAddress => "Use Another Address",
-            OnlineText::CodeHint => "The code is valid for 10 minutes.",
-            OnlineText::NewAccount => "Create Your Account",
-            OnlineText::NewAccountSubtitle => "Choose the name your friends see",
             OnlineText::Handle => "Name",
-            OnlineText::HandleHint => {
-                "3 to 16 letters, digits, - or _, starting with a letter. The name stays with the account."
-            }
-            OnlineText::AgeConfirm => "I Am 16 or Older",
-            OnlineText::AgeNote => {
-                "Younger players need a parent's consent, which this version cannot ask for yet."
-            }
-            OnlineText::AgeNeeded => "Confirm your age above first.",
             OnlineText::CreateAccount => "Create Account",
+            OnlineText::ContinueInBrowser => "Continue in your browser",
+            OnlineText::OpenAgain => "Open the Page Again",
+            OnlineText::BrowserNote => "When you are done there, the launcher signs in by itself.",
+            OnlineText::SignInTimedOut => "The sign-in timed out. Try again.",
+            OnlineText::ManageAccount => "Manage Account",
+            OnlineText::ManageAccountDetail => "E-mail, passkeys, devices and deletion",
             OnlineText::StatusOnline => "Online",
             OnlineText::StatusConnecting => "Connecting…",
             OnlineText::StatusOffline => "Offline, trying again",
@@ -238,10 +220,6 @@ impl OnlineText {
             OnlineText::You => "You",
             OnlineText::Account => "Account",
             OnlineText::SignOut => "Sign Out",
-            OnlineText::DeleteAccount => "Delete Account",
-            OnlineText::DeleteAsk => {
-                "This deletes your account, your friends and your requests on this cloud. It cannot be undone."
-            }
             OnlineText::PickerTitle => "Invite to %@",
             OnlineText::PickerSubtitle => "Pick up to %@ friends",
             OnlineText::SendInvitations => "Send Invitations",
@@ -253,7 +231,6 @@ impl OnlineText {
             OnlineText::InvitationArrived => "%@ invites you to %@",
             OnlineText::BlockedToast => "%@ is blocked",
             OnlineText::Reported => "Report sent. Thank you.",
-            OnlineText::Deleted => "Your account was deleted",
             OnlineText::Joining => "Joining %@ in %@",
             OnlineText::InvitationsSent => "Invitations sent",
             OnlineText::Offline => {
@@ -316,30 +293,20 @@ impl OnlineText {
                 "Kendi bulutun ya da bir tane işleten arkadaşlarının bulutu. Adresi işleten kişiden iste, örneğin https://cloud.example.org."
             }
             OnlineText::CloudInvalid => "https:// ile başlayan bir adres gir",
-            OnlineText::Email => "E-posta",
-            OnlineText::SendCode => "Kod Gönder",
             OnlineText::Sending => "Gönderiliyor…",
             OnlineText::SignInNote => {
-                "Şifre yok: her bilgisayar e-postana gönderilen bir kodla giriş yapar. Başlatıcı buluta yalnızca giriş yaptığında bağlanır."
+                "Giriş yapma ve hesap oluşturma tarayıcında, bulutun kendi sayfasında olur. Bundan önce hiçbir şey çevrimiçi olmaz."
             }
             OnlineText::NeedsCloud => "Önce bulutu ayarla.",
-            OnlineText::CodeSent => "Kod %@ adresine gönderildi",
-            OnlineText::Code => "Kod",
             OnlineText::SignIn => "Giriş Yap",
-            OnlineText::OtherAddress => "Başka Bir Adres Kullan",
-            OnlineText::CodeHint => "Kod 10 dakika geçerlidir.",
-            OnlineText::NewAccount => "Hesabını Oluştur",
-            OnlineText::NewAccountSubtitle => "Arkadaşlarının göreceği adı seç",
             OnlineText::Handle => "Ad",
-            OnlineText::HandleHint => {
-                "Harfle başlayan, 3 ile 16 arası harf, rakam, - veya _. Ad hesapla birlikte kalır."
-            }
-            OnlineText::AgeConfirm => "16 Yaşında veya Daha Büyüğüm",
-            OnlineText::AgeNote => {
-                "Daha küçük oyuncular ebeveyn onayı gerektirir; bu sürüm bunu henüz isteyemez."
-            }
-            OnlineText::AgeNeeded => "Önce yukarıda yaşını onayla.",
             OnlineText::CreateAccount => "Hesap Oluştur",
+            OnlineText::ContinueInBrowser => "Tarayıcında devam et",
+            OnlineText::OpenAgain => "Sayfayı Yeniden Aç",
+            OnlineText::BrowserNote => "Orada işin bitince başlatıcı kendiliğinden giriş yapar.",
+            OnlineText::SignInTimedOut => "Girişin süresi doldu. Yeniden dene.",
+            OnlineText::ManageAccount => "Hesabı Yönet",
+            OnlineText::ManageAccountDetail => "E-posta, geçiş anahtarları, cihazlar ve silme",
             OnlineText::StatusOnline => "Çevrimiçi",
             OnlineText::StatusConnecting => "Bağlanıyor…",
             OnlineText::StatusOffline => "Çevrimdışı, yeniden deneniyor",
@@ -387,10 +354,6 @@ impl OnlineText {
             OnlineText::You => "Sen",
             OnlineText::Account => "Hesap",
             OnlineText::SignOut => "Çıkış Yap",
-            OnlineText::DeleteAccount => "Hesabı Sil",
-            OnlineText::DeleteAsk => {
-                "Bu, bu buluttaki hesabını, arkadaşlarını ve isteklerini siler. Geri alınamaz."
-            }
             OnlineText::PickerTitle => "%@ oyununa davet et",
             OnlineText::PickerSubtitle => "En fazla %@ arkadaş seç",
             OnlineText::SendInvitations => "Davetleri Gönder",
@@ -402,7 +365,6 @@ impl OnlineText {
             OnlineText::InvitationArrived => "%@ seni %@ oyununa davet ediyor",
             OnlineText::BlockedToast => "%@ engellendi",
             OnlineText::Reported => "Şikâyet gönderildi. Teşekkürler.",
-            OnlineText::Deleted => "Hesabın silindi",
             OnlineText::Joining => "%@ kişisinin %@ oyununa katılınıyor",
             OnlineText::InvitationsSent => "Davetler gönderildi",
             OnlineText::Offline => "Buluta ulaşılamıyor. Bağlantını kontrol edip yeniden dene.",
@@ -461,7 +423,6 @@ mod tests {
     use super::*;
 
     const ALL: &[OnlineText] = &[
-        OnlineText::CodeSent,
         OnlineText::Playing,
         OnlineText::PlayingJoinable,
         OnlineText::ReportTitle,

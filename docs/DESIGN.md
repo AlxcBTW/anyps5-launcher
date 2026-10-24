@@ -2056,14 +2056,13 @@ The launcher's side of the AnyPlay network ([anyplay-gg/network](https://github.
 
 | Page | Title / subtitle | Rows |
 |---|---|---|
-| Start | "Online" / "Play with your friends over the internet" | Cloud (action, detail "AnyPlay" or the address), E-mail (text), Send Code (command), note: no password, nothing goes online before sign-in |
+| Start | "Online" / "Play with your friends over the internet" | Sign In and Create Account (commands; both open the cloud's page in the system browser, detail "Set up the cloud first." without a cloud), Cloud (action, detail "AnyPlay" or the address), note: signing in and creating an account happen in the browser, nothing goes online before |
 | Cloud | "Cloud" / "The address of the cloud you sign in to" | Address (text), Use This Cloud (command; detail when the address is not https or loopback http), Use the AnyPlay Cloud (only with an own cloud), note |
-| Code | "Online" / "Code sent to …" | Code (text), Sign In, note "valid for 10 minutes", Use Another Address |
-| Handle | "Create Your Account" / "Choose the name your friends see" | Name (text) with its rule as a note below, "I Am 16 or Older" (toggle) with the consent note, Create Account (asks for the toggle first) |
+| Browser | "Online" / "Continue in your browser" | Open the Page Again, Cancel, note: the launcher signs in by itself when the browser is done |
 | Home | the handle / Online, Connecting… or Offline, trying again | Invitations, Friend Requests, Playing Together (members with Direct, Through a relay or Connecting…), Friends (joinable first, then playing, online, offline; by name), Add a Friend, Sent Requests, Account |
 | Friend | the handle / what they play | Join Game (only when their session is open to friends; detail "2 of 4 players"), Invite to Your Game (when you are in a session they are not), Trophies (their gamer card: the total, the grades they have below it, highest first; "None yet" or "Hidden"), Remove Friend, Block (destructive), Report |
 | Request, Sent, Blocked, Invitation | the handle or "… invites you" | Accept / Decline / Block; Withdraw Request; Unblock; Join Game / Decline |
-| Add a Friend, Report, Account, Delete | | the name field and Send Request; the reason choice and Send Report; e-mail, cloud, Hide Your IP Address (toggle) with its note, Who Sees Your Trophies (Friends, Everyone, Only You) with its note, the blocked, Sign Out, Delete Account; the deletion asks on its own page, opened on Delete with Cancel below |
+| Add a Friend, Report, Account | | the name field and Send Request; the reason choice and Send Report; Manage Account (opens the account web: e-mail, passkeys, devices, deleting the account), cloud, Hide Your IP Address (toggle) with its note, Who Sees Your Trophies (Friends, Everyone, Only You) with its note, the blocked, Sign Out |
 | Invitation picker | "Invite to …" / "Pick up to … friends" | one toggle per online friend, Send Invitations, Cancel |
 
 Hints that explain a text field or a toggle stand under it with the normal 8 dp row gap, not attached: the focused row grows 3 dp and would touch an attached note. A command waiting for the net service says "Sending…" in its detail line.
@@ -2072,7 +2071,8 @@ Hints that explain a text field or a toggle stand under it with the normal 8 dp 
 
 **Rules.**
 
-- Nothing goes online before the player signs in. The net service starts when the Online area opens (it stays local until a code is requested) or, once the player signed in on this PC (`Preferences::online`), with the launcher. Signing out or deleting the account stops it.
+- Nothing goes online before the player signs in. The net service starts when the Online area opens (it stays local until the player chooses Sign In or Create Account) or, once the player signed in on this PC (`Preferences::online`), with the launcher. Signing out stops it.
+- **Accounts live on the web** (network ADR 0016). Sign In and Create Account send `browser_sign_in`; the net service answers the cloud's page and waits on a loopback address for the browser to finish, and the launcher opens the page in the system browser. Manage Account sends `account_page` and opens the link it answers. The launcher opens only addresses under the cloud in use. A sign-in that ends in the browser turns into the signed-in state; one that runs out of time toasts "The sign-in timed out. Try again." Nothing is typed in the launcher: no e-mail, code, name or age.
 - The cloud is AnyPlay's own unless the player picks another (`Preferences::online_cloud`). A build names AnyPlay's with `ANYPLAY_DEFAULT_CLOUD`; without one the player has to enter a cloud. Only https addresses, and http on loopback for a cloud under test, are accepted.
 - Signed in, Play first asks the net service for the bridge variables and holds the start (the splash already shows) until they come, at most 3 s; without an answer the game starts offline. A join is checked first (`check_join`: the game is in the library, unlocked, same version and AnyPS5 build) and called off with a toast when it fails, since a join makes no sense offline. The game's end is reported once.
 - A game that opens its invitation dialog brings the launcher forward on the picker; closing the panel answers "cancelled".
@@ -2085,4 +2085,4 @@ Hints that explain a text field or a toggle stand under it with the normal 8 dp 
 - **Playtime on the network.** Besides the total per game, the launcher keeps the seconds of each UTC day for the last 60 days (`Preferences::playtime_days`). Signed in, it sends minutes per title and day, the copies of a title added up, when it comes online and whenever a minute more was counted (at most once a minute while a game runs). A day goes up again only when its minutes grew; the cloud keeps the highest count of a day. Time played before this record existed is not sent, because its days are unknown.
 - **Gamer cards.** The friends' cards (trophy counts by grade, or hidden) come with the friend list, for new friends as they appear, and again for everyone when the window comes back, at most once a minute. *Who Sees Your Trophies* (Account page) is read from the cloud at sign-in and sent at once when changed; a refused change toasts and reads the setting back.
 
-Gallery scenes: `online`, `online-code`, `online-handle`, `online-friends`, `online-friend`, `online-account`, `online-picker`.
+Gallery scenes: `online`, `online-browser`, `online-friends`, `online-friend`, `online-account`, `online-picker`.

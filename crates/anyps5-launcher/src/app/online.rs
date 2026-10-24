@@ -297,6 +297,11 @@ impl OnlineService {
                     model.open(Overlay::Online);
                 }
             }
+            Notice::SignedIn => self.signed_in(model),
+            Notice::SignInTimedOut => {
+                let text = T::SignInTimedOut.text(language).to_owned();
+                model.toast(text, Icon::CLOCK);
+            }
             Notice::Ended => {
                 self.process = None;
                 if model.prefs.online {
@@ -385,22 +390,21 @@ impl OnlineService {
                 };
                 model.toast(text, Icon::WARNING);
             }
-            (Purpose::Code, Ok(value)) => {
-                if value.get("result").and_then(|r| r.as_str()) == Some("signed_in") {
-                    self.signed_in(model);
+            (Purpose::BrowserSignIn { .. }, Ok(_)) => {
+                if let Some(url) = model.online.sign_in_url.clone() {
+                    Self::open_cloud_page(model, &url);
                 }
             }
-            (Purpose::SignUp, Ok(_)) => self.signed_in(model),
+            (Purpose::AccountPage, Ok(value)) => {
+                if let Ok(opened) = serde_json::from_value::<net::control::Opened>(value) {
+                    Self::open_cloud_page(model, &opened.url);
+                }
+            }
+            (Purpose::CancelSignIn, _) => {}
             (Purpose::SignOut, _) => {
                 model.edit_prefs(|p| p.online = false);
                 let text = T::SignedOut.text(language).to_owned();
                 model.toast(text, Icon::SIGN_OUT);
-                model.effects.push(Effect::StopOnline);
-            }
-            (Purpose::DeleteAccount, Ok(_)) => {
-                model.edit_prefs(|p| p.online = false);
-                let text = T::Deleted.text(language).to_owned();
-                model.toast(text, Icon::TRASH);
                 model.effects.push(Effect::StopOnline);
             }
             (Purpose::AddFriend(handle), Ok(value)) => {
@@ -458,6 +462,22 @@ impl OnlineService {
         if let Some(account) = &model.online.account {
             let text = T::Welcome.format(model.language(), &[Arg::Str(&account.handle)]);
             model.toast(text, Icon::USER_CIRCLE);
+        }
+    }
+
+    /// Opens a page of the cloud in the system browser: the sign-in page or the account web. Only
+    /// an address under the cloud the player uses is opened, whatever the net service says.
+    pub fn open_cloud_page(model: &Model, url: &str) {
+        let Some(cloud) = net::cloud(model.prefs.online_cloud.as_deref()) else {
+            return;
+        };
+        let base = format!("{}/", cloud.trim_end_matches('/'));
+        if !url.starts_with(&base) || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            tracing::warn!("not opening a page outside the cloud: {url}");
+            return;
+        }
+        if let Err(error) = anyps5_core::platform::open_url(url) {
+            tracing::warn!("cannot open the cloud's page: {error}");
         }
     }
 
