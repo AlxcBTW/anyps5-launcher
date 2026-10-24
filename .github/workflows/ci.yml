@@ -106,3 +106,11 @@ jobs:
           name: anyps5-launcher-linux-screenshots
           path: launcher/shots/*.png
           if-no-files-found: error
+
+  # Links, licences and advisories: the rules every AnyPlay repository shares. The launcher handles
+  # title IDs as data, so that rule is off here.
+  rules:
+    uses: anyplay-gg/.github/.github/workflows/rules.yml@main
+    with:
+      network: true
+      title-ids: false
