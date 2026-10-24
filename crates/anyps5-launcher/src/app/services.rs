@@ -16,6 +16,9 @@ use anyps5_core::settings::{ConsoleLanguage, Preferences};
 use anyps5_core::trophies::{Trophies, TrophyWatcher};
 use egui::Context;
 
+/// The pause between two games of a trophy sync.
+const TROPHY_SYNC_PAUSE: std::time::Duration = std::time::Duration::from_millis(250);
+
 pub struct Services {
     tx: Sender<CoreEvent>,
     rx: Receiver<CoreEvent>,
@@ -148,6 +151,45 @@ impl Services {
                     set,
                 });
                 notify();
+            })
+            .ok();
+    }
+
+    /// Reads what the player earned in each unlocked game, one game after the other, so the
+    /// network learns of trophies earned before the player signed in. The pause between games
+    /// keeps the uploads far below the cloud's limit per account.
+    pub fn sync_trophies(&self, games: &[Game], root: &Path) {
+        let (tx, notify) = (self.tx.clone(), self.notify.clone());
+        let copies: Vec<(Game, PathBuf)> = games
+            .iter()
+            .map(|g| {
+                (
+                    g.clone(),
+                    paths::unlocked_copy_dir(root, &g.title_id, &g.id),
+                )
+            })
+            .collect();
+        std::thread::Builder::new()
+            .name("trophy sync".into())
+            .spawn(move || {
+                for (game, copy) in copies {
+                    if !copy.is_dir() {
+                        continue;
+                    }
+                    let earned = Trophies::earned_records(&game, &copy);
+                    if earned.is_empty() {
+                        continue;
+                    }
+                    let event = CoreEvent::TrophyRecords {
+                        title_id: game.title_id,
+                        earned,
+                    };
+                    if tx.send(event).is_err() {
+                        return;
+                    }
+                    notify();
+                    std::thread::sleep(TROPHY_SYNC_PAUSE);
+                }
             })
             .ok();
     }

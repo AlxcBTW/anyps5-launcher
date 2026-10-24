@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use anyps5_core::online::api::{AccountId, ReportReason};
+use anyps5_core::online::api::{AccountId, Audience, Count, ReportReason};
 use anyps5_core::online::{self, Cloud, Link, Online, Pending, Purpose};
 use egui::{Color32, Context};
 
@@ -49,6 +49,8 @@ pub enum OnlineAction {
     Dialog(Option<Vec<AccountId>>),
     /// Keep every tunnel on a relay, or let them go direct again.
     RelayOnly(bool),
+    /// Who sees the player's trophies.
+    TrophyAudience(Audience),
     Close,
 }
 
@@ -87,6 +89,9 @@ pub struct OnlineData<'a> {
     pub language: Language,
     pub accent: Color32,
 }
+
+/// The choices of "Who Sees Your Trophies", in the order the row shows them.
+const AUDIENCES: [Audience; 3] = [Audience::Friends, Audience::Everyone, Audience::Nobody];
 
 const REASONS: [ReportReason; 5] = [
     ReportReason::Cheating,
@@ -338,6 +343,14 @@ impl OnlinePanel {
                 row: "reason",
                 index,
             } => self.reason = *index,
+            Change::Choice {
+                row: "trophyAudience",
+                index,
+            } => {
+                if let Some(audience) = AUDIENCES.get(*index) {
+                    actions.push(OnlineAction::TrophyAudience(*audience));
+                }
+            }
             Change::Run { row } => self.run(row, data, actions),
             _ => {}
         }
@@ -612,6 +625,9 @@ impl OnlinePanel {
                         Row::command("invite", t(T::InviteToSession)).icon(Icon::PAPER_PLANE_RIGHT),
                     );
                 }
+                if let Some(card) = online.cards.get(id) {
+                    rows.push(trophy_row(card.as_ref(), language).group_start());
+                }
                 rows.push(
                     Row::command("remove", t(T::RemoveFriend))
                         .icon(Icon::USER_MINUS)
@@ -691,6 +707,26 @@ impl OnlinePanel {
                         .group_start(),
                 );
                 rows.push(Row::info("relayOnlyNote", t(T::RelayOnlyNote), None));
+                let audience = online.privacy.map(|p| p.trophies).unwrap_or_default();
+                let audiences = [T::AudienceFriends, T::AudienceEveryone, T::AudienceOnlyYou]
+                    .iter()
+                    .map(|a| t(*a).to_owned())
+                    .collect();
+                rows.push(
+                    Row::choice(
+                        "trophyAudience",
+                        t(T::TrophyAudience),
+                        audiences,
+                        AUDIENCES.iter().position(|a| *a == audience).unwrap_or(0),
+                    )
+                    .icon(Icon::TROPHY)
+                    .group_start(),
+                );
+                rows.push(Row::info(
+                    "trophyAudienceNote",
+                    t(T::TrophyAudienceNote),
+                    None,
+                ));
                 if !online.friends.blocked.is_empty() {
                     rows.push(Row::caption("blockedCaption", t(T::Blocked)).group_start());
                     for blocked in &online.friends.blocked {
@@ -875,6 +911,35 @@ fn picker_friends(online: &Online) -> Vec<&online::api::Friend> {
 }
 
 /// What a friend is doing, in a few words.
+/// A friend's trophies: the total, and the grades they have under it, highest first.
+fn trophy_row(count: Option<&Count>, language: Language) -> Row {
+    let title = language.text(Key::Trophies);
+    let Some(count) = count else {
+        let hidden = T::TrophiesHidden.text(language).to_owned();
+        return Row::info("trophies", title, Some(hidden)).icon(Icon::TROPHY);
+    };
+    let grades = [
+        (count.platinum, Key::GradePlatinum),
+        (count.gold, Key::GradeGold),
+        (count.silver, Key::GradeSilver),
+        (count.bronze, Key::GradeBronze),
+    ];
+    let total: u32 = grades.iter().map(|(n, _)| n).sum();
+    if total == 0 {
+        let none = T::TrophiesNone.text(language).to_owned();
+        return Row::info("trophies", title, Some(none)).icon(Icon::TROPHY);
+    }
+    let detail = grades
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, grade)| format!("{n} {}", language.text(*grade)))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    Row::info("trophies", title, Some(total.to_string()))
+        .icon(Icon::TROPHY)
+        .detail(detail)
+}
+
 pub fn presence_text(friend: &online::api::Friend, language: Language) -> String {
     match &friend.presence.activity {
         Some(activity) => {
@@ -905,6 +970,8 @@ mod tests {
         Account, Activity, Friend, FriendLists, Invitation, Presence, Request, SessionRef,
     };
     use anyps5_core::online::{SignedIn, Status};
+
+    use crate::screens::rows::Control;
 
     use super::*;
 
@@ -1047,6 +1114,78 @@ mod tests {
         let mut actions = Vec::new();
         panel.run("join", &data(&online), &mut actions);
         assert_eq!(actions, [OnlineAction::Join(AccountId(2))]);
+    }
+
+    #[test]
+    fn a_friend_shows_their_trophies_or_that_they_hide_them() {
+        let mut online = signed_in();
+        let mut panel = OnlinePanel::default();
+        panel.go(Page::Friend(AccountId(2)), &data(&online));
+        assert!(!ids(&panel.rows(&data(&online)).2).contains(&"trophies"));
+
+        let count = |platinum, gold, silver, bronze| Count {
+            bronze,
+            silver,
+            gold,
+            platinum,
+        };
+        online.cards.insert(AccountId(2), Some(count(1, 4, 0, 30)));
+        let rows = panel.rows(&data(&online)).2;
+        assert_eq!(
+            ids(&rows),
+            ["join", "trophies", "remove", "block", "report"]
+        );
+        assert_eq!(rows[1].control, Control::Info(Some("35".into())));
+        assert_eq!(
+            rows[1].detail.as_deref(),
+            Some("1 Platinum · 4 Gold · 30 Bronze")
+        );
+        assert!(rows[1].group_start);
+
+        online.cards.insert(AccountId(2), Some(count(0, 0, 0, 0)));
+        let rows = panel.rows(&data(&online)).2;
+        assert_eq!(rows[1].control, Control::Info(Some("None yet".into())));
+        assert_eq!(rows[1].detail, None);
+
+        online.cards.insert(AccountId(2), None);
+        let rows = panel.rows(&data(&online)).2;
+        assert_eq!(rows[1].control, Control::Info(Some("Hidden".into())));
+    }
+
+    #[test]
+    fn the_account_page_picks_who_sees_the_trophies() {
+        let mut online = signed_in();
+        let mut panel = OnlinePanel::default();
+        panel.go(Page::Account, &data(&online));
+        let rows = panel.rows(&data(&online)).2;
+        let choice = rows.iter().position(|r| r.id == "trophyAudience").unwrap();
+        assert_eq!(rows[choice + 1].id, "trophyAudienceNote");
+        let options = vec!["Friends".to_owned(), "Everyone".into(), "Only You".into()];
+        assert_eq!(
+            rows[choice].control,
+            Control::Choice {
+                options: options.clone(),
+                selected: 0
+            },
+            "friends until the cloud says otherwise"
+        );
+        online.privacy = Some(online::api::Privacy {
+            trophies: Audience::Nobody,
+        });
+        assert_eq!(
+            panel.rows(&data(&online)).2[choice].control,
+            Control::Choice {
+                options,
+                selected: 2
+            }
+        );
+        let mut actions = Vec::new();
+        let change = Change::Choice {
+            row: "trophyAudience",
+            index: 1,
+        };
+        panel.handle(&Context::default(), &change, &data(&online), &mut actions);
+        assert_eq!(actions, [OnlineAction::TrophyAudience(Audience::Everyone)]);
     }
 
     #[test]

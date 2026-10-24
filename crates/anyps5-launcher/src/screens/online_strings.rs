@@ -140,6 +140,15 @@ pub enum OnlineText {
     RecordNetworkDetail,
     RelayOnly,
     RelayOnlyNote,
+    // Trophies
+    /// A friend hides their trophies from the player.
+    TrophiesHidden,
+    TrophiesNone,
+    TrophyAudience,
+    AudienceFriends,
+    AudienceEveryone,
+    AudienceOnlyYou,
+    TrophyAudienceNote,
 }
 
 impl OnlineText {
@@ -280,6 +289,15 @@ impl OnlineText {
             OnlineText::RelayOnlyNote => {
                 "Other players reach you only through a relay and never see your IP address. Games can respond a little slower."
             }
+            OnlineText::TrophiesHidden => "Hidden",
+            OnlineText::TrophiesNone => "None yet",
+            OnlineText::TrophyAudience => "Who Sees Your Trophies",
+            OnlineText::AudienceFriends => "Friends",
+            OnlineText::AudienceEveryone => "Everyone",
+            OnlineText::AudienceOnlyYou => "Only You",
+            OnlineText::TrophyAudienceNote => {
+                "The players you choose see how many trophies you have of each grade. Only each trophy's number, grade and date leave this PC."
+            }
         }
     }
 
@@ -413,6 +431,15 @@ impl OnlineText {
             OnlineText::RelayOnly => "IP Adresini Gizle",
             OnlineText::RelayOnlyNote => {
                 "Diğer oyuncular sana yalnızca bir aktarıcı üzerinden ulaşır ve IP adresini hiç görmez. Oyunlar biraz daha geç tepki verebilir."
+            }
+            OnlineText::TrophiesHidden => "Gizli",
+            OnlineText::TrophiesNone => "Henüz yok",
+            OnlineText::TrophyAudience => "Kupalarını Kimler Görür",
+            OnlineText::AudienceFriends => "Arkadaşlar",
+            OnlineText::AudienceEveryone => "Herkes",
+            OnlineText::AudienceOnlyYou => "Yalnızca Sen",
+            OnlineText::TrophyAudienceNote => {
+                "Seçtiğin oyuncular her dereceden kaç kupan olduğunu görür. Bilgisayarından yalnızca her kupanın numarası, derecesi ve tarihi çıkar."
             }
         }
     }

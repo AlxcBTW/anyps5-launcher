@@ -75,6 +75,9 @@ fn online_action(model: &mut Model, action: OnlineAction) {
             model.edit_prefs(|p| p.online_relay_only = on);
             model.effects.push(Effect::RelayOnlyChanged);
         }
+        OnlineAction::TrophyAudience(trophies) => {
+            online.set_privacy(net::api::Privacy { trophies });
+        }
         OnlineAction::Email(email) => {
             online.send(Purpose::Email(email.clone()), Command::Email { email });
         }
