@@ -1,10 +1,11 @@
-//! The per-user Windows registration of the `anyps5` URL scheme and of the "Open with AnyPS5"
-//! entry of folders (the same keys the installer writes, docs/DESIGN.md 9.5).
+//! The per-user Windows registration of the `anyps5` URL scheme and of the "Open with AnyPlay
+//! Launcher" entry of folders (the same keys the installer writes, docs/DESIGN.md 9.6). The key
+//! names keep the launcher's old name: links already out there use them.
 //!
 //! ```text
-//! HKCU\Software\Classes\anyps5                         "URL:AnyPS5 Link", "URL Protocol"
+//! HKCU\Software\Classes\anyps5                         "URL:AnyPlay Link", "URL Protocol"
 //! HKCU\Software\Classes\anyps5\shell\open\command      "<exe>" "%1"
-//! HKCU\Software\Classes\Directory\shell\AnyPS5         "Open with AnyPS5"   (folders only)
+//! HKCU\Software\Classes\Directory\shell\AnyPS5         "Open with AnyPlay Launcher" (folders)
 //! HKCU\Software\Classes\Directory\shell\AnyPS5\command "<exe>" "%1"
 //! ```
 //!
@@ -163,12 +164,12 @@ mod imp {
         }
         let command = command_for(exe);
         let icon = format!("\"{}\",0", exe.display());
-        set(scheme, "", "URL:AnyPS5 Link")?;
+        set(scheme, "", "URL:AnyPlay Link")?;
         set(scheme, "URL Protocol", "")?;
         set(&format!("{scheme}\\DefaultIcon"), "", &icon)?;
         set(&format!("{scheme}\\shell\\open\\command"), "", &command)?;
         if folder_menu {
-            set("Directory\\shell\\AnyPS5", "", "Open with AnyPS5")?;
+            set("Directory\\shell\\AnyPS5", "", "Open with AnyPlay Launcher")?;
             set("Directory\\shell\\AnyPS5", "Icon", &icon)?;
             set("Directory\\shell\\AnyPS5\\command", "", &command)?;
         }
@@ -212,7 +213,8 @@ pub fn status(scheme: &str, exe: &Path) -> Handler {
     imp::status(scheme, exe)
 }
 
-/// Makes `exe` answer `<scheme>://` links, and adds "Open with AnyPS5" to folders when asked.
+/// Makes `exe` answer `<scheme>://` links, and adds "Open with AnyPlay Launcher" to folders when
+/// asked.
 pub fn register(scheme: &str, exe: &Path, folder_menu: bool) -> io::Result<()> {
     imp::register(scheme, exe, folder_menu)
 }
@@ -235,13 +237,13 @@ mod tests {
 
     #[test]
     fn a_command_round_trips() {
-        let exe = Path::new(r"C:\Program Files\AnyPS5 Launcher\AnyPS5-Launcher.exe");
+        let exe = Path::new(r"C:\Program Files\AnyPlay Launcher\AnyPlay-Launcher.exe");
         assert_eq!(program_of(&command_for(exe)), exe.to_str().unwrap());
         assert!(same_program(
-            r"c:/program files/anyps5 launcher/anyps5-launcher.EXE",
+            r"c:/program files/anyplay launcher/anyplay-launcher.EXE",
             exe
         ));
-        assert!(!same_program(r"C:\Other\AnyPS5-Launcher.exe", exe));
+        assert!(!same_program(r"C:\Other\AnyPlay-Launcher.exe", exe));
     }
 
     #[test]

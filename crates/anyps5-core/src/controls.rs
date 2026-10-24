@@ -249,7 +249,7 @@ impl Controls {
     pub const UNBOUND: &'static str = "KEY:F24";
 
     /// First line of every input file.
-    pub const HEADER: &'static str = "# Written by the AnyPS5 launcher at each start; change the keys in the game's settings there.";
+    pub const HEADER: &'static str = "# Written by the AnyPlay Launcher at each start; change the keys in the game's settings there.";
 
     /// The launcher's default sources of an action (`KEY:<SDL name>`, `MOUSE:<button>`, `WHEEL:<Up|Down>`).
     pub fn default_sources(action: PadAction) -> &'static [&'static str] {
@@ -783,7 +783,7 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    const GOLDEN: &str = "# Written by the AnyPS5 launcher at each start; change the keys in the game's settings there.
+    const GOLDEN: &str = "# Written by the AnyPlay Launcher at each start; change the keys in the game's settings there.
 Cross = KEY:K
 Cross = KEY:Space
 Cross = KEY:Return

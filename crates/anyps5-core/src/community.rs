@@ -106,10 +106,7 @@ pub fn fetch(title_id: &str) -> Vec<CommunityLayout> {
 fn get(agent: &ureq::Agent, path: &str, limit: u64) -> Option<String> {
     let mut response = agent
         .get(format!("{BASE_URL}/{path}"))
-        .header(
-            "User-Agent",
-            format!("anyps5-launcher/{}", env!("CARGO_PKG_VERSION")),
-        )
+        .header("User-Agent", crate::toolkit::user_agent())
         .call()
         .ok()?;
     response

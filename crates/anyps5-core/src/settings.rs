@@ -276,7 +276,7 @@ impl ConsoleLanguage {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SettingsError {
-    #[error("not an AnyPS5 settings file")]
+    #[error("not an AnyPlay settings file")]
     NotSettingsFile,
     #[error("settings file is damaged: {0}")]
     Json(#[from] serde_json::Error),
@@ -1122,7 +1122,7 @@ mod tests {
         s.write_input_file(&file, None).unwrap();
         let text = fs::read_to_string(&file).unwrap();
         assert_eq!(text, s.input_file_text(None));
-        assert!(text.starts_with("# Written by the AnyPS5 launcher"));
+        assert!(text.starts_with("# Written by the AnyPlay Launcher"));
         assert!(text.contains("Circle = KEY:C\n") && text.ends_with("LeftStickDeadzone = 10\n"));
         assert!(!dir.path().join("Controls/PPSA1-abc.ini.tmp").exists());
         // rewriting replaces

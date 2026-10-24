@@ -1,6 +1,6 @@
 [package]
 name = "anyps5-core"
-description = "UI-free logic of the AnyPS5 launcher"
+description = "UI-free logic of the AnyPlay Launcher"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -4,7 +4,8 @@
 //!
 //! 1. [`check`] asks GitHub for the latest release and returns it when it is newer than the running
 //!    version (semver, pre-releases included).
-//! 2. [`stage`] downloads the portable `AnyPS5-Launcher-<v>-x64.exe` into
+//! 2. [`stage`] downloads the portable `AnyPlay-Launcher-<v>-x64.exe` (or, from a release that has
+//!    only that, the same exe under its old name `AnyPS5-Launcher-<v>-x64.exe`) into
 //!    `%LOCALAPPDATA%\AnyPS5\Updates`, verifies it against the release's `SHA256SUMS.txt` and
 //!    returns a [`Staged`] update. A missing or wrong checksum refuses the update and leaves
 //!    nothing behind. It also refuses early when the running exe's folder is not writable.
@@ -32,7 +33,12 @@ use crate::toolkit::{self, Asset, ToolkitError};
 pub const REPOSITORY: &str = "anyplay-gg/launcher";
 
 const SUMS_NAME: &str = "SHA256SUMS.txt";
-const EXE_PREFIX: &str = "AnyPS5-Launcher-";
+/// The portable exe is `AnyPlay-Launcher-<v>-x64.exe`.
+const EXE_PREFIX: &str = "AnyPlay-Launcher-";
+/// Its name up to v0.1.3, when the launcher was AnyPS5 Launcher. Those launchers update only from
+/// exactly this name, so every release also carries the same exe under it; this launcher falls
+/// back to it when a release has only that one.
+const LEGACY_EXE_PREFIX: &str = "AnyPS5-Launcher-";
 const EXE_SUFFIX: &str = "-x64.exe";
 
 #[derive(Debug, thiserror::Error)]
@@ -203,9 +209,16 @@ fn exe_name(version: &str) -> String {
     format!("{EXE_PREFIX}{version}{EXE_SUFFIX}")
 }
 
-/// The version in a staged file's name.
+/// Its name in releases up to v0.1.3.
+fn legacy_exe_name(version: &str) -> String {
+    format!("{LEGACY_EXE_PREFIX}{version}{EXE_SUFFIX}")
+}
+
+/// The version in a staged file's name, under either name.
 fn version_of_exe_name(name: &str) -> Option<&str> {
-    name.strip_prefix(EXE_PREFIX)?.strip_suffix(EXE_SUFFIX)
+    name.strip_prefix(EXE_PREFIX)
+        .or_else(|| name.strip_prefix(LEGACY_EXE_PREFIX))?
+        .strip_suffix(EXE_SUFFIX)
 }
 
 /// Reads the JSON of `releases/latest`: the release when its tag is newer than `current`, `None`
@@ -238,7 +251,9 @@ pub fn parse_latest(json: &str, current: &str) -> Result<Option<Release>, SelfUp
             })
     };
     let version = tag.trim_start_matches('v');
-    let exe = find(&exe_name(version)).ok_or(SelfUpdateError::NoRelease)?;
+    let exe = find(&exe_name(version))
+        .or_else(|| find(&legacy_exe_name(version)))
+        .ok_or(SelfUpdateError::NoRelease)?;
     let sums = find(SUMS_NAME).ok_or(SelfUpdateError::NoRelease)?;
     Ok(Some(Release { tag, exe, sums }))
 }
@@ -551,14 +566,26 @@ mod tests {
 
     const SUMS_HASH: &str = "ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12";
 
-    fn release_json(tag: &str, base: &str, with_sums: bool, with_exe: bool) -> String {
+    fn release_json(
+        tag: &str,
+        base: &str,
+        with_sums: bool,
+        with_exe: bool,
+        with_legacy_exe: bool,
+    ) -> String {
         let version = tag.trim_start_matches('v');
         let mut assets = vec![format!(
-            r#"{{"name": "AnyPS5-Launcher-{version}-Setup.exe", "size": 5, "browser_download_url": "{base}/setup"}}"#
+            r#"{{"name": "AnyPlay-Launcher-{version}-Setup.exe", "size": 5, "browser_download_url": "{base}/setup"}}"#
         )];
+        // Before the new name, so the choice is shown to go by name, not by order.
+        if with_legacy_exe {
+            assets.push(format!(
+                r#"{{"name": "AnyPS5-Launcher-{version}-x64.exe", "size": 4, "browser_download_url": "{base}/legacy"}}"#
+            ));
+        }
         if with_exe {
             assets.push(format!(
-                r#"{{"name": "AnyPS5-Launcher-{version}-x64.exe", "size": 4, "browser_download_url": "{base}/exe"}}"#
+                r#"{{"name": "AnyPlay-Launcher-{version}-x64.exe", "size": 4, "browser_download_url": "{base}/exe"}}"#
             ));
         }
         if with_sums {
@@ -574,12 +601,24 @@ mod tests {
 
     #[test]
     fn the_portable_exe_is_chosen_over_the_installer() {
-        let json = release_json("v0.2.0", "http://x", true, true);
+        let json = release_json("v0.2.0", "http://x", true, true, true);
         let release = parse_latest(&json, "0.1.1").unwrap().unwrap();
         assert_eq!(release.version(), "0.2.0");
-        assert_eq!(release.exe.name, "AnyPS5-Launcher-0.2.0-x64.exe");
+        assert_eq!(release.exe.name, "AnyPlay-Launcher-0.2.0-x64.exe");
         assert_eq!(release.exe.url, "http://x/exe");
         assert_eq!(release.sums.name, "SHA256SUMS.txt");
+    }
+
+    #[test]
+    fn the_new_exe_name_wins_and_the_old_one_is_still_found() {
+        let both = release_json("v0.2.0", "http://x", true, true, true);
+        let release = parse_latest(&both, "0.1.3").unwrap().unwrap();
+        assert_eq!(release.exe.name, "AnyPlay-Launcher-0.2.0-x64.exe");
+        assert_eq!(release.exe.url, "http://x/exe");
+        let old_only = release_json("v0.2.0", "http://x", true, false, true);
+        let release = parse_latest(&old_only, "0.1.3").unwrap().unwrap();
+        assert_eq!(release.exe.name, "AnyPS5-Launcher-0.2.0-x64.exe");
+        assert_eq!(release.exe.url, "http://x/legacy");
     }
 
     #[test]
@@ -591,12 +630,12 @@ mod tests {
 
     #[test]
     fn a_newer_release_without_the_files_is_an_error() {
-        let no_exe = release_json("v0.2.0", "http://x", true, false);
+        let no_exe = release_json("v0.2.0", "http://x", true, false, false);
         assert!(matches!(
             parse_latest(&no_exe, "0.1.1"),
             Err(SelfUpdateError::NoRelease)
         ));
-        let no_sums = release_json("v0.2.0", "http://x", false, true);
+        let no_sums = release_json("v0.2.0", "http://x", false, true, true);
         assert!(matches!(
             parse_latest(&no_sums, "0.1.1"),
             Err(SelfUpdateError::NoRelease)
@@ -608,10 +647,15 @@ mod tests {
     #[test]
     fn checksums_are_found_by_file_name() {
         let sums = format!(
-            "{} *AnyPS5-Launcher-0.2.0-Setup.exe\n{} *AnyPS5-Launcher-0.2.0-x64.exe\n{}  other.txt\n",
+            "{} *AnyPlay-Launcher-0.2.0-Setup.exe\n{} *AnyPlay-Launcher-0.2.0-x64.exe\n{} *AnyPS5-Launcher-0.2.0-x64.exe\n{}  other.txt\n",
             "11".repeat(32),
             SUMS_HASH.to_ascii_uppercase(),
+            SUMS_HASH,
             "22".repeat(32),
+        );
+        assert_eq!(
+            checksum_for(&sums, "AnyPlay-Launcher-0.2.0-x64.exe").as_deref(),
+            Some(SUMS_HASH)
         );
         assert_eq!(
             checksum_for(&sums, "AnyPS5-Launcher-0.2.0-x64.exe").as_deref(),
@@ -657,7 +701,7 @@ mod tests {
     /// A served release 0.2.0 whose exe is `body`, with `sums` as its checksum list.
     fn serve_release(body: &[u8], sums: String) -> (String, Arc<AtomicBool>, Release) {
         let (base, stop) = serve(vec![("/exe", body.to_vec()), ("/sums", sums.into_bytes())]);
-        let json = release_json("v0.2.0", &base, true, true)
+        let json = release_json("v0.2.0", &base, true, true, false)
             .replace("\"size\": 4", &format!("\"size\": {}", body.len()));
         let release = parse_latest(&json, "0.1.1").unwrap().unwrap();
         (base, stop, release)
@@ -668,7 +712,7 @@ mod tests {
     fn fixture() -> (tempfile::TempDir, AppPaths, PathBuf) {
         let root = tempfile::tempdir().unwrap();
         let paths = AppPaths::under(root.path());
-        let exe = root.path().join("app").join("AnyPS5-Launcher.exe");
+        let exe = root.path().join("app").join("AnyPlay-Launcher.exe");
         fs::create_dir_all(exe.parent().unwrap()).unwrap();
         fs::write(&exe, b"MZ-old-launcher").unwrap();
         (root, paths, exe)
@@ -676,7 +720,7 @@ mod tests {
 
     #[test]
     fn check_reads_the_latest_release_from_the_api() {
-        let json = release_json("v0.2.0", "http://x", true, true);
+        let json = release_json("v0.2.0", "http://x", true, true, true);
         let (base, stop) = serve(vec![("/repos/o/r/releases/latest", json.into_bytes())]);
         let newer = check_at(&base, "o/r", "0.1.1").unwrap();
         assert_eq!(newer.map(|r| r.tag), Some("v0.2.0".into()));
@@ -691,7 +735,7 @@ mod tests {
     #[test]
     fn a_matching_checksum_stages_the_update() {
         let (_root, paths, exe) = fixture();
-        let sums = format!("{} *AnyPS5-Launcher-0.2.0-x64.exe\n", sha_hex(PROGRAM));
+        let sums = format!("{} *AnyPlay-Launcher-0.2.0-x64.exe\n", sha_hex(PROGRAM));
         let (_, stop, release) = serve_release(PROGRAM, sums);
         let mut last = 0.0;
         let staged = stage(
@@ -707,7 +751,7 @@ mod tests {
         assert_eq!(fs::read(&staged.path).unwrap(), PROGRAM);
         assert_eq!(
             staged.path,
-            updates_dir(&paths).join("AnyPS5-Launcher-0.2.0-x64.exe")
+            updates_dir(&paths).join("AnyPlay-Launcher-0.2.0-x64.exe")
         );
         assert_eq!(last, 1.0);
         // No partial file is left beside it.
@@ -718,7 +762,7 @@ mod tests {
     fn a_wrong_checksum_refuses_the_update() {
         let (_root, paths, exe) = fixture();
         let sums = format!(
-            "{} *AnyPS5-Launcher-0.2.0-x64.exe\n",
+            "{} *AnyPlay-Launcher-0.2.0-x64.exe\n",
             sha_hex(b"MZ-something-else")
         );
         let (_, stop, release) = serve_release(PROGRAM, sums);
@@ -733,7 +777,7 @@ mod tests {
     #[test]
     fn a_missing_checksum_refuses_the_update() {
         let (_root, paths, exe) = fixture();
-        let sums = format!("{} *AnyPS5-Launcher-0.2.0-Setup.exe\n", sha_hex(PROGRAM));
+        let sums = format!("{} *AnyPlay-Launcher-0.2.0-Setup.exe\n", sha_hex(PROGRAM));
         let (_, stop, release) = serve_release(PROGRAM, sums);
         let result = stage(&release, &exe, &paths, &mut |_| {}, &CancelToken::new());
         stop.store(true, AtomicOrdering::SeqCst);
@@ -748,7 +792,7 @@ mod tests {
     fn a_download_that_is_not_a_program_is_refused() {
         let (_root, paths, exe) = fixture();
         let page = b"<html>rate limited</html>";
-        let sums = format!("{} *AnyPS5-Launcher-0.2.0-x64.exe\n", sha_hex(page));
+        let sums = format!("{} *AnyPlay-Launcher-0.2.0-x64.exe\n", sha_hex(page));
         let (_, stop, release) = serve_release(page, sums);
         let result = stage(&release, &exe, &paths, &mut |_| {}, &CancelToken::new());
         stop.store(true, AtomicOrdering::SeqCst);
@@ -765,9 +809,9 @@ mod tests {
         let gone = root
             .path()
             .join("no-such-folder")
-            .join("AnyPS5-Launcher.exe");
+            .join("AnyPlay-Launcher.exe");
         // Nothing listens at the asset URLs: reaching the network would be a different error.
-        let json = release_json("v0.2.0", "http://127.0.0.1:9", true, true);
+        let json = release_json("v0.2.0", "http://127.0.0.1:9", true, true, true);
         let release = parse_latest(&json, "0.1.1").unwrap().unwrap();
         let result = stage(&release, &gone, &paths, &mut |_| {}, &CancelToken::new());
         assert!(
@@ -779,7 +823,7 @@ mod tests {
     #[test]
     fn a_staged_file_of_the_right_size_is_not_downloaded_again() {
         let (_root, paths, exe) = fixture();
-        let sums = format!("{} *AnyPS5-Launcher-0.2.0-x64.exe\n", sha_hex(PROGRAM));
+        let sums = format!("{} *AnyPlay-Launcher-0.2.0-x64.exe\n", sha_hex(PROGRAM));
         let (_, stop, release) = serve_release(PROGRAM, sums);
         stage(&release, &exe, &paths, &mut |_| {}, &CancelToken::new()).unwrap();
         stop.store(true, AtomicOrdering::SeqCst);
@@ -805,10 +849,10 @@ mod tests {
         let staged = staged_file(&paths, "0.2.0", PROGRAM);
         staged.swap_in(&exe).unwrap();
         assert_eq!(fs::read(&exe).unwrap(), PROGRAM);
-        let old = exe.with_file_name("AnyPS5-Launcher.exe.old");
+        let old = exe.with_file_name("AnyPlay-Launcher.exe.old");
         assert_eq!(fs::read(&old).unwrap(), b"MZ-old-launcher");
         assert!(!staged.path.exists(), "the staged file is consumed");
-        assert!(!exe.with_file_name("AnyPS5-Launcher.exe.new").exists());
+        assert!(!exe.with_file_name("AnyPlay-Launcher.exe.new").exists());
 
         cleanup(&exe, &paths, "0.2.0");
         assert!(!old.exists());
@@ -821,11 +865,11 @@ mod tests {
         let dir = exe.parent().unwrap();
         // Keep the first `.old` locked: open without share-delete is not expressible portably,
         // so make it a directory, which can never be removed as a file.
-        fs::create_dir(dir.join("AnyPS5-Launcher.exe.old")).unwrap();
+        fs::create_dir(dir.join("AnyPlay-Launcher.exe.old")).unwrap();
         staged_file(&paths, "0.2.0", PROGRAM).swap_in(&exe).unwrap();
         assert_eq!(fs::read(&exe).unwrap(), PROGRAM);
         assert_eq!(
-            fs::read(dir.join("AnyPS5-Launcher.exe.old1")).unwrap(),
+            fs::read(dir.join("AnyPlay-Launcher.exe.old1")).unwrap(),
             b"MZ-old-launcher"
         );
     }
@@ -858,16 +902,31 @@ mod tests {
     }
 
     #[test]
+    fn a_staged_exe_of_the_old_name_is_found_and_cleaned_up() {
+        let (_root, paths, exe) = fixture();
+        let dir = updates_dir(&paths);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("AnyPS5-Launcher-0.2.0-x64.exe"), b"MZ").unwrap();
+        fs::write(dir.join("AnyPS5-Launcher-0.1.1-x64.exe"), b"MZ").unwrap();
+        assert_eq!(
+            pending(&paths, "0.1.1").map(|s| s.version),
+            Some("0.2.0".into())
+        );
+        cleanup(&exe, &paths, "0.2.0");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+    }
+
+    #[test]
     fn cleanup_removes_stale_downloads_and_keeps_newer_ones() {
         let (_root, paths, exe) = fixture();
         staged_file(&paths, "0.1.1", b"MZ");
         let newer = staged_file(&paths, "0.3.0", b"MZ");
         fs::write(
-            updates_dir(&paths).join("AnyPS5-Launcher-0.3.0-x64.exe.part"),
+            updates_dir(&paths).join("AnyPlay-Launcher-0.3.0-x64.exe.part"),
             b"MZ",
         )
         .unwrap();
-        fs::write(exe.with_file_name("AnyPS5-Launcher.exe.old2"), b"x").unwrap();
+        fs::write(exe.with_file_name("AnyPlay-Launcher.exe.old2"), b"x").unwrap();
         cleanup(&exe, &paths, "0.2.0");
         let left: Vec<_> = fs::read_dir(updates_dir(&paths))
             .unwrap()
@@ -875,7 +934,7 @@ mod tests {
             .map(|e| e.path())
             .collect();
         assert_eq!(left, vec![newer.path]);
-        assert!(!exe.with_file_name("AnyPS5-Launcher.exe.old2").exists());
+        assert!(!exe.with_file_name("AnyPlay-Launcher.exe.old2").exists());
         assert!(exe.exists(), "the exe itself is never touched");
     }
 }
