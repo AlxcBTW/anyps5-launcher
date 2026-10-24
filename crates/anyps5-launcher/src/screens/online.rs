@@ -1171,6 +1171,7 @@ mod tests {
         );
         online.privacy = Some(online::api::Privacy {
             trophies: Audience::Nobody,
+            ..online::api::Privacy::default()
         });
         assert_eq!(
             panel.rows(&data(&online)).2[choice].control,

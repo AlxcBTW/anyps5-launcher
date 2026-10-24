@@ -487,12 +487,18 @@ impl Online {
         }
     }
 
-    /// Changes who sees the player's trophies. The choice shows at once and comes back from the
-    /// cloud with the answer.
-    pub fn set_privacy(&mut self, privacy: api::Privacy) {
+    /// Changes who sees the player's trophies. The cloud replaces the whole setting, so the other
+    /// parts go back as the cloud last said; before it said anything, the launcher asks again
+    /// instead of guessing them. The choice shows at once and comes back with the answer.
+    pub fn set_trophy_audience(&mut self, trophies: api::Audience) {
         if !self.is_signed_in() {
             return;
         }
+        let Some(mut privacy) = self.privacy else {
+            self.send(Purpose::Privacy, Command::Privacy);
+            return;
+        };
+        privacy.trophies = trophies;
         self.privacy = Some(privacy);
         self.send(Purpose::SetPrivacy, Command::SetPrivacy { privacy });
     }
@@ -551,7 +557,17 @@ impl Online {
             Event::Notice { code, message } => {
                 tracing::info!("net service: {code}: {message}");
             }
-            Event::Unknown => {}
+            // Parties and messages get their own screens; until then the launcher leaves them.
+            Event::Party { .. }
+            | Event::PartyInvitation { .. }
+            | Event::PartyInvitationGone { .. }
+            | Event::Conversations(_)
+            | Event::Message { .. }
+            | Event::MessageRequest { .. }
+            | Event::Read { .. }
+            | Event::Conversation { .. }
+            | Event::ConversationGone { .. }
+            | Event::Unknown => {}
         }
         notices
     }
@@ -762,11 +778,42 @@ mod tests {
             1,
             api::Privacy {
                 trophies: api::Audience::Everyone,
+                ..api::Privacy::default()
             },
         );
         assert_eq!(
             online.privacy.map(|p| p.trophies),
             Some(api::Audience::Everyone)
+        );
+    }
+
+    #[test]
+    fn the_trophy_choice_keeps_the_other_parts_of_the_privacy() {
+        let mut online = Online::default();
+        signed_in(&mut online);
+        online.take_outbox();
+        online.set_trophy_audience(api::Audience::Nobody);
+        let lines = online.take_outbox();
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].contains("\"do\":\"privacy\""),
+            "it asks before it knows the rest"
+        );
+        let known = api::Privacy {
+            about: api::Audience::Everyone,
+            ..api::Privacy::default()
+        };
+        answer(&mut online, 1, known);
+        online.set_trophy_audience(api::Audience::Nobody);
+        let (_, command) = control::parse_command(&online.take_outbox()[0]).unwrap();
+        assert_eq!(
+            command,
+            Command::SetPrivacy {
+                privacy: api::Privacy {
+                    trophies: api::Audience::Nobody,
+                    ..known
+                },
+            }
         );
     }
 
@@ -855,10 +902,12 @@ mod tests {
                     api::Card {
                         account: account(2, "Lumen"),
                         trophies: Some(count),
+                        avatar: None,
                     },
                     api::Card {
                         account: account(3, "Bea"),
                         trophies: None,
+                        avatar: None,
                     },
                 ],
             },
