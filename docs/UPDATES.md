@@ -67,6 +67,20 @@ Offline, the check fails with a network error and the launcher runs as it is. A 
 - A launcher released before this change (up to the version that carries the first key) does not check any signature. It keeps updating from the unsigned path, which is why every release still carries `SHA256SUMS.txt` and `AnyPS5-Launcher-<v>-x64.exe`. Those launchers stay exposed until their players update once.
 - The exe is not code-signed (Windows SmartScreen).
 
+## Provenance of a release
+
+The signed manifest answers "may this launcher take this update?". A second, independent check answers "was this file built by our release workflow, from which commit?": every file of a release has a GitHub artifact attestation, made by the `release` job of [release.yml](../.github/workflows/release.yml) when a tag is pushed. A player or an operator checks it with the GitHub CLI:
+
+```
+gh attestation verify AnyPlay-Launcher-0.2.0-x64.exe --repo anyplay-gg/launcher \
+  --signer-workflow anyplay-gg/launcher/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.2.0
+```
+
+`latest.json` and `latest.json.sig` are renewed every week by `resign.yml` ([below](#renewing-the-manifest)), so for those two files the signer workflow is that one and there is no tag ref.
+
+The launcher does not check attestations itself; the manifest is what it trusts. The SBOMs, the dependency list inside each binary and what is not covered yet (reproducible builds, code signing of the exe) are in [supply-chain.md](supply-chain.md).
+
 ## Migration
 
 `data/update-keys.txt` lists the trusted public keys, one per line as `ed25519 <64 hex digits> [label]`; blank lines and `#` comments are ignored. It is embedded into the launcher at build time.
@@ -77,7 +91,7 @@ Offline, the check fails with a network error and the launcher runs as it is. A 
 | One key or more | Requires a valid signed manifest. **There is no fallback to the unsigned path**, not for a release without a manifest, not for a failing signature, not ever. |
 | A line that is neither a comment nor a valid key | Fails the build (a test parses the file), and a launcher that somehow carries such a file refuses to update. A damaged list is never read as "no key". |
 
-The rule lives in `selfupdate::signing_required` and `selfupdate::check_with`. The release workflow enforces the other half: with a trusted key but no `UPDATE_SIGNING_KEY` secret the release **fails** instead of publishing something no launcher would accept; with neither it publishes as before.
+The rule lives in `selfupdate::signing_required` and `selfupdate::check_with`. The release workflow enforces the other half: the key list is first read by the launcher's own parser (`cargo test -p anyps5-core the_key_list`), so a damaged list fails the release before anything is signed; then, with a trusted key but no `UPDATE_SIGNING_KEY` secret, the release **fails** instead of publishing something no launcher would accept; with neither it publishes as before.
 
 The first release that carries a key is the one that makes its own players safe. Players on older launchers update to it through the unsigned path one last time.
 
@@ -99,7 +113,7 @@ update-sign keygen --secret-out update-signing.key --public-out update-keys.line
 ### 2. Store the secret
 
 - Put the contents of `update-signing.key` into the password manager, together with the label and the date. That is the backup; losing it means a rotation ([below](#rotate-the-key)), not a disaster.
-- Add the same text as the repository secret **`UPDATE_SIGNING_KEY`** (anyplay-gg/launcher, Settings, Secrets and variables, Actions). Prefer an environment with required reviewers if you want a second pair of eyes on every release.
+- Add the same text as the secret **`UPDATE_SIGNING_KEY`** of **two Environments**, not as a repository secret (anyplay-gg/launcher, Settings, Environments; [Protecting the key](#protecting-the-key) says how to set them up). A repository secret would be readable by any workflow run on any branch.
 - Then delete the file (and empty the trash) from the machine it was made on, or keep it only on an encrypted offline drive.
 
 ### 3. Publish the public key
@@ -108,9 +122,9 @@ Open a pull request that adds the line from `update-keys.line` to `data/update-k
 
 ### 4. Release
 
-Tag the release as usual. The workflow signs the manifest with the secret, checks the signature against `data/update-keys.txt` (a mismatch fails the release) and attaches `latest.json` and `latest.json.sig`. Check that both are among the release's assets. Test once with a launcher built from the commit that carries the key, against that release, before announcing.
+Tag the release as usual. The job `sign` waits for a reviewer to approve the environment `release-signing`, signs the manifest with the secret, checks the signature against `data/update-keys.txt` (a mismatch fails the release) and hands `latest.json` and `latest.json.sig` to the job that publishes. Check that both are among the release's assets. Test once with a launcher built from the commit that carries the key, against that release, before announcing.
 
-To try the signing without publishing, run the release workflow by hand (it keeps all files as workflow artifacts and publishes nothing); `latest.json` and `latest.json.sig` are among them. Locally:
+To try the signing without publishing, run the release workflow by hand (it keeps all files as workflow artifacts and publishes nothing). A run by hand never reaches the real key: it signs with a key made in the job and thrown away, and checks the result with its public half, so `latest.json` and `latest.json.sig` among the artifacts are only a test. Locally:
 
 ```
 update-sign manifest --version 0.2.0 --exe AnyPlay-Launcher-0.2.0-x64.exe --out latest.json
@@ -132,6 +146,25 @@ A key must be replaced when it may have leaked, or on a schedule. Keys are rotat
 If the old key **leaked**, shorten the wait: anyone holding it can sign a manifest for any launcher that still trusts it until step 5 has been taken. Skip step 3 as far as you can, say so in the release notes, and consider raising `UPDATE_MINIMUM_VERSION` so older launchers must take the rotated release before anything else.
 
 If the secret is **lost** (not leaked), nothing can be signed with the old key any more and every launcher still trusts only that key. Those players need the installer from the releases page. Keep the backup.
+
+## Protecting the key
+
+The release workflow signs in one job, `sign`, which runs only for a pushed tag `v*` and uses the Environment **`release-signing`**. The signing tool is built in an earlier job that has no secret; only the one step that runs `update-sign sign` has the secret in its environment. All of this is worthless if anyone with write access can still reach the secret, so the operator sets up, once, in Settings of anyplay-gg/launcher:
+
+1. **Environment `release-signing`.** Deployment branches and tags: *Selected branches and tags*, add the tag rule `v*` and nothing else. Required reviewers: at least one person other than whoever pushes the tag, with *Prevent self-review* on. The secret `UPDATE_SIGNING_KEY` goes here.
+2. **Environment `release-resigning`** for the weekly renewal below: deployment branches *Selected branches*, only `main`; no reviewers (a weekly run must not wait for a person). The same secret goes here. Because it is bound to `main`, protect `main` too: a ruleset that requires a pull request with one approval and blocks force pushes, so nothing reaches `main` that was not reviewed.
+3. **Protect the tags.** Settings, Rules, Rulesets, new tag ruleset for `v*`: restrict creations, updates and deletions to the maintainers, block force pushes. Whoever can push a `v*` tag can start a release.
+4. **Delete the repository-level secret** `UPDATE_SIGNING_KEY` if one exists, and every other copy outside the two environments.
+
+Until step 1 is done, the environment does not exist yet and GitHub creates it unprotected on the first run: do it before the first signed release.
+
+A workflow edited on a branch cannot get the key: a run from a branch or started by hand is refused by the environment's rules, and the dry run uses a throwaway key. What remains is anyone who can merge to `main` (hence the ruleset) and the reviewers of `release-signing` (hence a second person).
+
+## Renewing the manifest
+
+A manifest expires after 30 days, and a launcher refuses an expired one, so a month without a release would end the update channel. The workflow [resign.yml](../.github/workflows/resign.yml) runs every Monday (and by hand): it takes the latest release, checks that its exe still has the hash in `SHA256SUMS.txt`, makes a new manifest with a fresh `published` and `expires` for the same version, signs it in the environment `release-resigning` and replaces `latest.json` and `latest.json.sig` of that release. Nothing else about the release changes. It does nothing while the latest release has no signed manifest. If the secret is missing there, the run fails and GitHub mails the maintainers: fix it within the weeks the old manifest still has left.
+
+The new manifest has its own attestation, made by `resign.yml`; `gh attestation verify` on `latest.json` therefore names that workflow, not `release.yml` (see [Provenance of a release](#provenance-of-a-release)). What launchers trust is the Ed25519 signature, not the attestation.
 
 ## The tool
 

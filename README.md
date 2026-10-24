@@ -162,6 +162,7 @@ A release is made by pushing a tag `v<version>` that matches the version in `Car
 - [CONTEXT.md](CONTEXT.md): the words the launcher and its code use.
 - [docs/PORT.md](docs/PORT.md): the logic, step by step.
 - [docs/DESIGN.md](docs/DESIGN.md): the interface, from tokens and motion to every screen.
+- [docs/supply-chain.md](docs/supply-chain.md): what is pinned, how updates arrive and how to verify a release.
 - [data/README.md](data/README.md): how to add a recommended setting. Community key layouts are added under `community/layouts`.
 - [CONTRIBUTING.md](CONTRIBUTING.md): how to contribute.
 

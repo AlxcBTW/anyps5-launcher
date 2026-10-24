@@ -1,0 +1,33 @@
+# Keeps the pins in docs/supply-chain.md from rotting: one pull request a week per ecosystem,
+# everything of a kind grouped, and nothing newer than a week (a release that is pulled or found
+# malicious within days never reaches us; security updates ignore the wait).
+version: 2
+updates:
+  # Actions are pinned by full commit SHA with a `# vX.Y.Z` comment; Dependabot moves both.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+  # The online crates are path dependencies on ../network (anyplay-gg/network, checked out beside
+  # the launcher in CI). Dependabot checks out this repository alone, so it may report that it
+  # cannot resolve them; see docs/supply-chain.md.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "deps"
