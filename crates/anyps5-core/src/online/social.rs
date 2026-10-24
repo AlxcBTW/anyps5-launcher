@@ -584,6 +584,9 @@ mod tests {
             members: vec![PartyMember {
                 account: account(1, "Mira"),
                 joined: 0,
+                endpoint: String::new(),
+                relay: None,
+                voice: false,
             }],
             max_members: 8,
             conversation: "pc".into(),
