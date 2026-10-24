@@ -1,0 +1,28 @@
+[package]
+name = "anyplay-update-manifest"
+description = "The signed update manifest of the AnyPlay Launcher: format, verification and the signing tool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "anyplay_update_manifest"
+
+[[bin]]
+name = "update-sign"
+path = "src/bin/update-sign.rs"
+
+[dependencies]
+ed25519-dalek = "3"
+rand = "0.10"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+time = { workspace = true, features = ["parsing"] }
+
+[dev-dependencies]
+tempfile.workspace = true

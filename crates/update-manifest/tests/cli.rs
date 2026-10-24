@@ -1,0 +1,186 @@
+//! The release workflow's steps, run for real: keygen, manifest, sign, verify. The keys are made
+//! by the test in a temporary folder.
+
+use std::fs;
+use std::path::Path;
+use std::process::{Command, Output};
+
+fn tool(args: &[&str], envs: &[(&str, &str)]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_update-sign"));
+    command.args(args);
+    for (name, value) in envs {
+        command.env(name, value);
+    }
+    command.output().expect("run update-sign")
+}
+
+fn text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn path(p: &Path) -> &str {
+    p.to_str().unwrap()
+}
+
+#[test]
+fn keys_manifest_signature_and_verification_work_end_to_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let secret = dir.path().join("secret.key");
+    let keys = dir.path().join("update-keys.txt");
+
+    let out = tool(
+        &[
+            "keygen",
+            "--secret-out",
+            path(&secret),
+            "--public-out",
+            path(&keys),
+            "--label",
+            "test",
+        ],
+        &[],
+    );
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let seed = fs::read_to_string(&secret).unwrap().trim().to_owned();
+    assert_eq!(seed.len(), 64);
+    // The secret reaches neither output.
+    assert!(!text(&out.stdout).contains(&seed) && !text(&out.stderr).contains(&seed));
+    assert!(text(&out.stdout).starts_with("ed25519 "));
+    // An existing secret is never overwritten.
+    let again = tool(&["keygen", "--secret-out", path(&secret)], &[]);
+    assert!(!again.status.success());
+    assert_eq!(fs::read_to_string(&secret).unwrap().trim(), seed);
+
+    let exe = dir.path().join("AnyPlay-Launcher-0.2.0-x64.exe");
+    fs::write(&exe, b"MZ-the-new-launcher").unwrap();
+    let manifest = dir.path().join("latest.json");
+    let sig = dir.path().join("latest.json.sig");
+    let out = tool(
+        &[
+            "manifest",
+            "--version",
+            "v0.2.0",
+            "--exe",
+            path(&exe),
+            "--out",
+            path(&manifest),
+            "--minimum",
+            "0.1.0",
+        ],
+        &[],
+    );
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let json = fs::read_to_string(&manifest).unwrap();
+    assert!(json.contains("\"version\": \"0.2.0\""), "{json}");
+    assert!(json.contains("releases/download/v0.2.0/AnyPlay-Launcher-0.2.0-x64.exe"));
+
+    // Signing from the environment, like the workflow.
+    let out = tool(
+        &[
+            "sign",
+            "--manifest",
+            path(&manifest),
+            "--out",
+            path(&sig),
+            "--key-env",
+            "TEST_SIGNING_KEY",
+        ],
+        &[("TEST_SIGNING_KEY", &seed)],
+    );
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(!text(&out.stdout).contains(&seed) && !text(&out.stderr).contains(&seed));
+
+    let verify = |current: &str| {
+        tool(
+            &[
+                "verify",
+                "--manifest",
+                path(&manifest),
+                "--sig",
+                path(&sig),
+                "--keys",
+                path(&keys),
+                "--current",
+                current,
+            ],
+            &[],
+        )
+    };
+    assert!(verify("0.1.3").status.success());
+    // A rollback is refused by the same check.
+    assert!(!verify("0.2.0").status.success());
+
+    // A manifest changed after signing no longer verifies.
+    fs::write(&manifest, json.replace("0.2.0", "0.9.0")).unwrap();
+    assert!(!verify("0.1.3").status.success());
+}
+
+#[test]
+fn bad_input_is_refused_and_the_secret_is_never_echoed() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = dir.path().join("renamed.exe");
+    fs::write(&exe, b"MZ").unwrap();
+    let manifest = dir.path().join("latest.json");
+    // The exe must carry the name the launcher stages.
+    let out = tool(
+        &[
+            "manifest",
+            "--version",
+            "0.2.0",
+            "--exe",
+            path(&exe),
+            "--out",
+            path(&manifest),
+        ],
+        &[],
+    );
+    assert!(!out.status.success());
+    // Longer than the cap.
+    let named = dir.path().join("AnyPlay-Launcher-0.2.0-x64.exe");
+    fs::write(&named, b"MZ").unwrap();
+    let out = tool(
+        &[
+            "manifest",
+            "--version",
+            "0.2.0",
+            "--exe",
+            path(&named),
+            "--out",
+            path(&manifest),
+            "--days",
+            "400",
+        ],
+        &[],
+    );
+    assert!(!out.status.success());
+    // A secret that is not a key is refused without being printed.
+    fs::write(&manifest, "{}").unwrap();
+    let out = tool(
+        &[
+            "sign",
+            "--manifest",
+            path(&manifest),
+            "--out",
+            path(&dir.path().join("x.sig")),
+            "--key-env",
+            "TEST_SIGNING_KEY",
+        ],
+        &[("TEST_SIGNING_KEY", "hunter2-not-a-key")],
+    );
+    assert!(!out.status.success());
+    assert!(!text(&out.stderr).contains("hunter2"));
+    // No variable at all.
+    let out = tool(
+        &[
+            "sign",
+            "--manifest",
+            path(&manifest),
+            "--out",
+            path(&dir.path().join("x.sig")),
+            "--key-env",
+            "NO_SUCH_SIGNING_VARIABLE_FOR_TEST",
+        ],
+        &[],
+    );
+    assert!(!out.status.success());
+}
