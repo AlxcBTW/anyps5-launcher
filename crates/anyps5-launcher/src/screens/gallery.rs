@@ -188,10 +188,11 @@ fn online_data(
 /// request waits, one was sent, and a friend invited you.
 fn sample_online(look: OnlineLook) -> anyps5_core::online::Online {
     use anyps5_core::online::api::{
-        Account, AccountId, Activity, Friend, FriendLists, Invitation, Presence, Request,
-        SessionRef,
+        Account, AccountId, Activity, Count, Friend, FriendLists, Invitation, Presence, Privacy,
+        Request, SessionRef,
     };
     use anyps5_core::online::{Cloud, Dialog, Online, Pending, SignedIn, Status};
+    use std::collections::BTreeMap;
     let account = |id: u64, handle: &str| Account {
         id: AccountId(id),
         handle: handle.into(),
@@ -265,6 +266,18 @@ fn sample_online(look: OnlineLook) -> anyps5_core::online::Online {
         version: "01.000".into(),
         expires: 0,
     }];
+    let count = |platinum, gold, silver, bronze| Count {
+        bronze,
+        silver,
+        gold,
+        platinum,
+    };
+    state.cards = BTreeMap::from([
+        (AccountId(2), Some(count(1, 4, 9, 30))),
+        (AccountId(3), None),
+        (AccountId(4), Some(count(0, 0, 0, 0))),
+    ]);
+    state.privacy = Some(Privacy::default());
     if look == OnlineLook::Picker {
         state.dialog = Some(Dialog {
             id: 1,

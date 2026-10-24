@@ -28,6 +28,7 @@ pub use anyplay_control::{
 use api::{Account, AccountId, FriendLists, Invitation};
 
 use crate::events::Notifier;
+use crate::trophies::{Earned, Grade};
 
 /// The program name of the net service.
 pub const BINARY: &str = if cfg!(windows) {
@@ -261,6 +262,14 @@ pub enum Purpose {
     },
     Dialog,
     RelayOnly,
+    /// The records of a title; `count` is how many the player has earned in all.
+    UploadTrophies {
+        title_id: String,
+        count: usize,
+    },
+    Cards,
+    Privacy,
+    SetPrivacy,
 }
 
 /// The game's invitation dialog, waiting for the player to pick friends.
@@ -299,6 +308,12 @@ pub struct Online {
     pub invitations: Vec<Invitation>,
     pub session: Option<Session>,
     pub dialog: Option<Dialog>,
+    /// Friends' trophy counts by grade; `None` when they hide them from the player.
+    pub cards: BTreeMap<AccountId, Option<api::Count>>,
+    /// Who sees the player's trophies; `None` until the cloud said.
+    pub privacy: Option<api::Privacy>,
+    /// How many trophies of each title the cloud has recorded since this sign-in.
+    uploaded: BTreeMap<String, usize>,
     waiting: BTreeMap<u64, Purpose>,
     next: u64,
     outbox: Vec<String>,
@@ -365,13 +380,121 @@ impl Online {
                     return Vec::new();
                 };
                 let result = answer.into_result::<serde_json::Value>();
-                if let (Purpose::Email(email), Ok(_)) = (&purpose, &result) {
-                    self.email.clone_from(email);
+                if let Ok(value) = &result {
+                    self.answered(&purpose, value);
                 }
                 vec![Notice::Answered(purpose, result)]
             }
             Line::Output(Output::Event(event)) => self.event(event),
         }
+    }
+
+    /// Keeps what a successful answer tells about the account.
+    fn answered(&mut self, purpose: &Purpose, value: &serde_json::Value) {
+        match purpose {
+            Purpose::Email(email) => self.email.clone_from(email),
+            Purpose::UploadTrophies { title_id, count } => {
+                let known = self.uploaded.entry(title_id.clone()).or_default();
+                *known = (*known).max(*count);
+            }
+            Purpose::Cards => {
+                if let Ok(cards) = serde_json::from_value::<api::Cards>(value.clone()) {
+                    for card in cards.cards {
+                        self.cards.insert(card.account.id, card.trophies);
+                    }
+                }
+            }
+            Purpose::Privacy | Purpose::SetPrivacy => {
+                if let Ok(privacy) = serde_json::from_value(value.clone()) {
+                    self.privacy = Some(privacy);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Sends the trophies the player earned in a title, unless the cloud has them all already or
+    /// an upload of the title still waits. The cloud keeps the first time of each trophy, so a
+    /// repeat is harmless; this only saves the request.
+    pub fn upload_trophies(&mut self, title_id: &str, earned: &[Earned]) {
+        let count = earned.len();
+        let sending =
+            |p: &Purpose| matches!(p, Purpose::UploadTrophies { title_id: t, .. } if t == title_id);
+        if !self.is_online()
+            || count == 0
+            || !api::is_title_id(title_id)
+            || self
+                .uploaded
+                .get(title_id)
+                .is_some_and(|&known| known >= count)
+            || self.is_waiting(sending)
+        {
+            return;
+        }
+        let trophies: Vec<api::Trophy> = earned
+            .iter()
+            .filter_map(|e| {
+                Some(api::Trophy {
+                    number: u16::try_from(e.number)
+                        .ok()
+                        .filter(|n| *n < api::MAX_TROPHY_NUMBER)?,
+                    grade: match e.grade {
+                        Grade::Platinum => api::Grade::Platinum,
+                        Grade::Gold => api::Grade::Gold,
+                        Grade::Silver => api::Grade::Silver,
+                        Grade::Bronze => api::Grade::Bronze,
+                    },
+                    earned: u64::try_from(e.unlocked.div_euclid(1_000_000)).unwrap_or(0),
+                })
+            })
+            .collect();
+        let chunks = trophies.chunks(api::MAX_TROPHY_UPLOAD).count();
+        for (index, chunk) in trophies.chunks(api::MAX_TROPHY_UPLOAD).enumerate() {
+            // Only the last part's answer says that the cloud has them all.
+            let count = if index + 1 == chunks { count } else { 0 };
+            self.send(
+                Purpose::UploadTrophies {
+                    title_id: title_id.to_owned(),
+                    count,
+                },
+                Command::UploadTrophies {
+                    title_id: title_id.to_owned(),
+                    trophies: chunk.to_vec(),
+                },
+            );
+        }
+    }
+
+    /// Asks for the gamer cards of the friends: all of them, or only those without one yet.
+    pub fn request_cards(&mut self, all: bool) {
+        if !self.is_online() || self.is_waiting(|p| *p == Purpose::Cards) {
+            return;
+        }
+        let accounts: Vec<AccountId> = self
+            .friends
+            .friends
+            .iter()
+            .map(|f| f.account.id)
+            .filter(|id| all || !self.cards.contains_key(id))
+            .collect();
+        for chunk in accounts.chunks(api::MAX_CARDS) {
+            self.send(
+                Purpose::Cards,
+                Command::Cards {
+                    accounts: chunk.to_vec(),
+                },
+            );
+        }
+    }
+
+    /// Changes who sees the player's trophies. The choice shows at once and comes back from the
+    /// cloud with the answer.
+    pub fn set_privacy(&mut self, privacy: api::Privacy) {
+        if !self.is_signed_in() {
+            return;
+        }
+        self.privacy = Some(privacy);
+        self.send(Purpose::SetPrivacy, Command::SetPrivacy { privacy });
     }
 
     fn event(&mut self, event: Event) -> Vec<Notice> {
@@ -382,6 +505,7 @@ impl Online {
                 account,
                 pending,
             } => {
+                let was_online = self.is_online();
                 self.cloud = Some(cloud);
                 self.account = account;
                 self.pending = pending;
@@ -389,6 +513,13 @@ impl Online {
                     self.friends = FriendLists::default();
                     self.invitations.clear();
                     self.session = None;
+                    self.cards.clear();
+                    self.privacy = None;
+                    self.uploaded.clear();
+                }
+                if !was_online && self.is_online() {
+                    self.send(Purpose::Privacy, Command::Privacy);
+                    self.request_cards(true);
                 }
             }
             Event::Friends(lists) => {
@@ -403,6 +534,7 @@ impl Online {
                     }
                 }
                 self.friends = lists;
+                self.request_cards(false);
             }
             Event::Invitation { invitation } => {
                 self.invitations.retain(|i| i.id != invitation.id);
@@ -604,6 +736,139 @@ mod tests {
         assert!(matches!(online.status, Status::Ended(_)));
         // Numbers keep counting, so a late answer of the old process never matches a new command.
         assert_eq!(online.send(Purpose::Hello, Command::SignOut), 2);
+    }
+
+    fn answer(online: &mut Online, id: u64, value: impl serde::Serialize) {
+        online.apply(Line::Output(Output::Answer(control::Answer::ok(id, value))));
+    }
+
+    fn earned(number: u32, grade: Grade, unlocked: i64) -> Earned {
+        Earned {
+            number,
+            grade,
+            unlocked,
+        }
+    }
+
+    #[test]
+    fn signing_in_asks_for_the_privacy_choice() {
+        let mut online = Online::default();
+        signed_in(&mut online);
+        let lines = online.take_outbox();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("\"do\":\"privacy\""));
+        answer(
+            &mut online,
+            1,
+            api::Privacy {
+                trophies: api::Audience::Everyone,
+            },
+        );
+        assert_eq!(
+            online.privacy.map(|p| p.trophies),
+            Some(api::Audience::Everyone)
+        );
+    }
+
+    #[test]
+    fn trophies_go_up_once_for_each_new_count() {
+        let mut online = Online::default();
+        let first = [
+            earned(0, Grade::Platinum, 3_500_000),
+            earned(7, Grade::Silver, 1),
+        ];
+        online.upload_trophies("GAME01234", &first);
+        assert!(
+            online.take_outbox().is_empty(),
+            "nothing goes up signed out"
+        );
+        signed_in(&mut online);
+        online.take_outbox();
+
+        online.upload_trophies("GAME01234", &first);
+        online.upload_trophies("GAME01234", &first);
+        let lines = online.take_outbox();
+        assert_eq!(lines.len(), 1, "a second call waits for the first");
+        let (_, command) = control::parse_command(&lines[0]).unwrap();
+        assert_eq!(
+            command,
+            Command::UploadTrophies {
+                title_id: "GAME01234".into(),
+                trophies: vec![
+                    api::Trophy {
+                        number: 0,
+                        grade: api::Grade::Platinum,
+                        earned: 3,
+                    },
+                    api::Trophy {
+                        number: 7,
+                        grade: api::Grade::Silver,
+                        earned: 0,
+                    },
+                ],
+            }
+        );
+        answer(&mut online, 2, api::TrophiesAdded { added: 2 });
+        online.upload_trophies("GAME01234", &first);
+        assert!(online.take_outbox().is_empty(), "the cloud has these");
+        online.upload_trophies(
+            "GAME01234",
+            &[first[0], first[1], earned(9, Grade::Bronze, 1)],
+        );
+        assert_eq!(online.take_outbox().len(), 1);
+        online.upload_trophies("../admin", &first);
+        assert!(
+            online.take_outbox().is_empty(),
+            "a title ID goes into a path"
+        );
+    }
+
+    #[test]
+    fn friends_get_their_cards_once_and_hidden_ones_stay_none() {
+        let mut online = Online::default();
+        signed_in(&mut online);
+        online.take_outbox();
+        let friend = |id, handle: &str| Friend {
+            account: account(id, handle),
+            since: 0,
+            presence: Presence::default(),
+        };
+        let lists = FriendLists {
+            friends: vec![friend(2, "Lumen"), friend(3, "Bea")],
+            ..FriendLists::default()
+        };
+        online.apply(event(Event::Friends(lists.clone())));
+        let lines = online.take_outbox();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("\"do\":\"cards\""));
+        let count = api::Count {
+            bronze: 3,
+            silver: 2,
+            gold: 1,
+            platinum: 0,
+        };
+        answer(
+            &mut online,
+            2,
+            api::Cards {
+                cards: vec![
+                    api::Card {
+                        account: account(2, "Lumen"),
+                        trophies: Some(count),
+                    },
+                    api::Card {
+                        account: account(3, "Bea"),
+                        trophies: None,
+                    },
+                ],
+            },
+        );
+        assert_eq!(online.cards.get(&AccountId(2)), Some(&Some(count)));
+        assert_eq!(online.cards.get(&AccountId(3)), Some(&None));
+        online.apply(event(Event::Friends(lists)));
+        assert!(online.take_outbox().is_empty(), "every friend has a card");
+        online.request_cards(true);
+        assert_eq!(online.take_outbox().len(), 1, "a refresh asks for all");
     }
 
     #[test]

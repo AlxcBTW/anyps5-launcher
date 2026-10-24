@@ -95,6 +95,16 @@ impl Trophy {
     }
 }
 
+/// A trophy the player earned, as far as the network may know it: no name, text or picture
+/// (network ADR 0009).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Earned {
+    pub number: u32,
+    pub grade: Grade,
+    /// Microseconds since the Unix epoch.
+    pub unlocked: i64,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TrophySet {
     pub title: String,
@@ -115,6 +125,21 @@ impl TrophySet {
             graded.clone().filter(|t| t.is_unlocked()).count(),
             graded.count(),
         )
+    }
+
+    /// The earned trophies of the first set (service label 0), the one the network records.
+    pub fn earned(&self) -> Vec<Earned> {
+        self.trophies
+            .iter()
+            .filter(|t| t.service_label == 0)
+            .filter_map(|t| {
+                Some(Earned {
+                    number: t.number,
+                    grade: t.grade,
+                    unlocked: t.unlocked?,
+                })
+            })
+            .collect()
     }
 
     /// Unlocked points over all points, 0 to 100 (integer division).
@@ -173,6 +198,43 @@ impl Trophies {
             icon: set_icon,
             trophies,
         })
+    }
+
+    /// What [`TrophySet::earned`] gives, read without the texts and pictures: only the grades from
+    /// the first package and the unlocked copy's records. Empty when nothing was earned.
+    pub fn earned_records(game: &Game, copy: &Path) -> Vec<Earned> {
+        let unlocks = unlocked(&copy.join("_trophy"), 0);
+        if unlocks.is_empty() {
+            return Vec::new();
+        }
+        let package = game
+            .folder
+            .join("sce_sys")
+            .join("trophy2")
+            .join("trophy00.ucp");
+        let Some(conf) = fs::read(package)
+            .ok()
+            .and_then(|data| read_ucp(&data))
+            .and_then(|files| json(files.get("tropconf.json")))
+        else {
+            return Vec::new();
+        };
+        let mut earned: Vec<Earned> = conf
+            .get("trophies")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|definition| {
+                let number = identifier(definition.get("id"))?;
+                Some(Earned {
+                    number,
+                    grade: Grade::from_letter(definition.get("grade")?.as_str()?)?,
+                    unlocked: *unlocks.get(&number)?,
+                })
+            })
+            .collect();
+        earned.sort_by_key(|e| e.number);
+        earned
     }
 
     /// The ids (`"<label>/<number>"`) of every trophy the engine recorded as earned in the unlocked
@@ -881,6 +943,51 @@ mod tests {
         assert_eq!(seven.unlocked, Some(3_000_000));
         assert_eq!(seven.unlocked_secs(), Some(3));
         assert!(Trophies::earned(&dir.path().join("nothing")).is_empty());
+    }
+
+    #[test]
+    fn earned_records_hold_the_first_set_without_texts() {
+        let dir = tempfile::tempdir().unwrap();
+        put_package(
+            dir.path(),
+            0,
+            &package(
+                json!([{"id": 0, "grade": "P"}, {"id": 1, "grade": "B"}, {"id": 7, "grade": "S"}]),
+                json!([{"id": 7, "name": "Seven", "detail": "Earn it"}]),
+            ),
+        );
+        put_package(
+            dir.path(),
+            1,
+            &package(json!([{"id": 4, "grade": "G"}]), json!([])),
+        );
+        let copy = dir.path().join("copy");
+        record(
+            &copy,
+            "100_0.txt",
+            &format!("7 {}\n0 {}\n", TICK + 3_000_000, TICK + 1),
+        );
+        record(&copy, "100_1.txt", &format!("4 {}\n", TICK + 9_000_000));
+        let records = Trophies::earned_records(&game(dir.path()), &copy);
+        assert_eq!(
+            records,
+            vec![
+                Earned {
+                    number: 0,
+                    grade: Grade::Platinum,
+                    unlocked: 1,
+                },
+                Earned {
+                    number: 7,
+                    grade: Grade::Silver,
+                    unlocked: 3_000_000,
+                },
+            ]
+        );
+        let set = Trophies::load(&game(dir.path()), Some(&copy), &[]).unwrap();
+        assert_eq!(set.earned(), records);
+        let nothing = dir.path().join("nothing");
+        assert!(Trophies::earned_records(&game(dir.path()), &nothing).is_empty());
     }
 
     fn trophy(grade: Grade, unlocked: bool) -> Trophy {

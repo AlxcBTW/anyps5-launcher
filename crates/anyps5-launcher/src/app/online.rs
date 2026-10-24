@@ -48,6 +48,8 @@ pub struct OnlineService {
     started: Option<GameId>,
     /// Relay only changed while that game played: the net service hears of it at the end.
     relay_only_later: bool,
+    /// The player was online in the last frame: coming online syncs the trophies.
+    was_online: bool,
 }
 
 /// A game ready to start, with the variables it gets beyond its settings.
@@ -67,6 +69,7 @@ impl OnlineService {
             join: None,
             started: None,
             relay_only_later: false,
+            was_online: false,
         }
     }
 
@@ -165,6 +168,11 @@ impl OnlineService {
             // Nothing to send to: commands fail at once instead of waiting forever.
             let _ = model.online.take_outbox();
         }
+        let online = model.online.is_online();
+        if online && !self.was_online {
+            model.effects.push(Effect::SyncTrophies);
+        }
+        self.was_online = online;
         if let Some(waiting) = &self.waiting
             && waiting.since.elapsed() >= START_PATIENCE
         {
@@ -418,8 +426,22 @@ impl OnlineService {
                 model.toast(text, Icon::FLAG);
             }
             (Purpose::Invite | Purpose::Dialog, Ok(_)) => {}
-            (Purpose::Hello | Purpose::Playing | Purpose::GameEnd, Err(failure)) => {
+            (
+                Purpose::Hello
+                | Purpose::Playing
+                | Purpose::GameEnd
+                | Purpose::UploadTrophies { .. }
+                | Purpose::Cards
+                | Purpose::Privacy,
+                Err(failure),
+            ) => {
                 tracing::info!("net service: {}: {}", failure.code, failure.message);
+            }
+            (Purpose::SetPrivacy, Err(failure)) => {
+                // The choice the panel shows goes back to what the cloud keeps.
+                model.online.send(Purpose::Privacy, Command::Privacy);
+                let text = failure_text(&failure, language);
+                model.toast(text, Icon::WARNING);
             }
             (_, Ok(_)) => {}
             (_, Err(failure)) => {

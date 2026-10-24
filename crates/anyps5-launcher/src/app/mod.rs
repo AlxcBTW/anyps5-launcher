@@ -390,7 +390,10 @@ impl LauncherApp {
             Effect::StopOnline => self.online.stop(&mut self.model),
             Effect::RelayOnlyChanged => self.online.relay_only_changed(&mut self.model),
             Effect::Rescan if self.offline => self.model.scanning = false,
-            Effect::MeasureSize(_) | Effect::LoadTrophies { .. } | Effect::BackUpSaves(_)
+            Effect::MeasureSize(_)
+            | Effect::LoadTrophies { .. }
+            | Effect::BackUpSaves(_)
+            | Effect::SyncTrophies
                 if self.offline => {}
             Effect::Rescan => {
                 if let Some(root) = root {
@@ -413,6 +416,11 @@ impl LauncherApp {
                 if let Some(game) = self.model.game(&game) {
                     self.services
                         .load_trophies(game, root.as_deref(), &self.model.prefs);
+                }
+            }
+            Effect::SyncTrophies => {
+                if let Some(root) = root {
+                    self.services.sync_trophies(&self.model.games, &root);
                 }
             }
             Effect::ReloadToolkit => self.pipeline.reload_toolkit(&self.model.prefs),

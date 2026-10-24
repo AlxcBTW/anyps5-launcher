@@ -33,6 +33,8 @@ use crate::ui::theme::{Accent, Theme};
 pub const TOAST_SECONDS: f64 = 3.2;
 /// A rescan on window focus needs this many seconds since the last scan.
 pub const FOCUS_RESCAN_GAP: f64 = 3.0;
+/// The least time between two refreshes of the friends' gamer cards, in seconds.
+pub const CARDS_REFRESH_GAP: f64 = 60.0;
 
 // ---------------------------------------------------------------------------------------------
 // Types shared with the screens
@@ -105,6 +107,8 @@ pub enum Effect {
     StopOnline,
     /// Relay only changed in the preferences: the net service hears of it (`app::online`).
     RelayOnlyChanged,
+    /// The player came online: read what they earned in every unlocked game for the network.
+    SyncTrophies,
 }
 
 /// What became of a command.
@@ -232,6 +236,7 @@ pub struct Model {
     pub saves_busy: Option<GameId>,
     trophies_read: HashSet<GameId>,
     last_scan: f64,
+    cards_asked: f64,
     started_without_window: bool,
     toast_counter: u64,
 }
@@ -274,6 +279,7 @@ impl Model {
             saves_busy: None,
             trophies_read: HashSet::new(),
             last_scan: f64::NEG_INFINITY,
+            cards_asked: f64::NEG_INFINITY,
             started_without_window: false,
             toast_counter: 0,
         }
@@ -510,6 +516,10 @@ impl Model {
         if let Some(id) = self.selected_game().map(|g| g.id.clone()) {
             self.reload_trophies(&id);
         }
+        if self.online.is_online() && self.now - self.cards_asked > CARDS_REFRESH_GAP {
+            self.cards_asked = self.now;
+            self.online.request_cards(true);
+        }
     }
 
     pub fn move_selection(&mut self, delta: isize) {
@@ -554,6 +564,9 @@ impl Model {
             }
             CoreEvent::Trophies { game, set } => match set {
                 Some(set) => {
+                    if let Some(title_id) = self.game(&game).map(|g| g.title_id.clone()) {
+                        self.online.upload_trophies(&title_id, &set.earned());
+                    }
                     self.trophies.insert(game, set);
                 }
                 None => {
@@ -562,6 +575,9 @@ impl Model {
             },
             CoreEvent::TrophyUnlocked { game, trophy } => {
                 self.trophy_banners.push((game, trophy));
+            }
+            CoreEvent::TrophyRecords { title_id, earned } => {
+                self.online.upload_trophies(&title_id, &earned);
             }
             _ => {}
         }

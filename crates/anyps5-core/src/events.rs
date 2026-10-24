@@ -15,7 +15,7 @@ use std::{
 use crate::{
     library::Game,
     paths::GameId,
-    trophies::{Trophy, TrophySet},
+    trophies::{Earned, Trophy, TrophySet},
 };
 
 /// Called after every send so the UI wakes up (the app passes `egui::Context::request_repaint`).
@@ -60,4 +60,9 @@ pub enum CoreEvent {
     },
     /// The running game earned a trophy.
     TrophyUnlocked { game: GameId, trophy: Trophy },
+    /// What the player earned in a title, read for the network without texts or pictures.
+    TrophyRecords {
+        title_id: String,
+        earned: Vec<Earned>,
+    },
 }
