@@ -941,6 +941,7 @@ mod tests {
                             max_members: 4,
                         }),
                     }),
+                    revision: 0,
                 },
             }],
             incoming: vec![Request {
