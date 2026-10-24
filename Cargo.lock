@@ -267,9 +267,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyplay-api"
+version = "0.0.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "anyplay-control"
+version = "0.0.0"
+dependencies = [
+ "anyplay-api",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "anyps5-core"
 version = "0.1.3"
 dependencies = [
+ "anyplay-control",
  "flate2",
  "libc",
  "notify",
