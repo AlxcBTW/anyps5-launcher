@@ -6,3 +6,4 @@
 # fails the build rather than reading as "no key".
 #
 # One key per line:   ed25519 <64 hex digits of the public key> [label]
+ed25519 8ff88478dd817b98634ebf018669e9fc539515766b449a5b0067e329c8c2a7fe anyplay 2026

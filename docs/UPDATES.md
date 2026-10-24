@@ -95,9 +95,11 @@ The rule lives in `selfupdate::signing_required` and `selfupdate::check_with`. T
 
 The first release that carries a key is the one that makes its own players safe. Players on older launchers update to it through the unsigned path one last time.
 
-## The key ceremony (operator, by hand)
+## The key ceremony (operator)
 
-The real key is made by the operator, never by an agent or by CI. Do this on a machine you trust, ideally offline.
+The real key is made on the operator's machine, never in CI. The operator's agent may run the steps, as long as nothing reads or prints the secret: the tool writes it to a file, `gh secret set` reads it from that file, and no command shows its contents.
+
+The first key, labelled "anyplay 2026", was made this way on 2026-10-24.
 
 ### 1. Make the key
 
@@ -112,9 +114,16 @@ update-sign keygen --secret-out update-signing.key --public-out update-keys.line
 
 ### 2. Store the secret
 
-- Put the contents of `update-signing.key` into the password manager, together with the label and the date. That is the backup; losing it means a rotation ([below](#rotate-the-key)), not a disaster.
+- Keep a backup of `update-signing.key` with its label and date: in a password manager, or in a folder on the operator's machine that only the operator's account can read. Losing it means a rotation ([below](#rotate-the-key)), not a disaster.
 - Add the same text as the secret **`UPDATE_SIGNING_KEY`** of **two Environments**, not as a repository secret (anyplay-gg/launcher, Settings, Environments; [Protecting the key](#protecting-the-key) says how to set them up). A repository secret would be readable by any workflow run on any branch.
-- Then delete the file (and empty the trash) from the machine it was made on, or keep it only on an encrypted offline drive.
+- Delete every other copy of the file.
+
+With the `gh` CLI, as an admin of the repository, the secret goes into both environments without being shown:
+
+```
+gh secret set UPDATE_SIGNING_KEY --env release-signing --repo anyplay-gg/launcher < update-signing.key
+gh secret set UPDATE_SIGNING_KEY --env release-resigning --repo anyplay-gg/launcher < update-signing.key
+```
 
 ### 3. Publish the public key
 
@@ -151,14 +160,14 @@ If the secret is **lost** (not leaked), nothing can be signed with the old key a
 
 The release workflow signs in one job, `sign`, which runs only for a pushed tag `v*` and uses the Environment **`release-signing`**. The signing tool is built in an earlier job that has no secret; only the one step that runs `update-sign sign` has the secret in its environment. All of this is worthless if anyone with write access can still reach the secret, so the operator sets up, once, in Settings of anyplay-gg/launcher:
 
-1. **Environment `release-signing`.** Deployment branches and tags: *Selected branches and tags*, add the tag rule `v*` and nothing else. Required reviewers: at least one person other than whoever pushes the tag, with *Prevent self-review* on. The secret `UPDATE_SIGNING_KEY` goes here.
+1. **Environment `release-signing`.** Deployment branches and tags: *Selected branches and tags*, add the tag rule `v*` and nothing else. Required reviewers: the admins (today AlxcBTW and TideOPL). *Prevent self-review* is off, because only admins can push a `v*` tag (step 3): the review is the last look before signing, not a second key holder. Turn it on once the project has enough maintainers that the person who tags is never the only one around. The secret `UPDATE_SIGNING_KEY` goes here.
 2. **Environment `release-resigning`** for the weekly renewal below: deployment branches *Selected branches*, only `main`; no reviewers (a weekly run must not wait for a person). The same secret goes here. Because it is bound to `main`, protect `main` too: a ruleset that requires a pull request with one approval and blocks force pushes, so nothing reaches `main` that was not reviewed.
 3. **Protect the tags.** Settings, Rules, Rulesets, new tag ruleset for `v*`: restrict creations, updates and deletions to the maintainers, block force pushes. Whoever can push a `v*` tag can start a release.
 4. **Delete the repository-level secret** `UPDATE_SIGNING_KEY` if one exists, and every other copy outside the two environments.
 
 Until step 1 is done, the environment does not exist yet and GitHub creates it unprotected on the first run: do it before the first signed release.
 
-A workflow edited on a branch cannot get the key: a run from a branch or started by hand is refused by the environment's rules, and the dry run uses a throwaway key. What remains is anyone who can merge to `main` (hence the ruleset) and the reviewers of `release-signing` (hence a second person).
+A workflow edited on a branch cannot get the key: a run from a branch or started by hand is refused by the environment's rules, and the dry run uses a throwaway key. What remains is anyone who can merge to `main` (hence the ruleset and its required approval) and the admins, who can both push a tag and approve the signing.
 
 ## Renewing the manifest
 
@@ -177,7 +186,7 @@ The new manifest has its own attestation, made by `resign.yml`; `gh attestation 
 | `sign --manifest <file> --out <file> (--key-env <NAME> \| --key-file <file>)` | Signs, after checking that the manifest is well formed, and verifies the new signature before writing it. Never prints the key. |
 | `verify --manifest <file> --sig <file> --keys <file> [--current <v>]` | What the launcher does, for a release candidate. |
 
-Tests use throwaway keys made inside the test; the repository holds no private key and no real public key yet.
+Tests use throwaway keys made inside the test. The repository holds no private key; `data/update-keys.txt` holds the public key "anyplay 2026".
 
 ## Client-side hardening
 

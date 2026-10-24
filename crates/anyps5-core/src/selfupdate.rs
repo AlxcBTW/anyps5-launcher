@@ -1060,15 +1060,28 @@ mod tests {
         (root, paths, exe)
     }
 
+    /// The unsigned flow these tests are about, whatever the embedded key list holds.
+    fn unsigned() -> TrustedKeys {
+        TrustedKeys::parse("").unwrap()
+    }
+
+    /// [`pending`] in the unsigned flow.
+    fn pending_unsigned(paths: &AppPaths, current: &str) -> Option<Staged> {
+        pending_with(paths, current, None, OffsetDateTime::now_utc())
+    }
+
     #[test]
     fn check_reads_the_latest_release_from_the_api() {
         let json = release_json("v0.2.0", "http://x", true, true, true);
         let (base, stop) = serve(vec![("/repos/o/r/releases/latest", json.into_bytes())]);
-        let newer = check_at(&base, "o/r", "0.1.1").unwrap();
+        let newer = check_with(&base, "o/r", "0.1.1", &unsigned()).unwrap();
         assert_eq!(newer.map(|r| r.tag), Some("v0.2.0".into()));
-        assert_eq!(check_at(&base, "o/r", "0.2.0").unwrap(), None);
+        assert_eq!(
+            check_with(&base, "o/r", "0.2.0", &unsigned()).unwrap(),
+            None
+        );
         assert!(matches!(
-            check_at(&base, "o/missing", "0.1.1"),
+            check_with(&base, "o/missing", "0.1.1", &unsigned()),
             Err(SelfUpdateError::NoRelease)
         ));
         stop.store(true, AtomicOrdering::SeqCst);
@@ -1113,7 +1126,7 @@ mod tests {
         assert!(matches!(result, Err(SelfUpdateError::Digest)), "{result:?}");
         // Neither the file nor a partial download stays.
         assert_eq!(fs::read_dir(updates_dir(&paths)).unwrap().count(), 0);
-        assert!(pending(&paths, "0.1.1").is_none());
+        assert!(pending_unsigned(&paths, "0.1.1").is_none());
     }
 
     #[test]
@@ -1233,16 +1246,16 @@ mod tests {
     #[test]
     fn pending_finds_the_newest_staged_update() {
         let (_root, paths, _) = fixture();
-        assert!(pending(&paths, "0.1.1").is_none());
+        assert!(pending_unsigned(&paths, "0.1.1").is_none());
         staged_file(&paths, "0.1.1", b"MZ");
         staged_file(&paths, "0.1.10", b"MZ");
         staged_file(&paths, "0.1.9", b"MZ");
         fs::write(updates_dir(&paths).join("notes.txt"), b"x").unwrap();
         assert_eq!(
-            pending(&paths, "0.1.1").map(|s| s.version),
+            pending_unsigned(&paths, "0.1.1").map(|s| s.version),
             Some("0.1.10".into())
         );
-        assert!(pending(&paths, "0.1.10").is_none());
+        assert!(pending_unsigned(&paths, "0.1.10").is_none());
     }
 
     #[test]
@@ -1253,7 +1266,7 @@ mod tests {
         fs::write(dir.join("AnyPS5-Launcher-0.2.0-x64.exe"), b"MZ").unwrap();
         fs::write(dir.join("AnyPS5-Launcher-0.1.1-x64.exe"), b"MZ").unwrap();
         assert_eq!(
-            pending(&paths, "0.1.1").map(|s| s.version),
+            pending_unsigned(&paths, "0.1.1").map(|s| s.version),
             Some("0.2.0".into())
         );
         cleanup(&exe, &paths, "0.2.0");
