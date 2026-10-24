@@ -20,6 +20,7 @@ pub mod clock;
 pub mod core_pipeline;
 pub mod links;
 pub mod model;
+pub mod online;
 pub mod overlay;
 pub mod panels;
 pub mod pipeline;
@@ -108,6 +109,8 @@ pub struct LauncherApp {
     pub services: Services,
     pub pipeline: Box<dyn Pipeline>,
     pub panels: Box<dyn OverlayHost>,
+    /// The net service behind `model.online`.
+    pub online: online::OnlineService,
     applied: Applied,
     focused: bool,
     /// Overlays that are open or still animating out.
@@ -143,9 +146,14 @@ impl LauncherApp {
 
     /// With an already built shell (previews use a silent one).
     pub fn from_shell(shell: Shell, ctx: &Context, config: Config) -> Self {
+        let simulated = !config.persist;
         let mut model = Model::new(config.prefs, config.paths, config.persist);
         model.toolkit = config.pipeline.toolkit_version();
+        let repaint = ctx.clone();
+        let wake: std::sync::Arc<dyn Fn() + Send + Sync> =
+            std::sync::Arc::new(move || repaint.request_repaint());
         Self {
+            online: online::OnlineService::new(wake, simulated),
             shell,
             model,
             textures: Textures::new(ctx),
@@ -184,6 +192,10 @@ impl LauncherApp {
             if self.scan_on_start && self.model.onboarded() {
                 self.model.rescan();
             }
+            // Signed in on this PC before: the net service comes up with the launcher.
+            if self.model.prefs.online {
+                self.model.effects.push(Effect::StartOnline);
+            }
         }
 
         for event in self.services.drain() {
@@ -192,7 +204,18 @@ impl LauncherApp {
         self.model.toolkit = self.pipeline.toolkit_version();
         self.model.patches_dir = self.pipeline.patches_dir();
         for event in self.pipeline.poll(now) {
+            if let pipeline::PipelineEvent::Exited { game, .. }
+            | pipeline::PipelineEvent::StartFailed { game, .. } = &event
+            {
+                self.online.on_exited(&mut self.model, game);
+            }
             self.model.on_pipeline(event);
+        }
+        for ready in self.online.frame(&mut self.model) {
+            self.submit(
+                pipeline::PipelineCommand::Play(ready.game),
+                Some(&ready.env),
+            );
         }
         if let Some(answer) = self.services.poll_folder() {
             self.model.choose_folder(answer);
@@ -352,17 +375,19 @@ impl LauncherApp {
         let root = self.model.prefs.games_folder.clone();
         match effect {
             Effect::Sound(cue) => self.shell.play(cue),
-            Effect::Pipeline(command) => {
-                let game = self.model.game(command.game()).cloned();
-                self.pipeline.submit(
-                    command,
-                    &PipelineContext {
-                        root: root.as_deref(),
-                        game: game.as_ref(),
-                        prefs: &self.model.prefs,
-                    },
-                );
+            Effect::Pipeline(pipeline::PipelineCommand::Play(id)) => {
+                // Signed in, the start waits for the network bridge's variables.
+                let Some(game) = self.model.game(&id).cloned() else {
+                    self.submit(pipeline::PipelineCommand::Play(id), None);
+                    return;
+                };
+                if let Some(env) = self.online.on_play(&mut self.model, &game) {
+                    self.submit(pipeline::PipelineCommand::Play(id), Some(&env));
+                }
             }
+            Effect::Pipeline(command) => self.submit(command, None),
+            Effect::StartOnline => self.online.start(&mut self.model),
+            Effect::StopOnline => self.online.stop(&mut self.model),
             Effect::Rescan if self.offline => self.model.scanning = false,
             Effect::MeasureSize(_) | Effect::LoadTrophies { .. } | Effect::BackUpSaves(_)
                 if self.offline => {}
@@ -409,6 +434,25 @@ impl LauncherApp {
                 ctx.send_viewport_cmd(ViewportCommand::Focus);
             }
         }
+    }
+
+    /// Hands a command to the pipeline with the game it is about.
+    fn submit(
+        &mut self,
+        command: pipeline::PipelineCommand,
+        extra_env: Option<&std::collections::BTreeMap<String, String>>,
+    ) {
+        let root = self.model.prefs.games_folder.clone();
+        let game = self.model.game(command.game()).cloned();
+        self.pipeline.submit(
+            command,
+            &PipelineContext {
+                root: root.as_deref(),
+                game: game.as_ref(),
+                prefs: &self.model.prefs,
+                extra_env,
+            },
+        );
     }
 
     // --- painting ------------------------------------------------------------------------------

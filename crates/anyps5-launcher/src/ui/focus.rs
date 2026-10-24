@@ -17,7 +17,7 @@ use crate::ui::sound::Cue;
 /// Where focus sits on the home screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum HomeFocus {
-    /// Top bar: 0 = library button, 1 = settings button.
+    /// Top bar: 0 = library button, 1 = settings button, 2 = the profile (online).
     Top(u8),
     /// The tile row.
     #[default]
@@ -55,6 +55,8 @@ pub enum HomeIntent {
     OpenGameSettings,
     OpenLibrary,
     OpenSettings,
+    /// The profile: sign-in, friends and invitations.
+    OpenOnline,
     /// Select with no games: open the games folder dialog.
     ChooseFolder,
 }
@@ -111,13 +113,13 @@ impl HomeFocus {
             },
             HomeFocus::Top(i) => match command {
                 Command::Left => go(&mut step, HomeFocus::Top(i.saturating_sub(1))),
-                Command::Right => go(&mut step, HomeFocus::Top((i + 1).min(1))),
+                Command::Right => go(&mut step, HomeFocus::Top((i + 1).min(2))),
                 Command::Down | Command::Back => go(&mut step, HomeFocus::Tiles),
                 Command::Select => {
-                    step.intent = Some(if i == 0 {
-                        HomeIntent::OpenLibrary
-                    } else {
-                        HomeIntent::OpenSettings
+                    step.intent = Some(match i {
+                        0 => HomeIntent::OpenLibrary,
+                        1 => HomeIntent::OpenSettings,
+                        _ => HomeIntent::OpenOnline,
                     });
                 }
                 Command::Options if has_games => step.intent = Some(HomeIntent::OpenGameSettings),
@@ -390,7 +392,15 @@ mod tests {
         );
         assert_eq!(
             HomeFocus::Top(1).navigate(Command::Right, c).focus,
-            HomeFocus::Top(1)
+            HomeFocus::Top(2)
+        );
+        assert_eq!(
+            HomeFocus::Top(2).navigate(Command::Right, c).focus,
+            HomeFocus::Top(2)
+        );
+        assert_eq!(
+            HomeFocus::Top(2).navigate(Command::Select, c).intent,
+            Some(HomeIntent::OpenOnline)
         );
         assert_eq!(
             HomeFocus::Top(0).navigate(Command::Down, c).focus,

@@ -143,6 +143,8 @@ pub struct PipelineContext<'a> {
     /// The game the command is about, when it is in the library.
     pub game: Option<&'a Game>,
     pub prefs: &'a Preferences,
+    /// Variables a started game gets beyond its own settings (the network bridge's).
+    pub extra_env: Option<&'a std::collections::BTreeMap<String, String>>,
 }
 
 /// The unlock/launch pipeline as the UI sees it.
@@ -325,6 +327,7 @@ mod tests {
             root: None,
             game: None,
             prefs: &prefs,
+            extra_env: None,
         };
         let id = GameId::from_key("c:/games/a");
         let mut sim = SimPipeline::new("v1");

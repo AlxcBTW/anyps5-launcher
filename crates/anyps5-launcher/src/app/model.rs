@@ -12,6 +12,7 @@ use std::time::Instant;
 
 use anyps5_core::events::CoreEvent;
 use anyps5_core::library::{ExecutableKind, Game};
+use anyps5_core::online::Online;
 use anyps5_core::paths::{AppPaths, GameId};
 use anyps5_core::settings::{self, Preferences};
 use anyps5_core::trophies::{Trophy, TrophySet};
@@ -98,6 +99,10 @@ pub enum Effect {
     ReloadToolkit,
     /// A game ended well: back up its saves if the last backup is old (see `anyps5_core::saves`).
     BackUpSaves(GameId),
+    /// Start the net service, or say hello again with a new cloud (`app::online`).
+    StartOnline,
+    /// Stop the net service.
+    StopOnline,
 }
 
 /// What became of a command.
@@ -215,6 +220,9 @@ pub struct Model {
     pub trophy_banners: Vec<(GameId, Trophy)>,
     /// Work for the host; drained after every input pass.
     pub effects: Vec<Effect>,
+    /// What the launcher knows of the network. Commands queue here; the host hands them to the
+    /// net service and its answers back (`app::online`).
+    pub online: Online,
 
     /// The clock of the running game's playtime.
     sessions: Sessions,
@@ -259,6 +267,7 @@ impl Model {
             patches_dir: None,
             trophy_banners: Vec::new(),
             effects: Vec::new(),
+            online: Online::default(),
             sessions: Sessions::default(),
             saves_busy: None,
             trophies_read: HashSet::new(),
@@ -849,6 +858,7 @@ impl Model {
             HomeIntent::OpenGameSettings => self.open(Overlay::GameSettings),
             HomeIntent::OpenLibrary => self.open(Overlay::Library),
             HomeIntent::OpenSettings => self.open(Overlay::Settings),
+            HomeIntent::OpenOnline => self.open(Overlay::Online),
             HomeIntent::ChooseFolder => self.request_folder_dialog(),
         }
     }
@@ -858,7 +868,8 @@ impl Model {
         self.focus = focus;
         let intent = match focus {
             HomeFocus::Top(0) => HomeIntent::OpenLibrary,
-            HomeFocus::Top(_) => HomeIntent::OpenSettings,
+            HomeFocus::Top(1) => HomeIntent::OpenSettings,
+            HomeFocus::Top(_) => HomeIntent::OpenOnline,
             HomeFocus::Actions(0) => HomeIntent::PrimaryAction,
             HomeFocus::Actions(1) if self.has_trophies() => HomeIntent::OpenTrophies,
             HomeFocus::Actions(_) => HomeIntent::OpenGameSettings,
@@ -1182,6 +1193,7 @@ mod tests {
                         root: None,
                         game: None,
                         prefs: &prefs,
+                        extra_env: None,
                     },
                 );
             }

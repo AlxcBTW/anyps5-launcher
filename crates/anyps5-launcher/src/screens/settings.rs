@@ -540,6 +540,19 @@ pub fn build_categories(
         advanced.push(Row::command("fontsReset", t(Key::FontsReset)).icon(Icon::X_CIRCLE));
     }
     advanced.push(Row::info("fontsHint", t(Key::FontsHint), None));
+    {
+        use crate::screens::online_strings::OnlineText;
+        advanced.push(
+            Row::toggle(
+                "recordNetwork",
+                OnlineText::RecordNetwork.text(language),
+                prefs.record_network,
+            )
+            .detail(OnlineText::RecordNetworkDetail.text(language))
+            .icon(Icon::FILE_TEXT)
+            .group_start(),
+        );
+    }
 
     // About
     let version = match &env.launcher {
@@ -628,6 +641,10 @@ pub fn apply_value(prefs: &mut Preferences, change: &Change) -> bool {
         Change::Toggle { row: "music", on } => prefs.music = *on,
         Change::Toggle { row: "discord", on } => prefs.discord_presence = *on,
         Change::Toggle { row: "hide", on } => prefs.hide_while_playing = *on,
+        Change::Toggle {
+            row: "recordNetwork",
+            on,
+        } => prefs.record_network = *on,
         Change::Toggle {
             row: "updateCheck",
             on,

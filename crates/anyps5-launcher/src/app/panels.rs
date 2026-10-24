@@ -20,6 +20,8 @@
 //! the panel reports `changed`. Work with I/O (reports, uninstall, toolkit) runs on worker threads
 //! and answers through channels polled in [`OverlayHost::frame`].
 
+mod online;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -124,6 +126,7 @@ pub struct PanelHost {
     log: LogView,
     recommended: RecommendedPanel,
     saves: SavesPanel,
+    online_panel: crate::screens::online::OnlinePanel,
     restore: RestorePanel,
     save_view: Option<SaveView>,
     saves_stale: bool,
@@ -191,6 +194,7 @@ impl PanelHost {
             log: LogView::default(),
             recommended: RecommendedPanel::default(),
             saves: SavesPanel::default(),
+            online_panel: crate::screens::online::OnlinePanel::default(),
             restore: RestorePanel::default(),
             save_view: None,
             saves_stale: true,
@@ -1392,6 +1396,7 @@ impl OverlayHost for PanelHost {
             Overlay::Log => self.log_ui(cx, wanted),
             Overlay::Recommended => self.recommended_ui(cx, wanted),
             Overlay::WhatsNew => self.whats_new_ui(cx, wanted),
+            Overlay::Online => self.online_ui(cx, wanted),
         }
     }
 
@@ -1689,6 +1694,7 @@ mod tests {
         for (intent, overlay) in [
             (HomeIntent::OpenSettings, Overlay::Settings),
             (HomeIntent::OpenLibrary, Overlay::Library),
+            (HomeIntent::OpenOnline, Overlay::Online),
             (HomeIntent::OpenGameSettings, Overlay::GameSettings),
             (HomeIntent::OpenTrophies, Overlay::Trophies),
         ] {

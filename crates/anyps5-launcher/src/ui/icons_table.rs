@@ -89,4 +89,15 @@ impl Icon {
     pub const GITHUB_LOGO: Icon = Icon('\u{e576}');
     pub const FLOPPY_DISK: Icon = Icon('\u{e248}');
     pub const CLOCK_COUNTER_CLOCKWISE: Icon = Icon('\u{e1a0}');
+    pub const USERS: Icon = Icon('\u{e4d6}');
+    pub const USER_PLUS: Icon = Icon('\u{e4d0}');
+    pub const USER_MINUS: Icon = Icon('\u{e4ce}');
+    pub const ENVELOPE_SIMPLE: Icon = Icon('\u{e218}');
+    pub const PAPER_PLANE_RIGHT: Icon = Icon('\u{e396}');
+    pub const CLOUD: Icon = Icon('\u{e1aa}');
+    pub const SIGN_IN: Icon = Icon('\u{e428}');
+    pub const SIGN_OUT: Icon = Icon('\u{e42a}');
+    pub const PROHIBIT: Icon = Icon('\u{e3de}');
+    pub const FLAG: Icon = Icon('\u{e244}');
+    pub const KEY: Icon = Icon('\u{e2d6}');
 }
