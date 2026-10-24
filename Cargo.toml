@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/anyps5-core", "crates/anyps5-launcher", "crates/fake-relinker"]
+members = ["crates/anyps5-core", "crates/anyps5-launcher", "crates/fake-relinker", "crates/update-manifest"]
 
 [workspace.package]
 version = "0.1.3"

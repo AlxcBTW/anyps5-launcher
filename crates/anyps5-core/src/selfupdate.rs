@@ -18,12 +18,40 @@
 //! swap could happen, or it failed), so it is offered again without a second download.
 //!
 //! Nothing here keeps state: the host owns the threads and decides when to swap.
+//!
+//! # Signed updates, and the migration rule
+//!
+//! Trusting whatever a GitHub release holds lets anyone who can publish one run code on every
+//! player's PC. The launcher therefore embeds a list of trusted public keys
+//! (`data/update-keys.txt`) and, **once that list holds a key, takes updates only through the
+//! release's signed manifest** (`latest.json` and `latest.json.sig`, see
+//! [`anyplay_update_manifest`]): the signature, the expiry, a version newer than the running one
+//! and the download's SHA-256 and size are all checked, and the release's tag, its
+//! `SHA256SUMS.txt` and its asset names are not used.
+//!
+//! The rule is a single switch with no way back, [`signing_required`]:
+//!
+//! - **No key in the list:** signing is not switched on. Behaviour is exactly the unsigned flow
+//!   described above, checksum check included.
+//! - **One key or more:** a valid signed manifest is required. A release without a manifest, a
+//!   bad or missing signature, an expired or older manifest is refused. There is no fallback to
+//!   the unsigned flow, and an unreadable key list is not "no key" but a refusal.
+//!
+//! A refused update only logs; the installed launcher is never touched, and offline the check
+//! simply fails and the launcher runs as it is.
 
-use std::cmp::Ordering;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use anyplay_update_manifest::{
+    Artifact, MAX_MANIFEST_BYTES, MAX_SIGNATURE_BYTES, Manifest, ManifestError, TrustedKeys,
+    WINDOWS_X64,
+};
+pub use anyplay_update_manifest::{Version, is_newer};
+use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
 
 use crate::error::CancelToken;
 use crate::paths::AppPaths;
@@ -33,6 +61,13 @@ use crate::toolkit::{self, Asset, ToolkitError};
 pub const REPOSITORY: &str = "anyplay-gg/launcher";
 
 const SUMS_NAME: &str = "SHA256SUMS.txt";
+/// The signed manifest of a release and its signature.
+const MANIFEST_NAME: &str = "latest.json";
+const MANIFEST_SIG_NAME: &str = "latest.json.sig";
+/// Beside a staged exe, the SHA-256 it was verified with. Only signed updates have one.
+const VERIFIED_SUFFIX: &str = ".verified";
+/// The keys this build trusts. Comments only until the operator adds one.
+const EMBEDDED_KEYS: &str = include_str!("../../../data/update-keys.txt");
 /// The portable exe is `AnyPlay-Launcher-<v>-x64.exe`.
 const EXE_PREFIX: &str = "AnyPlay-Launcher-";
 /// Its name up to v0.1.3, when the launcher was AnyPS5 Launcher. Those launchers update only from
@@ -51,6 +86,13 @@ pub enum SelfUpdateError {
     NoChecksum(String),
     #[error("the download does not match its checksum")]
     Digest,
+    #[error("the download does not have the size the signed manifest states")]
+    Size,
+    /// The signed manifest (or the key list that checks it) is refused. Never falls back.
+    #[error("the signed update manifest is refused: {0}")]
+    Manifest(#[from] ManifestError),
+    #[error("the release has no signed update manifest")]
+    NoManifest,
     #[error("the download is not a Windows program")]
     NotAnExecutable,
     /// The folder of the running exe refuses new files (a read-only or protected location).
@@ -75,126 +117,25 @@ impl From<ToolkitError> for SelfUpdateError {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Versions
-
-/// One dot-separated part of a pre-release tag (`rc`, `1`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Part {
-    Number(u64),
-    Text(String),
-}
-
-impl Ord for Part {
-    /// Numbers sort below text and compare as numbers; text compares as ASCII (semver 11.4).
-    fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (Part::Number(a), Part::Number(b)) => a.cmp(b),
-            (Part::Number(_), Part::Text(_)) => Ordering::Less,
-            (Part::Text(_), Part::Number(_)) => Ordering::Greater,
-            (Part::Text(a), Part::Text(b)) => a.cmp(b),
-        }
-    }
-}
-
-impl PartialOrd for Part {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-/// A semantic version: `major.minor.patch`, an optional `-pre.release` and ignored `+build`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Version {
-    core: [u64; 3],
-    pre: Vec<Part>,
-}
-
-impl Version {
-    /// Reads `0.2.0`, `v0.2.0` or `0.2.0-rc.1+abc`; `None` for anything else.
-    pub fn parse(text: &str) -> Option<Version> {
-        let text = text.trim();
-        let text = text.strip_prefix('v').unwrap_or(text);
-        let text = text.split_once('+').map_or(text, |(rest, _)| rest);
-        let (core, pre) = match text.split_once('-') {
-            Some((core, pre)) => (core, Some(pre)),
-            None => (text, None),
-        };
-        let mut numbers = core.split('.');
-        let mut next = || -> Option<u64> {
-            let part = numbers.next()?;
-            let plain = !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
-            // No leading zeros, like semver.
-            (plain && (part == "0" || !part.starts_with('0')))
-                .then(|| part.parse().ok())
-                .flatten()
-        };
-        let core = [next()?, next()?, next()?];
-        if numbers.next().is_some() {
-            return None;
-        }
-        let pre = match pre {
-            None => Vec::new(),
-            Some(pre) => pre
-                .split('.')
-                .map(|part| {
-                    let valid = !part.is_empty()
-                        && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
-                    if !valid {
-                        None
-                    } else if part.bytes().all(|b| b.is_ascii_digit()) {
-                        part.parse().ok().map(Part::Number)
-                    } else {
-                        Some(Part::Text(part.to_owned()))
-                    }
-                })
-                .collect::<Option<Vec<_>>>()?,
-        };
-        Some(Version { core, pre })
-    }
-
-    pub fn is_prerelease(&self) -> bool {
-        !self.pre.is_empty()
-    }
-}
-
-impl Ord for Version {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.core.cmp(&other.core).then_with(|| {
-            match (self.pre.is_empty(), other.pre.is_empty()) {
-                (true, true) => Ordering::Equal,
-                // A release is newer than its own pre-releases.
-                (true, false) => Ordering::Greater,
-                (false, true) => Ordering::Less,
-                (false, false) => self.pre.cmp(&other.pre),
-            }
-        })
-    }
-}
-
-impl PartialOrd for Version {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-/// Whether `latest` is a newer version than `current`; garbage is never newer.
-pub fn is_newer(latest: &str, current: &str) -> bool {
-    match (Version::parse(latest), Version::parse(current)) {
-        (Some(latest), Some(current)) => latest > current,
-        _ => false,
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
 // Releases
 
-/// A newer launcher release with the two files [`stage`] needs.
+/// What vouches for a release's exe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Vouch {
+    /// Not signed: the release's `SHA256SUMS.txt`. Only while no key is trusted.
+    Checksums(Asset),
+    /// A verified manifest; the exe asset carries the manifest's hash and size.
+    Manifest,
+}
+
+/// A newer launcher release with what [`stage`] needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Release {
-    /// As published, with the leading `v`.
+    /// With the leading `v`. For a signed release it is made from the manifest's version, never
+    /// taken from the release's tag.
     pub tag: String,
     exe: Asset,
-    sums: Asset,
+    vouch: Vouch,
 }
 
 impl Release {
@@ -255,7 +196,23 @@ pub fn parse_latest(json: &str, current: &str) -> Result<Option<Release>, SelfUp
         .or_else(|| find(&legacy_exe_name(version)))
         .ok_or(SelfUpdateError::NoRelease)?;
     let sums = find(SUMS_NAME).ok_or(SelfUpdateError::NoRelease)?;
-    Ok(Some(Release { tag, exe, sums }))
+    Ok(Some(Release {
+        tag,
+        exe,
+        vouch: Vouch::Checksums(sums),
+    }))
+}
+
+/// The keys this build trusts. An unreadable list is an error, never an empty one.
+fn embedded_keys() -> Result<TrustedKeys, SelfUpdateError> {
+    Ok(TrustedKeys::parse(EMBEDDED_KEYS)?)
+}
+
+/// Whether this build takes updates only through a signed manifest: it does as soon as the key
+/// list holds a key, and also when the list cannot be read (failing closed, so a damaged list can
+/// never send the launcher back to the unsigned flow).
+pub fn signing_required() -> bool {
+    embedded_keys().map_or(true, |keys| !keys.is_empty())
 }
 
 /// Asks GitHub whether a release newer than `current` exists. Blocking: call from a worker thread.
@@ -269,7 +226,129 @@ pub fn check_at(
     repo: &str,
     current: &str,
 ) -> Result<Option<Release>, SelfUpdateError> {
-    parse_latest(&toolkit::latest_release_json(api_base, repo)?, current)
+    check_with(api_base, repo, current, &embedded_keys()?)
+}
+
+/// [`check_at`] with the trusted keys given. An empty list is the unsigned flow, any key makes the
+/// signed manifest mandatory (see the module documentation).
+pub fn check_with(
+    api_base: &str,
+    repo: &str,
+    current: &str,
+    keys: &TrustedKeys,
+) -> Result<Option<Release>, SelfUpdateError> {
+    let json = toolkit::latest_release_json(api_base, repo)?;
+    if keys.is_empty() {
+        return parse_latest(&json, current);
+    }
+    parse_signed(
+        &json,
+        current,
+        keys,
+        OffsetDateTime::now_utc(),
+        &mut get_small,
+    )
+}
+
+/// Downloads at most `max` bytes (the manifest and its signature).
+fn get_small(url: &str, max: u64) -> Result<Vec<u8>, SelfUpdateError> {
+    let mut response = toolkit::agent(Some(std::time::Duration::from_secs(20)))
+        .get(url)
+        .header("User-Agent", toolkit::user_agent())
+        .call()
+        .map_err(|e| SelfUpdateError::Network(e.to_string()))?;
+    if response.status().as_u16() != 200 {
+        return Err(SelfUpdateError::Network(format!(
+            "download failed: HTTP {}",
+            response.status().as_u16()
+        )));
+    }
+    response
+        .body_mut()
+        .with_config()
+        .limit(max)
+        .read_to_vec()
+        .map_err(|e| SelfUpdateError::Network(e.to_string()))
+}
+
+/// Fetches a URL, at most the given number of bytes.
+type Fetch<'a> = &'a mut dyn FnMut(&str, u64) -> Result<Vec<u8>, SelfUpdateError>;
+
+/// The signed flow on the JSON of `releases/latest`: finds the manifest and its signature among
+/// the assets, fetches both with `fetch(url, max_bytes)`, verifies them at `now` and returns the
+/// release the manifest offers. `Ok(None)` when the manifest is genuine but not newer than
+/// `current` (nothing to update, or an older release served as "latest"); every other refusal is
+/// an error. The tag and the other assets of the release are not trusted and not used.
+fn parse_signed(
+    json: &str,
+    current: &str,
+    keys: &TrustedKeys,
+    now: OffsetDateTime,
+    fetch: Fetch,
+) -> Result<Option<Release>, SelfUpdateError> {
+    let value: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| SelfUpdateError::Network(format!("bad release data: {e}")))?;
+    let url_of = |name: &str| {
+        value
+            .get("assets")?
+            .as_array()?
+            .iter()
+            .find(|a| a.get("name").and_then(|n| n.as_str()) == Some(name))?
+            .get("browser_download_url")?
+            .as_str()
+            .map(str::to_owned)
+    };
+    let (Some(manifest_url), Some(sig_url)) = (url_of(MANIFEST_NAME), url_of(MANIFEST_SIG_NAME))
+    else {
+        return Err(SelfUpdateError::NoManifest);
+    };
+    let manifest_bytes = fetch(&manifest_url, MAX_MANIFEST_BYTES)?;
+    let signature = fetch(&sig_url, MAX_SIGNATURE_BYTES)?;
+    let signature = String::from_utf8_lossy(&signature);
+    let manifest = anyplay_update_manifest::verify(&manifest_bytes, &signature, keys, now)?;
+    match manifest.allows_update_from(current) {
+        Ok(()) => {}
+        Err(ManifestError::NotNewer { .. }) => return Ok(None),
+        Err(other) => return Err(other.into()),
+    }
+    let artifact = signed_artifact(&manifest)?;
+    Ok(Some(Release {
+        tag: format!("v{}", manifest.version),
+        exe: Asset {
+            name: artifact.name.clone(),
+            url: artifact.url.clone(),
+            size: artifact.size,
+            sha256: Some(artifact.sha256.clone()),
+        },
+        vouch: Vouch::Manifest,
+    }))
+}
+
+/// The exe of a verified manifest, once its name and address pass: the name must be exactly one
+/// the launcher stages under (so it cannot point outside the updates folder), and the address
+/// must be https (plain http only to this machine, for tests).
+fn signed_artifact(manifest: &Manifest) -> Result<&Artifact, SelfUpdateError> {
+    let refuse = |why: &str| Err(ManifestError::Malformed(why.to_owned()).into());
+    let artifact = manifest
+        .artifact(WINDOWS_X64)
+        .ok_or(SelfUpdateError::NoRelease)?;
+    if artifact.name != exe_name(&manifest.version)
+        && artifact.name != legacy_exe_name(&manifest.version)
+    {
+        return refuse("the exe has an unexpected file name");
+    }
+    let local_http = ["http://127.0.0.1", "http://localhost", "http://[::1]"]
+        .iter()
+        .any(|prefix| {
+            artifact
+                .url
+                .strip_prefix(prefix)
+                .is_some_and(|rest| rest.starts_with([':', '/']))
+        });
+    if !artifact.url.starts_with("https://") && !local_http {
+        return refuse("the exe address is not https");
+    }
+    Ok(artifact)
 }
 
 /// The SHA-256 (lower case hex) that a `SHA256SUMS.txt` lists for `file`. Lines look like
@@ -317,6 +396,10 @@ pub fn stage(
         version: release.version().to_owned(),
         path: dir.join(&release.exe.name),
     };
+    let sums_asset = match &release.vouch {
+        Vouch::Checksums(sums) => sums,
+        Vouch::Manifest => return stage_signed(release, staged, progress, cancel),
+    };
     let size = release.exe.size;
     if let Ok(meta) = fs::metadata(&staged.path)
         && meta.is_file()
@@ -325,7 +408,7 @@ pub fn stage(
         return Ok(staged);
     }
 
-    let sums = toolkit::download_text(&release.sums.url)?;
+    let sums = toolkit::download_text(&sums_asset.url)?;
     let want = checksum_for(&sums, &release.exe.name)
         .ok_or_else(|| SelfUpdateError::NoChecksum(release.exe.name.clone()))?;
     let verified = Asset {
@@ -346,6 +429,75 @@ pub fn stage(
             Err(error)
         }
     }
+}
+
+/// [`stage`] for a release whose manifest was verified: the download must have exactly the
+/// SHA-256 and the size the manifest states. The file gets its final name and its `.verified`
+/// marker only after that, and a file left by an earlier run is reused only when it hashes to the
+/// manifest's value.
+fn stage_signed(
+    release: &Release,
+    staged: Staged,
+    progress: &mut dyn FnMut(f64),
+    cancel: &CancelToken,
+) -> Result<Staged, SelfUpdateError> {
+    let want = release.exe.sha256.clone().unwrap_or_default();
+    let marker = verified_marker(&staged.path);
+    if let Ok(meta) = fs::metadata(&staged.path)
+        && meta.is_file()
+        && meta.len() == release.exe.size
+        && hash_file(&staged.path).is_ok_and(|have| have == want)
+    {
+        fs::write(&marker, &want)?;
+        return Ok(staged);
+    }
+    let part = staged.path.with_extension("exe.part");
+    let result = toolkit::download_to(&toolkit::agent(None), &release.exe, &part, progress, cancel)
+        .map_err(SelfUpdateError::from)
+        .and_then(|()| {
+            if fs::metadata(&part)?.len() == release.exe.size {
+                Ok(())
+            } else {
+                Err(SelfUpdateError::Size)
+            }
+        })
+        .and_then(|()| check_executable(&part));
+    match result {
+        Ok(()) => {
+            fs::rename(&part, &staged.path)?;
+            if let Err(error) = fs::write(&marker, &want) {
+                let _ = fs::remove_file(&staged.path);
+                return Err(error.into());
+            }
+            Ok(staged)
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&part);
+            Err(error)
+        }
+    }
+}
+
+/// The marker beside a staged exe: `<exe>.verified`, holding the SHA-256 it was verified with.
+fn verified_marker(exe: &Path) -> PathBuf {
+    let mut name = exe.as_os_str().to_owned();
+    name.push(VERIFIED_SUFFIX);
+    PathBuf::from(name)
+}
+
+/// Whether a staged exe has its marker and still hashes to what the marker says.
+fn still_verified(exe: &Path) -> bool {
+    let Ok(recorded) = fs::read_to_string(verified_marker(exe)) else {
+        return false;
+    };
+    hash_file(exe).is_ok_and(|have| have == recorded.trim())
+}
+
+fn hash_file(path: &Path) -> io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    io::copy(&mut file, &mut hasher)?;
+    Ok(toolkit::hex(&hasher.finalize()))
 }
 
 /// A Windows program starts with `MZ`: a cheap check against a saved error page.
@@ -377,8 +529,15 @@ fn ensure_writable(dir: &Path) -> Result<(), SelfUpdateError> {
     }
 }
 
-/// An update staged by an earlier run: the newest staged exe that is newer than `current`.
+/// An update staged by an earlier run: the newest staged exe that is newer than `current`. Once
+/// signing is required ([`signing_required`]) only an exe that a signed manifest vouched for
+/// counts: one with its `.verified` marker, whose content still hashes to what the marker says.
+/// What an unsigned launcher left behind is not offered.
 pub fn pending(paths: &AppPaths, current: &str) -> Option<Staged> {
+    pending_with(paths, current, signing_required())
+}
+
+fn pending_with(paths: &AppPaths, current: &str, signed: bool) -> Option<Staged> {
     fs::read_dir(updates_dir(paths))
         .ok()?
         .flatten()
@@ -386,6 +545,9 @@ pub fn pending(paths: &AppPaths, current: &str) -> Option<Staged> {
             let name = entry.file_name().to_string_lossy().into_owned();
             let version = version_of_exe_name(&name)?.to_owned();
             if !is_newer(&version, current) || !entry.path().is_file() {
+                return None;
+            }
+            if signed && !still_verified(&entry.path()) {
                 return None;
             }
             Some((Version::parse(&version)?, version, entry.path()))
@@ -425,6 +587,7 @@ impl Staged {
             return Err(writable_or(error, dir));
         }
         let _ = fs::remove_file(&self.path);
+        let _ = fs::remove_file(verified_marker(&self.path));
         Ok(())
     }
 
@@ -483,8 +646,12 @@ pub fn cleanup(exe: &Path, paths: &AppPaths, current: &str) {
         .flatten()
     {
         let name = entry.file_name().to_string_lossy().into_owned();
+        // A marker goes with its exe: it is stale when the exe is gone or stale itself.
+        let marked = name.strip_suffix(VERIFIED_SUFFIX);
+        let orphan = marked.is_some_and(|exe| !updates_dir(paths).join(exe).exists());
         let stale = name.ends_with(".part")
-            || version_of_exe_name(&name).is_some_and(|v| !is_newer(v, current));
+            || orphan
+            || version_of_exe_name(marked.unwrap_or(&name)).is_some_and(|v| !is_newer(v, current));
         if stale {
             remove(&entry.path());
         }
@@ -606,7 +773,7 @@ mod tests {
         assert_eq!(release.version(), "0.2.0");
         assert_eq!(release.exe.name, "AnyPlay-Launcher-0.2.0-x64.exe");
         assert_eq!(release.exe.url, "http://x/exe");
-        assert_eq!(release.sums.name, "SHA256SUMS.txt");
+        assert!(matches!(&release.vouch, Vouch::Checksums(sums) if sums.name == "SHA256SUMS.txt"));
     }
 
     #[test]
@@ -938,3 +1105,6 @@ mod tests {
         assert!(exe.exists(), "the exe itself is never touched");
     }
 }
+
+#[cfg(test)]
+mod signed_tests;

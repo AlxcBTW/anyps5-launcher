@@ -1,0 +1,8 @@
+# The public keys that sign launcher updates (see docs/UPDATES.md).
+#
+# While this file holds no key, the launcher updates as before: from the latest release, checked
+# against its SHA256SUMS.txt. The moment it holds one key or more, a manifest signed by one of them
+# is REQUIRED and the unsigned path is gone for good. A line that is not a comment or a valid key
+# fails the build rather than reading as "no key".
+#
+# One key per line:   ed25519 <64 hex digits of the public key> [label]

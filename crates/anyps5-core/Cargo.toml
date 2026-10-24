@@ -20,6 +20,7 @@ sha2.workspace = true
 time.workspace = true
 ureq.workspace = true
 zip.workspace = true
+anyplay-update-manifest = { path = "../update-manifest" }
 flate2 = "1"
 oozextract = "0.5"
 
@@ -47,3 +48,4 @@ windows = { workspace = true, features = [
 [dev-dependencies]
 tempfile.workspace = true
 tiny_http = "0.12"
+ed25519-dalek = "3"

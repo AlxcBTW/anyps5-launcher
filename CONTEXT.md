@@ -94,6 +94,16 @@ _Avoid_: Libs, DLLs, drivers
 The release tag plus a short fingerprint of the toolkit's files. It changes whenever a file does.
 _Avoid_: Build number
 
+### Launcher updates
+
+**Update manifest**:
+The file `latest.json` of a release, signed by `latest.json.sig`: the version, the address, SHA-256 and size of the exe per platform, an expiry and the oldest version that may update from it. Once the launcher trusts a key, it updates only through one.
+_Avoid_: Release notes, version file
+
+**Trusted update key**:
+A public key in `data/update-keys.txt` whose signature the launcher accepts on an update manifest. The file may hold several, so the next key ships before the current one retires. With none, signing is not switched on and the launcher updates unsigned as before.
+_Avoid_: Certificate, code-signing key (the exe itself is not code-signed)
+
 ### Playing
 
 **Play**:
