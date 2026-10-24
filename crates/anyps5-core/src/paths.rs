@@ -188,6 +188,23 @@ impl AppPaths {
         self.data.join("Cache")
     }
 
+    /// `Network`: the net service's own folder (its endpoint key, observation logs).
+    pub fn network_dir(&self) -> PathBuf {
+        self.data.join("Network")
+    }
+
+    /// `Logs\network.log`: what the net service writes to its standard error.
+    pub fn network_log(&self) -> PathBuf {
+        self.logs_dir().join("network.log")
+    }
+
+    /// `Logs\<TITLEID>-network.jsonl`: the bridge's observation log of one game.
+    pub fn network_record(&self, title_id: &str) -> PathBuf {
+        let name: String = title_id.chars().filter(|c| c.is_alphanumeric()).collect();
+        let name = if name.is_empty() { "unknown" } else { &name };
+        self.logs_dir().join(format!("{name}-network.jsonl"))
+    }
+
     /// `Cache\org.anyps5.<titleid>`: what "clear shader cache" deletes.
     pub fn game_cache_dir(&self, title_id: &str) -> PathBuf {
         self.cache_dir().join(bundle_identifier(title_id))

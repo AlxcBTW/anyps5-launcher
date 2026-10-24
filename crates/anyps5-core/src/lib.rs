@@ -17,6 +17,7 @@ pub mod library;
 pub mod linkreg;
 pub mod links;
 pub mod notes;
+pub mod online;
 pub mod patches;
 pub mod paths;
 pub mod platform;

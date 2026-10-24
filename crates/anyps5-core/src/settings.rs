@@ -493,6 +493,15 @@ pub struct Preferences {
     pub toolkit_pinned: Option<String>,
     #[serde(default, deserialize_with = "lenient")]
     pub cpu_conversion: CpuConversion,
+    /// The cloud of the network the player signs in to; `None` until one is set.
+    #[serde(default)]
+    pub online_cloud: Option<String>,
+    /// The player signed in to the network on this PC: the net service starts with the launcher.
+    #[serde(default)]
+    pub online: bool,
+    /// Games write an observation log of their network calls (`Logs\<TITLEID>-network.jsonl`).
+    #[serde(default)]
+    pub record_network: bool,
     /// Fields written by a newer launcher survive a round trip.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -528,6 +537,9 @@ impl Default for Preferences {
             toolkit_repository: default_repository(),
             toolkit_pinned: None,
             cpu_conversion: CpuConversion::Auto,
+            online_cloud: None,
+            online: false,
+            record_network: false,
             extra: Map::new(),
         }
     }
