@@ -2,6 +2,7 @@
 //! service (`Model::online`), and a join first checks the library and the versions.
 
 use anyps5_core::online::api::AccountId;
+use anyps5_core::online::api::MAX_MESSAGE_CHARS;
 use anyps5_core::online::{self as net, Command, Join, Purpose, Status};
 
 use super::PanelHost;
@@ -9,6 +10,7 @@ use crate::app::model::{Effect, Model};
 use crate::app::online::OnlineService;
 use crate::app::overlay::{Overlay, OverlayCx};
 use crate::screens::online::{OnlineAction, OnlineData};
+use crate::screens::online_social_strings::SocialText as S;
 use crate::screens::online_strings::OnlineText as T;
 use crate::ui::icons::Icon;
 
@@ -35,6 +37,8 @@ impl PanelHost {
                 relay_only: cx.model.prefs.online_relay_only,
                 language,
                 accent,
+                now: crate::app::clock::unix_seconds(),
+                utc_offset: None,
             };
             if wanted && !self.online_panel.is_open() {
                 self.online_panel.open(&data);
@@ -54,7 +58,14 @@ impl PanelHost {
             }
         }
         for action in actions {
-            online_action(cx.model, action);
+            match action {
+                OnlineAction::CopyText(text) => {
+                    cx.ctx.copy_text(text);
+                    let copied = S::Copied.text(language);
+                    cx.model.toast(copied, Icon::CHECK);
+                }
+                action => online_action(cx.model, action),
+            }
         }
     }
 }
@@ -182,6 +193,59 @@ fn online_action(model: &mut Model, action: OnlineAction) {
                 );
             }
         }
+        OnlineAction::PartyInvite(accounts) => {
+            online.send(Purpose::PartyInvite, Command::PartyInvite { accounts });
+        }
+        OnlineAction::PartyAnswer { id, accept } => {
+            online.send(
+                Purpose::PartyAnswer {
+                    id: id.clone(),
+                    accept,
+                },
+                Command::PartyAnswer { id, accept },
+            );
+        }
+        OnlineAction::PartyLeave => {
+            online.send(Purpose::PartyLeave, Command::PartyLeave);
+        }
+        OnlineAction::PartyKick(account) => {
+            online.send(Purpose::PartyKick(account), Command::PartyKick { account });
+        }
+        OnlineAction::PartyLeader(account) => {
+            online.send(
+                Purpose::PartyLeader(account),
+                Command::PartyLeader { account },
+            );
+        }
+        OnlineAction::PartyMove(session) => {
+            online.send(Purpose::PartyMove, Command::PartyMove { session });
+        }
+        OnlineAction::OpenDirect(account) => online.open_direct(account),
+        OnlineAction::OpenThread(conversation) => online.open_thread(&conversation),
+        OnlineAction::LoadEarlier(conversation) => online.load_earlier(&conversation),
+        OnlineAction::Draft { conversation, text } => {
+            // The field takes what the cloud takes; a longer text is cut where the cloud stops.
+            let text: String = text.chars().take(MAX_MESSAGE_CHARS + 1).collect();
+            online.social.set_draft(&conversation, text);
+        }
+        OnlineAction::SendMessage(conversation) => {
+            online.send_draft(&conversation);
+        }
+        OnlineAction::MarkRead(conversation) => online.mark_read(&conversation),
+        OnlineAction::AcceptRequest(conversation) => {
+            online.send(
+                Purpose::AcceptRequest(conversation.clone()),
+                Command::AcceptRequest { conversation },
+            );
+        }
+        OnlineAction::LeaveConversation(conversation) => {
+            online.send(
+                Purpose::LeaveConversation(conversation.clone()),
+                Command::LeaveConversation { conversation },
+            );
+        }
+        // The panel host copies it: only the host has the window's clipboard.
+        OnlineAction::CopyText(_) => {}
         OnlineAction::Close => model.dismiss_overlay(),
     }
 }

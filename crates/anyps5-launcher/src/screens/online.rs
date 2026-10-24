@@ -2,6 +2,8 @@
 //! One side panel on the game sheet's frame, with pages that swap in place. The panel only shows
 //! and asks; the net service acts, and the host turns the panel's actions into commands for it.
 
+mod social;
+
 use std::collections::BTreeSet;
 
 use anyps5_core::online::api::{AccountId, Audience, Count, ReportReason};
@@ -53,6 +55,36 @@ pub enum OnlineAction {
     Dialog(Option<Vec<AccountId>>),
     /// Keep every tunnel on a relay, or let them go direct again.
     RelayOnly(bool),
+    /// Invite friends to the party; a party is made when the player is in none.
+    PartyInvite(Vec<AccountId>),
+    PartyAnswer {
+        id: String,
+        accept: bool,
+    },
+    PartyLeave,
+    PartyKick(AccountId),
+    PartyLeader(AccountId),
+    /// Invite the party into the session the player is in.
+    PartyMove(String),
+    /// Open the conversation with a friend.
+    OpenDirect(AccountId),
+    /// A conversation page opened: fetch what it lacks.
+    OpenThread(String),
+    /// Read further back in a conversation.
+    LoadEarlier(String),
+    /// The text typed for a conversation and not sent.
+    Draft {
+        conversation: String,
+        text: String,
+    },
+    SendMessage(String),
+    /// The player looks at a conversation: its newest message counts as read.
+    MarkRead(String),
+    AcceptRequest(String),
+    /// Leave a group, or decline a message request.
+    LeaveConversation(String),
+    /// Put a message's text on the clipboard.
+    CopyText(String),
     /// Who sees the player's trophies.
     TrophyAudience(Audience),
     Close,
@@ -76,6 +108,16 @@ pub enum Page {
     Account,
     Report(AccountId),
     Picker,
+    Party,
+    PartyMember(AccountId),
+    /// Pick friends to invite to the party.
+    PartyPicker,
+    PartyInvitation(String),
+    Messages,
+    Conversation(String),
+    MessageRequest(String),
+    /// One message in full: copy it, report it.
+    Message(String, u64),
 }
 
 /// What the panel shows, borrowed for one frame.
@@ -91,6 +133,10 @@ pub struct OnlineData<'a> {
     pub relay_only: bool,
     pub language: Language,
     pub accent: Color32,
+    /// The time now, in Unix seconds: the times of messages show their day when it is another.
+    pub now: i64,
+    /// The local UTC offset for the times of messages; `None` asks the system for each.
+    pub utc_offset: Option<i32>,
 }
 
 /// The choices of "Who Sees Your Trophies", in the order the row shows them.
@@ -113,6 +159,18 @@ pub struct OnlinePanel {
     pub friend_text: String,
     reason: usize,
     picked: BTreeSet<AccountId>,
+    /// How many messages the conversation page shows.
+    shown: usize,
+    /// The page the player came from.
+    previous: Option<Page>,
+    /// Where Back from the report page leads, when it did not open from a friend.
+    report_from: Option<Page>,
+    /// The friend whose conversation was asked for; the page opens it once it is there.
+    opening: Option<AccountId>,
+    /// Actions that a page change asks for, handed out with the next frame's.
+    queued: Vec<OnlineAction>,
+    /// The row the focus stands on, for a page whose rows change under it.
+    anchor: Option<social::Anchor>,
 }
 
 impl OnlinePanel {
@@ -159,12 +217,38 @@ impl OnlinePanel {
         if matches!(page, Page::Report(_)) {
             self.reason = 0;
         }
+        match &page {
+            Page::Conversation(id) | Page::MessageRequest(id) => {
+                if self.page != page && !matches!(self.page, Page::Message(..)) {
+                    self.shown = social::SHOWN;
+                }
+                self.queued.push(OnlineAction::OpenThread(id.clone()));
+            }
+            _ => {}
+        }
+        // A message and its chat are one place: going between them is no step away from where
+        // the chat was opened.
+        let in_chat = |page: &Page| matches!(page, Page::Conversation(_) | Page::MessageRequest(_));
+        let within_chat = (matches!(self.page, Page::Message(..)) && in_chat(&page))
+            || (in_chat(&self.page) && matches!(page, Page::Message(..)));
+        if self.page != page && !within_chat {
+            self.previous = Some(std::mem::take(&mut self.page));
+        }
+        self.anchor = None;
         self.page = page;
         let rows = self.rows(data).2;
-        let first = rows::kinds(&rows)
-            .iter()
-            .position(|kind| *kind != RowKind::Info)
-            .unwrap_or(0);
+        // A page opens on its first row that takes focus, a conversation on its field. A request
+        // opens on its first message: read before answering.
+        let wanted = match self.page {
+            Page::Conversation(_) => "compose",
+            _ => "",
+        };
+        let first = rows::position(&rows, wanted).unwrap_or_else(|| {
+            rows::kinds(&rows)
+                .iter()
+                .position(|kind| *kind != RowKind::Info)
+                .unwrap_or(0)
+        });
         self.side.open_at(first);
     }
 
@@ -192,7 +276,7 @@ impl OnlinePanel {
                 Some(Page::Home)
             }
             Page::Picker if online.dialog.is_none() => Some(Page::Home),
-            _ => None,
+            _ => self.social_follow(data),
         };
         if let Some(page) = wanted {
             self.go(page, data);
@@ -207,8 +291,8 @@ impl OnlinePanel {
             // Leaving the page leaves the sign-in waiting; Cancel stops it.
             Page::Browser => Some(entry_page(data)).filter(|p| *p != self.page),
             Page::Blocked(_) => Some(Page::Account),
-            Page::Report(id) => Some(Page::Friend(id)),
-            _ => Some(Page::Home),
+            Page::Report(id) => Some(self.report_from.clone().unwrap_or(Page::Friend(id))),
+            _ => self.social_back(data).unwrap_or(Some(Page::Home)),
         }
     }
 
@@ -225,6 +309,15 @@ impl OnlinePanel {
         }
         if self.side.is_open() {
             self.follow(data);
+            if self.anchor.is_some() {
+                let rows = self.rows(data).2;
+                self.restore_anchor(data, &rows);
+            }
+            if let Page::Conversation(id) = &self.page
+                && data.online.social.read_target(id).is_some()
+            {
+                actions.push(OnlineAction::MarkRead(id.clone()));
+            }
             for command in side::commands(events) {
                 let rows = self.rows(data).2;
                 let driven = rows::drive(shell, &mut self.side.nav, &rows, &[command]);
@@ -252,7 +345,7 @@ impl OnlinePanel {
                 let (changes, texts) =
                     rows::apply_mouse(shell, &mut self.side.nav, &rows, drawn.events);
                 for (row, value) in texts {
-                    self.typed(row, value);
+                    self.typed(row, value, &mut actions);
                 }
                 for change in &changes {
                     self.handle(ctx, change, data, &mut actions);
@@ -265,6 +358,13 @@ impl OnlinePanel {
             Some(_) => {}
             None => self.side.finished(),
         }
+        self.anchor = if self.side.is_open() {
+            let rows = self.rows(data).2;
+            self.anchor_now(data, &rows)
+        } else {
+            None
+        };
+        actions.append(&mut self.queued);
         actions
     }
 
@@ -283,10 +383,19 @@ impl OnlinePanel {
         actions.push(OnlineAction::Close);
     }
 
-    fn typed(&mut self, row: RowId, value: String) {
+    fn typed(&mut self, row: RowId, value: String, actions: &mut Vec<OnlineAction>) {
         let field = match row {
             "cloud" => &mut self.cloud_text,
             "friend" => &mut self.friend_text,
+            "compose" => {
+                if let Page::Conversation(id) = &self.page {
+                    actions.push(OnlineAction::Draft {
+                        conversation: id.clone(),
+                        text: value,
+                    });
+                }
+                return;
+            }
             _ => return,
         };
         *field = value;
@@ -316,6 +425,19 @@ impl OnlinePanel {
                 row: "relayOnly",
                 on,
             } => actions.push(OnlineAction::RelayOnly(*on)),
+            Change::Toggle {
+                row: "pickParty",
+                on,
+            } => {
+                self.social_toggle("pickParty", *on, data);
+            }
+            Change::Submit { row: "compose" } => {
+                self.run("send", data, actions);
+                // The field stays ready for the next message.
+                ctx.data_mut(|d| d.insert_temp(egui::Id::unique("panel-text-focus"), true));
+                ctx.request_repaint();
+            }
+            Change::Submit { row: "friend" } => self.run("sendRequest", data, actions),
             Change::Toggle { row: "pick", on } => {
                 let index = self.nth(data, "pick");
                 if let Some(friend) = picker_friends(online).get(index) {
@@ -345,6 +467,9 @@ impl OnlinePanel {
 
     fn run(&mut self, row: &str, data: &OnlineData<'_>, actions: &mut Vec<OnlineAction>) {
         let online = data.online;
+        if self.social_run(row, data, actions) {
+            return;
+        }
         match (row, &self.page) {
             ("cloudPage", _) => self.go(Page::Cloud, data),
             ("useCloud", _) if online::is_cloud_address(&self.cloud_text) => {
@@ -422,6 +547,7 @@ impl OnlinePanel {
             ("remove", Page::Friend(id)) => actions.push(OnlineAction::RemoveFriend(*id)),
             ("report", Page::Friend(id)) => {
                 let id = *id;
+                self.report_from = None;
                 self.go(Page::Report(id), data);
             }
             ("sendReport", Page::Report(id)) => {
@@ -572,6 +698,7 @@ impl OnlinePanel {
                         Row::command("invite", t(T::InviteToSession)).icon(Icon::PAPER_PLANE_RIGHT),
                     );
                 }
+                self.friend_social_rows(data, *id, &mut rows);
                 if let Some(card) = online.cards.get(id) {
                     rows.push(trophy_row(card.as_ref(), language).group_start());
                 }
@@ -711,6 +838,16 @@ impl OnlinePanel {
                 ));
                 (f(T::ReportTitle, &[Arg::Str(&handle_of(*id))]), None)
             }
+            Page::Party
+            | Page::PartyMember(_)
+            | Page::PartyPicker
+            | Page::PartyInvitation(_)
+            | Page::Messages
+            | Page::Conversation(_)
+            | Page::MessageRequest(_)
+            | Page::Message(..) => self
+                .social_rows(data, &mut rows)
+                .unwrap_or_else(|| (String::new(), None)),
             Page::Picker => {
                 let dialog = online.dialog.as_ref();
                 for friend in picker_friends(online) {
@@ -744,7 +881,7 @@ impl OnlinePanel {
         let language = data.language;
         let t = |text: T| text.text(language);
         let online = data.online;
-        if !online.invitations.is_empty() {
+        if !online.invitations.is_empty() || !online.social.party_invitations.is_empty() {
             rows.push(Row::caption("invitationsCaption", t(T::Invitations)));
             for invitation in &online.invitations {
                 rows.push(
@@ -756,6 +893,7 @@ impl OnlinePanel {
                     .detail(invitation.title.clone()),
                 );
             }
+            self.party_invitation_rows(data, rows);
         }
         if !online.friends.incoming.is_empty() {
             rows.push(Row::caption("requestsCaption", t(T::Requests)).group_start());
@@ -783,6 +921,7 @@ impl OnlinePanel {
                 ));
             }
         }
+        self.home_social_rows(data, rows);
         rows.push(Row::caption("friendsCaption", t(T::Friends)).group_start());
         let friends = online.sorted_friends();
         if friends.is_empty() {
@@ -960,6 +1099,8 @@ mod tests {
             relay_only: false,
             language: Language::English,
             accent: Color32::WHITE,
+            now: 1_792_670_400,
+            utc_offset: Some(0),
         }
     }
 
@@ -1047,6 +1188,8 @@ mod tests {
             [
                 "requestsCaption",
                 "request",
+                "messages",
+                "startParty",
                 "friendsCaption",
                 "friendRow",
                 "addFriend",
@@ -1054,11 +1197,36 @@ mod tests {
             ]
         );
         assert_eq!(
-            rows[3].detail.as_deref(),
+            rows[5].detail.as_deref(),
             Some("Playing Test Game · You can join")
         );
         // The panel opens on the first row that takes focus, not on a caption.
         assert_eq!(panel.side.nav.row, 1);
+    }
+
+    #[test]
+    fn the_home_page_lists_party_invitations_with_the_other_invitations() {
+        let mut online = signed_in();
+        online
+            .social
+            .add_party_invitation(online::api::PartyInvitation {
+                id: "pi".into(),
+                from: account(2, "Lumen"),
+                party: "p".into(),
+                members: 2,
+                expires: 0,
+            });
+        let mut panel = OnlinePanel::default();
+        panel.open(&data(&online));
+        let rows = panel.rows(&data(&online)).2;
+        assert_eq!(
+            &ids(&rows)[..3],
+            ["invitationsCaption", "partyInvitation", "requestsCaption"]
+        );
+        let mut actions = Vec::new();
+        panel.side.nav.row = 1;
+        panel.run("partyInvitation", &data(&online), &mut actions);
+        assert_eq!(panel.page, Page::PartyInvitation("pi".into()));
     }
 
     #[test]
@@ -1068,7 +1236,17 @@ mod tests {
         panel.go(Page::Friend(AccountId(2)), &data(&online));
         let (title, _, rows) = panel.rows(&data(&online));
         assert_eq!(title, "Lumen");
-        assert_eq!(ids(&rows), ["join", "remove", "block", "report"]);
+        assert_eq!(
+            ids(&rows),
+            [
+                "join",
+                "sendMessage",
+                "inviteToParty",
+                "remove",
+                "block",
+                "report"
+            ]
+        );
         assert_eq!(rows[0].detail.as_deref(), Some("1 of 4 players"));
         let mut actions = Vec::new();
         panel.run("join", &data(&online), &mut actions);
@@ -1092,23 +1270,31 @@ mod tests {
         let rows = panel.rows(&data(&online)).2;
         assert_eq!(
             ids(&rows),
-            ["join", "trophies", "remove", "block", "report"]
+            [
+                "join",
+                "sendMessage",
+                "inviteToParty",
+                "trophies",
+                "remove",
+                "block",
+                "report"
+            ]
         );
-        assert_eq!(rows[1].control, Control::Info(Some("35".into())));
+        assert_eq!(rows[3].control, Control::Info(Some("35".into())));
         assert_eq!(
-            rows[1].detail.as_deref(),
+            rows[3].detail.as_deref(),
             Some("1 Platinum · 4 Gold · 30 Bronze")
         );
-        assert!(rows[1].group_start);
+        assert!(rows[3].group_start);
 
         online.cards.insert(AccountId(2), Some(count(0, 0, 0, 0)));
         let rows = panel.rows(&data(&online)).2;
-        assert_eq!(rows[1].control, Control::Info(Some("None yet".into())));
-        assert_eq!(rows[1].detail, None);
+        assert_eq!(rows[3].control, Control::Info(Some("None yet".into())));
+        assert_eq!(rows[3].detail, None);
 
         online.cards.insert(AccountId(2), None);
         let rows = panel.rows(&data(&online)).2;
-        assert_eq!(rows[1].control, Control::Info(Some("Hidden".into())));
+        assert_eq!(rows[3].control, Control::Info(Some("Hidden".into())));
     }
 
     #[test]

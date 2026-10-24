@@ -8,7 +8,9 @@
 //!                           recommended|recommended-warning|whats-new|whats-new-loading|
 //!                           saves|saves-empty|restore|
 //!                           online|online-browser|online-friends|online-friend|
-//!                           online-account|online-picker
+//!                           online-account|online-picker|
+//!                           online-party|online-party-picker|online-messages|online-conversation|
+//!                           online-message|online-request
 //!                 [--screenshot=out.png] [--size=WxH] [--tr]
 //! ```
 //!
@@ -109,6 +111,18 @@ pub enum OnlineLook {
     Friend,
     Account,
     Picker,
+    /// The party of three, over its chat and a session the leader could take it into.
+    Party,
+    /// Picking friends to invite to the party.
+    PartyPicker,
+    /// The conversations, a message request apart, unread first.
+    Messages,
+    /// One message in full.
+    Message,
+    /// A conversation with a friend, with news.
+    Conversation,
+    /// A stranger's first messages, waiting for an answer.
+    Request,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,6 +172,12 @@ pub fn parse(name: &str) -> Option<ScreenPage> {
         "online-friend" => ScreenPage::Online(OnlineLook::Friend),
         "online-account" => ScreenPage::Online(OnlineLook::Account),
         "online-picker" => ScreenPage::Online(OnlineLook::Picker),
+        "online-party" => ScreenPage::Online(OnlineLook::Party),
+        "online-party-picker" => ScreenPage::Online(OnlineLook::PartyPicker),
+        "online-messages" => ScreenPage::Online(OnlineLook::Messages),
+        "online-message" => ScreenPage::Online(OnlineLook::Message),
+        "online-conversation" => ScreenPage::Online(OnlineLook::Conversation),
+        "online-request" => ScreenPage::Online(OnlineLook::Request),
         other => {
             let n: usize = other.strip_prefix("settings")?.parse().ok()?;
             (n < crate::screens::settings::Category::ALL.len())
@@ -165,6 +185,9 @@ pub fn parse(name: &str) -> Option<ScreenPage> {
         }
     })
 }
+
+/// The moment the invented messages are told from: 12:00 UTC on the 22nd of October.
+const SAMPLE_NOW: i64 = 1_792_670_400;
 
 /// What the online panel shows over the invented online state: AnyPlay's own cloud.
 fn online_data(
@@ -180,6 +203,8 @@ fn online_data(
         relay_only: false,
         language,
         accent,
+        now: SAMPLE_NOW,
+        utc_offset: Some(0),
     }
 }
 
@@ -272,6 +297,7 @@ fn sample_online(look: OnlineLook) -> anyps5_core::online::Online {
         (AccountId(4), Some(count(0, 0, 0, 0))),
     ]);
     state.privacy = Some(Privacy::default());
+    sample_social(&mut state);
     if look == OnlineLook::Picker {
         state.dialog = Some(Dialog {
             id: 1,
@@ -280,6 +306,207 @@ fn sample_online(look: OnlineLook) -> anyps5_core::online::Online {
         });
     }
     state
+}
+
+/// An invented party of three, a session, four conversations and a stranger who wrote first.
+fn sample_social(state: &mut anyps5_core::online::Online) {
+    use anyps5_core::online::api::{
+        Account, AccountId, Conversation, ConversationKind, Conversations, Message, Messages,
+        Party, PartyInvitation, PartyMember, ReadMark, Visibility,
+    };
+    use anyps5_core::online::control::Member;
+    use anyps5_core::online::{Fetch, Session};
+    let account = |id: u64, handle: &str| Account {
+        id: AccountId(id),
+        handle: handle.into(),
+    };
+    state.social.apply_party(Some(Party {
+        id: "p1".into(),
+        leader: AccountId(1),
+        members: [(1, "Mira"), (2, "Lumen"), (4, "Kit")]
+            .iter()
+            .map(|(id, handle)| PartyMember {
+                account: account(*id, handle),
+                joined: 0,
+            })
+            .collect(),
+        max_members: 8,
+        conversation: "c-party".into(),
+        created: 0,
+        revision: 3,
+    }));
+    state.social.add_party_invitation(PartyInvitation {
+        id: "pi1".into(),
+        from: account(5, "Rook"),
+        party: "p9".into(),
+        members: 2,
+        expires: 0,
+    });
+    state.session = Some(Session {
+        id: "s1".into(),
+        title_id: "TEST00001".into(),
+        title: NAMES[1].into(),
+        version: "01.000".into(),
+        leader: AccountId(1),
+        max_members: 4,
+        visibility: Visibility::Friends,
+        members: vec![Member {
+            account: account(1, "Mira"),
+            address: "198.18.0.1".into(),
+            joined: 0,
+            link: None,
+        }],
+        created: 0,
+    });
+    let chat = |id: &str, kind, with: &[(u64, &str)], last: u64, read: u64, updated: u64| {
+        let mut members = vec![account(1, "Mira")];
+        members.extend(with.iter().map(|(i, h)| account(*i, h)));
+        Conversation {
+            id: id.into(),
+            kind,
+            name: None,
+            members,
+            last,
+            read,
+            marks: Vec::new(),
+            updated,
+            request: false,
+            party: None,
+        }
+    };
+    let now = SAMPLE_NOW as u64;
+    let mut lumen = chat(
+        "c-lumen",
+        ConversationKind::Direct,
+        &[(2, "Lumen")],
+        7,
+        4,
+        now - 720,
+    );
+    lumen.marks = vec![ReadMark {
+        account: AccountId(2),
+        seq: 4,
+    }];
+    let mut group = chat(
+        "c-raid",
+        ConversationKind::Group,
+        &[(2, "Lumen"), (3, "Juno"), (4, "Kit")],
+        30,
+        30,
+        now - 40_000,
+    );
+    group.name = Some("Raid night".into());
+    let mut party_chat = chat(
+        "c-party",
+        ConversationKind::Party,
+        &[(2, "Lumen"), (4, "Kit")],
+        5,
+        5,
+        now - 3_000,
+    );
+    party_chat.party = Some("p1".into());
+    let mut stranger = chat(
+        "c-nyx",
+        ConversationKind::Direct,
+        &[(9, "Nyx")],
+        2,
+        0,
+        now - 1_900,
+    );
+    stranger.request = true;
+    state.social.set_conversations(Conversations {
+        conversations: vec![
+            lumen,
+            party_chat,
+            chat(
+                "c-juno",
+                ConversationKind::Direct,
+                &[(3, "Juno")],
+                12,
+                12,
+                now - 20_000,
+            ),
+            group,
+        ],
+        requests: vec![stranger],
+    });
+    let said =
+        |conversation: &str, seq: u64, who: u64, handle: &str, text: &str, ago: u64| Message {
+            conversation: conversation.into(),
+            seq,
+            sender: account(who, handle),
+            text: text.into(),
+            created: now - ago,
+        };
+    state.social.ingest(
+        "c-lumen",
+        Fetch::Newest,
+        Messages {
+            messages: vec![
+                said("c-lumen", 1, 2, "Lumen", "Are you around tonight?", 59_000),
+                said(
+                    "c-lumen",
+                    2,
+                    1,
+                    "Mira",
+                    "Yes, after dinner. Around 8.",
+                    58_900,
+                ),
+                said(
+                    "c-lumen",
+                    3,
+                    2,
+                    "Lumen",
+                    "Great. I will set up the lobby.",
+                    58_800,
+                ),
+                said("c-lumen", 4, 1, "Mira", "Bringing Juno too.", 58_700),
+                said(
+                    "c-lumen",
+                    5,
+                    2,
+                    "Lumen",
+                    "Found a new route on the second map.",
+                    1_140,
+                ),
+                said(
+                    "c-lumen",
+                    6,
+                    2,
+                    "Lumen",
+                    "It cuts the run in half. Want to try it with the others?",
+                    1_080,
+                ),
+                said("c-lumen", 7, 2, "Lumen", "Ready when you are.", 720),
+            ],
+            last: 7,
+        },
+    );
+    state.social.ingest(
+        "c-nyx",
+        Fetch::Newest,
+        Messages {
+            messages: vec![
+                said(
+                    "c-nyx",
+                    1,
+                    9,
+                    "Nyx",
+                    "Hi! I saw you in the lobby yesterday. Want to team up?",
+                    1_960,
+                ),
+                said(
+                    "c-nyx",
+                    2,
+                    9,
+                    "Nyx",
+                    "My squad needs a fourth player.",
+                    1_900,
+                ),
+            ],
+            last: 2,
+        },
+    );
 }
 
 /// Three backups of the invented game: one before an unlock, a manual one, one after playing.
@@ -559,8 +786,12 @@ pub struct ScreenGallery {
 }
 
 impl ScreenGallery {
-    pub fn new(page: ScreenPage) -> Self {
+    pub fn new(page: ScreenPage, language: crate::ui::i18n::Language) -> Self {
         let mut prefs = Preferences::first_run();
+        // --tr shows the page in Turkish.
+        if language == crate::ui::i18n::Language::Turkish {
+            prefs.language = anyps5_core::settings::Language::Turkish;
+        }
         prefs.onboarded = true;
         prefs.profile_name = "Mira".into();
         prefs.games_folder = Some("D:\\Games".into());
@@ -881,6 +1112,20 @@ impl ScreenGallery {
                         .online_panel
                         .show_page(Page::Friend(anyps5_core::online::api::AccountId(2)), &data),
                     OnlineLook::Account => self.online_panel.show_page(Page::Account, &data),
+                    OnlineLook::Party => self.online_panel.show_page(Page::Party, &data),
+                    OnlineLook::PartyPicker => {
+                        self.online_panel.show_page(Page::PartyPicker, &data);
+                    }
+                    OnlineLook::Messages => self.online_panel.show_page(Page::Messages, &data),
+                    OnlineLook::Message => self
+                        .online_panel
+                        .show_page(Page::Message("c-lumen".into(), 6), &data),
+                    OnlineLook::Conversation => self
+                        .online_panel
+                        .show_page(Page::Conversation("c-lumen".into()), &data),
+                    OnlineLook::Request => self
+                        .online_panel
+                        .show_page(Page::MessageRequest("c-nyx".into()), &data),
                     _ => {}
                 }
             }
