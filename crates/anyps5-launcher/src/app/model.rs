@@ -103,6 +103,8 @@ pub enum Effect {
     StartOnline,
     /// Stop the net service.
     StopOnline,
+    /// Relay only changed in the preferences: the net service hears of it (`app::online`).
+    RelayOnlyChanged,
 }
 
 /// What became of a command.

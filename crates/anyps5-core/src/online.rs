@@ -95,11 +95,13 @@ impl NetProcess {
         path.is_file().then_some(path)
     }
 
-    /// Starts `binary` with its files in `data`; its log goes to the end of `log`. `notify` is
-    /// called after every line it writes.
+    /// Starts `binary` with its files in `data`, keeping every tunnel on a relay when
+    /// `relay_only`; its log goes to the end of `log`. `notify` is called after every line it
+    /// writes.
     pub fn spawn(
         binary: &Path,
         data: &Path,
+        relay_only: bool,
         log: &Path,
         notify: Notifier,
     ) -> std::io::Result<Self> {
@@ -118,6 +120,9 @@ impl NetProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(log);
+        if relay_only {
+            command.arg("--relay-only");
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -255,6 +260,7 @@ pub enum Purpose {
         accept: bool,
     },
     Dialog,
+    RelayOnly,
 }
 
 /// The game's invitation dialog, waiting for the player to pick friends.

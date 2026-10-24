@@ -178,6 +178,7 @@ fn online_data(
         cloud: Some("https://cloud.example.org"),
         custom_cloud: false,
         official_cloud: true,
+        relay_only: false,
         language,
         accent,
     }

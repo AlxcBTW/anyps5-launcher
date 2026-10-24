@@ -499,6 +499,9 @@ pub struct Preferences {
     /// The player signed in to the network on this PC: the net service starts with the launcher.
     #[serde(default)]
     pub online: bool,
+    /// Tunnels to other players go only through a relay, so they never see this PC's address.
+    #[serde(default)]
+    pub online_relay_only: bool,
     /// Games write an observation log of their network calls (`Logs\<TITLEID>-network.jsonl`).
     #[serde(default)]
     pub record_network: bool,
@@ -539,6 +542,7 @@ impl Default for Preferences {
             cpu_conversion: CpuConversion::Auto,
             online_cloud: None,
             online: false,
+            online_relay_only: false,
             record_network: false,
             extra: Map::new(),
         }
