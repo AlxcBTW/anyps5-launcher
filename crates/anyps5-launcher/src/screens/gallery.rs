@@ -212,7 +212,11 @@ fn sample_online(look: OnlineLook) -> anyps5_core::online::Online {
     let friend = |id, handle, online, activity| Friend {
         account: account(id, handle),
         since: 0,
-        presence: Presence { online, activity },
+        presence: Presence {
+            online,
+            activity,
+            revision: 0,
+        },
     };
     let mut state = Online::default();
     state.status = Status::Running;
