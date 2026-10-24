@@ -23,6 +23,7 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 time = { workspace = true, features = ["parsing"] }
+zeroize = "1"
 
 [dev-dependencies]
 tempfile.workspace = true

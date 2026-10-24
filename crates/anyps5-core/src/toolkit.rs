@@ -42,6 +42,9 @@ pub enum ToolkitError {
     BadArchive(String),
     #[error("the download does not match its checksum")]
     Digest,
+    /// The body is longer than the size the caller was promised.
+    #[error("the download is larger than expected")]
+    TooLarge,
     #[error("{0}")]
     Io(#[from] io::Error),
     #[error("the release has no relinker or libraries for this system")]
@@ -552,6 +555,35 @@ pub(crate) fn agent(timeout: Option<Duration>) -> ureq::Agent {
         .into()
 }
 
+/// How long a connection may take to open, and how long a transfer may make no progress.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const STALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The agent for downloads that end up in the launcher's own update: a connect timeout, a stall
+/// (read) timeout, at most three redirects, and https only. The test build also speaks plain http,
+/// because its servers run on this machine.
+pub(crate) fn update_agent(global: Option<Duration>) -> ureq::Agent {
+    update_agent_with(global, !cfg!(test), STALL_TIMEOUT)
+}
+
+/// [`update_agent`] with the policy given (tests use a short stall time, or force https).
+pub(crate) fn update_agent_with(
+    global: Option<Duration>,
+    https_only: bool,
+    stall: Duration,
+) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(global)
+        .timeout_connect(Some(CONNECT_TIMEOUT))
+        .timeout_per_read(Some(stall))
+        .https_only(https_only)
+        .max_redirects(3)
+        .max_redirects_will_error(true)
+        .http_status_as_error(false)
+        .build()
+        .into()
+}
+
 pub(crate) fn user_agent() -> String {
     format!("anyplay-launcher/{}", env!("CARGO_PKG_VERSION"))
 }
@@ -595,7 +627,7 @@ pub(crate) fn latest_release_json(api_base: &str, repo: &str) -> Result<String, 
 
 /// Downloads a small text file (a checksum list).
 pub(crate) fn download_text(url: &str) -> Result<String, ToolkitError> {
-    let mut response = agent(Some(Duration::from_secs(20)))
+    let mut response = update_agent(Some(Duration::from_secs(20)))
         .get(url)
         .header("User-Agent", user_agent())
         .call()
@@ -771,6 +803,20 @@ pub(crate) fn download_to(
     progress: &mut dyn FnMut(f64),
     cancel: &CancelToken,
 ) -> Result<(), ToolkitError> {
+    download_capped(agent, asset, destination, None, progress, cancel)
+}
+
+/// [`download_to`] that stops with [`ToolkitError::TooLarge`] as soon as the body is longer than
+/// `max_bytes` (a Content-Length above it is refused before a byte is read). A file stays at
+/// `destination` when it fails; the caller removes it.
+pub(crate) fn download_capped(
+    agent: &ureq::Agent,
+    asset: &Asset,
+    destination: &Path,
+    max_bytes: Option<u64>,
+    progress: &mut dyn FnMut(f64),
+    cancel: &CancelToken,
+) -> Result<(), ToolkitError> {
     progress(0.0);
     let mut response = agent
         .get(&asset.url)
@@ -784,11 +830,16 @@ pub(crate) fn download_to(
             response.status().as_u16()
         )));
     }
-    let expected = response
-        .body()
-        .content_length()
-        .or((asset.size > 0).then_some(asset.size));
-    let mut reader = response.body_mut().with_config().limit(u64::MAX).reader();
+    let declared = response.body().content_length();
+    if let (Some(max), Some(declared)) = (max_bytes, declared)
+        && declared > max
+    {
+        return Err(ToolkitError::TooLarge);
+    }
+    let expected = declared.or((asset.size > 0).then_some(asset.size));
+    // One byte more than allowed, so that an overlong body is seen and not just cut off.
+    let limit = max_bytes.map_or(u64::MAX, |max| max.saturating_add(1));
+    let mut reader = response.body_mut().with_config().limit(limit).reader();
     let mut file = fs::File::create(destination)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 64 * 1024];
@@ -803,9 +854,12 @@ pub(crate) fn download_to(
         if n == 0 {
             break;
         }
+        total += n as u64;
+        if max_bytes.is_some_and(|max| total > max) {
+            return Err(ToolkitError::TooLarge);
+        }
         file.write_all(&buffer[..n])?;
         hasher.update(&buffer[..n]);
-        total += n as u64;
         if let Some(size) = expected.filter(|s| *s > 0) {
             progress((total as f64 / size as f64).min(1.0));
         }

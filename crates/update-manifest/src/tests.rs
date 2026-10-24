@@ -283,3 +283,100 @@ fn seeds_round_trip_and_hex_is_strict() {
     assert!(from_hex("zz").is_none());
     assert_eq!(from_hex("00ff").unwrap(), vec![0, 255]);
 }
+
+#[test]
+fn the_validity_window_is_capped_at_90_days_for_the_tool_and_the_client() {
+    let key = generate_signing_key();
+    let keys = TrustedKeys::of(key.verifying_key());
+    // `published` is a day before `now()`, so 89 days ahead is exactly the 90 day cap.
+    let edge = manifest("0.2.0", Duration::days(89));
+    assert_eq!(edge.validate(), Ok(()));
+    let (bytes, signature) = signed(&edge, &key);
+    assert!(verify(&bytes, &signature, &keys, now()).is_ok());
+    for days in [90, 400, 365 * 7000] {
+        let long = manifest("0.2.0", Duration::days(days));
+        assert!(
+            matches!(long.validate(), Err(ManifestError::Malformed(_))),
+            "{days}"
+        );
+        // Signed by the real key, the client still refuses it.
+        let (bytes, signature) = signed(&long, &key);
+        assert!(
+            matches!(
+                verify(&bytes, &signature, &keys, now()),
+                Err(ManifestError::Malformed(_))
+            ),
+            "{days}"
+        );
+    }
+}
+
+#[test]
+fn a_manifest_published_in_the_future_is_refused() {
+    let key = generate_signing_key();
+    let keys = TrustedKeys::of(key.verifying_key());
+    let mut m = manifest("0.2.0", Duration::days(30));
+    // Half a day ahead is clock skew.
+    m.published = format_time(now() + Duration::hours(12));
+    let (bytes, signature) = signed(&m, &key);
+    assert!(verify(&bytes, &signature, &keys, now()).is_ok());
+    // Three days ahead is not.
+    m.published = format_time(now() + Duration::days(3));
+    m.expires = format_time(now() + Duration::days(30));
+    let (bytes, signature) = signed(&m, &key);
+    assert!(matches!(
+        verify(&bytes, &signature, &keys, now()),
+        Err(ManifestError::Malformed(_))
+    ));
+}
+
+#[test]
+fn the_signature_alone_does_not_look_at_the_clock() {
+    // The client asks the version first; only then the clock (see selfupdate).
+    let key = generate_signing_key();
+    let keys = TrustedKeys::of(key.verifying_key());
+    let stale = manifest("0.2.0", Duration::days(30));
+    let (bytes, signature) = signed(&stale, &key);
+    let long_after = now() + Duration::days(400);
+    let got = verify_signed(&bytes, &signature, &keys).unwrap();
+    assert!(matches!(
+        got.allows_update_from("0.2.0"),
+        Err(ManifestError::NotNewer { .. })
+    ));
+    assert!(matches!(
+        got.check_time(long_after),
+        Err(ManifestError::Expired(_))
+    ));
+}
+
+#[test]
+fn a_byte_order_mark_does_not_break_the_key_list() {
+    let a = generate_signing_key().verifying_key();
+    let with_comment = "\u{feff}# trusted update keys\n";
+    assert!(TrustedKeys::parse(with_comment).unwrap().is_empty());
+    let with_key = format!("\u{feff}{}\n", key_line(&a, ""));
+    assert_eq!(TrustedKeys::parse(&with_key).unwrap().len(), 1);
+    // Only a leading mark is tolerated.
+    assert!(TrustedKeys::parse("# a\n\u{feff}# b\n").is_err());
+}
+
+#[test]
+fn hex_takes_no_sign_and_no_space() {
+    assert!(from_hex("+f").is_none());
+    assert!(from_hex("-1").is_none());
+    assert!(from_hex(" f").is_none());
+    assert!(from_hex("0x").is_none());
+    assert_eq!(from_hex("aF09").unwrap(), vec![0xaf, 0x09]);
+    // So a key with a sign in it is not a key.
+    assert!(signing_key_from_hex(&format!("+f{}", "00".repeat(31))).is_none());
+}
+
+#[test]
+fn numeric_prerelease_parts_have_no_leading_zeros() {
+    assert!(Version::parse("1.0.0-01").is_none());
+    assert!(Version::parse("1.0.0-rc.01").is_none());
+    assert!(Version::parse("1.0.0-0").is_some());
+    assert!(Version::parse("1.0.0-rc.10").is_some());
+    // Alphanumeric parts may start with a zero.
+    assert!(Version::parse("1.0.0-0a").is_some());
+}

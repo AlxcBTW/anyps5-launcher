@@ -294,6 +294,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "time",
+ "zeroize",
 ]
 
 [[package]]
@@ -317,6 +318,7 @@ dependencies = [
  "tiny_http",
  "tracing",
  "ureq",
+ "url",
  "windows",
  "zip",
 ]

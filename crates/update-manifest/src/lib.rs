@@ -7,7 +7,8 @@
 //! only through a manifest that
 //!
 //! - is signed by one of those keys ([`ManifestError::Signature`]),
-//! - has not expired ([`ManifestError::Expired`]; this stops a stale answer served forever),
+//! - has not expired ([`ManifestError::Expired`]; this stops a stale answer served forever), is
+//!   valid for at most [`MAX_VALIDITY_DAYS`] days and was not made in the future,
 //! - names a version newer than the running one ([`ManifestError::NotNewer`]; this stops a
 //!   rollback to an old, vulnerable release),
 //! - allows the running version to update from it ([`ManifestError::RunningTooOld`]),
@@ -40,6 +41,12 @@ pub const DOMAIN: &[u8] = b"anyplay-launcher-update-manifest-v1\n";
 pub const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 /// A signature file is 128 hex digits and a line break.
 pub const MAX_SIGNATURE_BYTES: u64 = 1024;
+/// The longest a manifest may stay valid (`expires` minus `published`). A longer one only widens
+/// the window in which a stale answer is believed. [`Manifest::validate`] enforces it, so the
+/// signing tool and the client hold the same line.
+pub const MAX_VALIDITY_DAYS: i64 = 90;
+/// How far ahead of the clock `published` may be (skew between the signer and the player).
+pub const MAX_FUTURE_SKEW_DAYS: i64 = 1;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ManifestError {
@@ -118,7 +125,22 @@ impl Manifest {
         }
     }
 
-    /// The rules that hold for any manifest, signed or about to be.
+    /// The checks against the clock: `published` may lie at most [`MAX_FUTURE_SKEW_DAYS`] ahead
+    /// of `now`, and the manifest must not have expired. Call it on a validated manifest.
+    pub fn check_time(&self, now: OffsetDateTime) -> Result<(), ManifestError> {
+        let published = parse_time("published", &self.published)?;
+        if published > now + time::Duration::days(MAX_FUTURE_SKEW_DAYS) {
+            return Err(ManifestError::Malformed(
+                "published is in the future".to_owned(),
+            ));
+        }
+        if self.expires_at()? <= now {
+            return Err(ManifestError::Expired(self.expires.clone()));
+        }
+        Ok(())
+    }
+
+    /// The rules that hold for any manifest, signed or about to be (no clock involved).
     pub fn validate(&self) -> Result<(), ManifestError> {
         let bad = |what: &str| Err(ManifestError::Malformed(what.to_owned()));
         if self.schema != SCHEMA {
@@ -137,8 +159,12 @@ impl Manifest {
             return bad("minimum_version is above version");
         }
         let published = parse_time("published", &self.published)?;
-        if self.expires_at()? <= published {
+        let expires = self.expires_at()?;
+        if expires <= published {
             return bad("expires is not after published");
+        }
+        if expires - published > time::Duration::days(MAX_VALIDITY_DAYS) {
+            return bad("valid for longer than 90 days");
         }
         for (platform, artifact) in &self.platforms {
             if platform.is_empty() || artifact.name.is_empty() || artifact.url.is_empty() {
@@ -189,6 +215,8 @@ impl TrustedKeys {
     /// that silently went missing would switch signing off and the launcher back to the unsigned
     /// path.
     pub fn parse(text: &str) -> Result<TrustedKeys, ManifestError> {
+        // A byte order mark from an editor must not turn the first comment into an error.
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         let mut keys = Vec::new();
         for (number, line) in text.lines().enumerate() {
             let line = line.trim();
@@ -247,7 +275,9 @@ pub fn key_line(key: &VerifyingKey, label: &str) -> String {
 
 /// A signing key from its 32-byte seed in hex.
 pub fn signing_key_from_hex(text: &str) -> Option<SigningKey> {
-    let seed: [u8; 32] = from_hex(text.trim())?.try_into().ok()?;
+    // The decoded bytes are wiped when they go out of scope.
+    let bytes = zeroize::Zeroizing::new(from_hex(text.trim())?);
+    let seed = zeroize::Zeroizing::new(<[u8; 32]>::try_from(bytes.as_slice()).ok()?);
     Some(SigningKey::from_bytes(&seed))
 }
 
@@ -257,8 +287,8 @@ pub fn generate_signing_key() -> SigningKey {
 }
 
 /// The seed of a signing key in hex: the form of the secret. Never log it.
-pub fn seed_hex(key: &SigningKey) -> String {
-    to_hex(&key.to_bytes())
+pub fn seed_hex(key: &SigningKey) -> zeroize::Zeroizing<String> {
+    zeroize::Zeroizing::new(to_hex(&zeroize::Zeroizing::new(key.to_bytes())[..]))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -277,13 +307,14 @@ pub fn sign(manifest: &[u8], key: &SigningKey) -> String {
 }
 
 /// Checks `signature` over `manifest` against every trusted key, then reads and validates the
-/// manifest and refuses it when it is expired at `now`. The bytes are parsed only after the
-/// signature holds. Whether the version is newer is [`Manifest::allows_update_from`].
-pub fn verify(
+/// manifest (the rules that need no clock). The bytes are parsed only after the signature holds.
+/// Whether the manifest is current is [`Manifest::check_time`] and whether its version is newer
+/// is [`Manifest::allows_update_from`]; a client asks the second first, so one that is already
+/// up to date does not report an expired manifest as an error.
+pub fn verify_signed(
     manifest: &[u8],
     signature: &str,
     keys: &TrustedKeys,
-    now: OffsetDateTime,
 ) -> Result<Manifest, ManifestError> {
     let bytes: [u8; 64] = from_hex(signature.trim())
         .and_then(|b| b.try_into().ok())
@@ -301,9 +332,18 @@ pub fn verify(
     let manifest: Manifest =
         serde_json::from_slice(manifest).map_err(|e| ManifestError::Malformed(e.to_string()))?;
     manifest.validate()?;
-    if manifest.expires_at()? <= now {
-        return Err(ManifestError::Expired(manifest.expires));
-    }
+    Ok(manifest)
+}
+
+/// [`verify_signed`], then [`Manifest::check_time`] at `now`.
+pub fn verify(
+    manifest: &[u8],
+    signature: &str,
+    keys: &TrustedKeys,
+    now: OffsetDateTime,
+) -> Result<Manifest, ManifestError> {
+    let manifest = verify_signed(manifest, signature, keys)?;
+    manifest.check_time(now)?;
     Ok(manifest)
 }
 
@@ -314,9 +354,9 @@ pub fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Reads hex of either case; `None` for odd length or any other character.
+/// Reads hex of either case; `None` for odd length or any other character (no sign, no space).
 pub fn from_hex(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(2) || !text.is_ascii() {
+    if !text.len().is_multiple_of(2) || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     (0..text.len())
