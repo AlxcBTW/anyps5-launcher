@@ -1,0 +1,144 @@
+name: resign
+
+# A signed manifest expires after 30 days (docs/UPDATES.md), and launchers refuse an expired one,
+# so a quiet month would end the update channel. Every Monday this signs the latest release's
+# manifest again with a fresh `published` and `expires` and replaces the two assets. The
+# release, its version and its files do not change.
+#
+# The secret is in the Environment "release-resigning", which the operator restricts to the
+# branch main (docs/UPDATES.md). It is a second environment because the one of the releases
+# is restricted to tags and to reviewers, and a weekly run must not wait for a person. As in
+# release.yml, only the step that signs has the secret, and the tool is built in a job before.
+
+on:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: 1.99.0
+  # Only to satisfy the workspace, which names ../network by path; see NETWORK_REF in release.yml.
+  NETWORK_REF: ${{ vars.NETWORK_REF || '81369391ce82c9b1dd46f7914c7e29af84c202dd' }}
+
+jobs:
+  # No secret. Finds the latest release, builds the signing tool from that release's source, and
+  # makes the new manifest for its exe.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.latest.outputs.tag }}
+      go: ${{ steps.latest.outputs.go }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: The latest release
+        id: latest
+        run: |
+          set -euo pipefail
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName || true)
+          if [ -z "$tag" ]; then echo "No release yet."; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qx latest.json; then
+            echo "$tag has no signed manifest: nothing to renew."
+            echo "go=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "go=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.latest.outputs.go == 'true'
+        with:
+          persist-credentials: false
+          ref: ${{ steps.latest.outputs.tag }}
+          path: launcher
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.latest.outputs.go == 'true'
+        with:
+          persist-credentials: false
+          repository: anyplay-gg/network
+          ref: ${{ env.NETWORK_REF }}
+          path: network
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        if: steps.latest.outputs.go == 'true'
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Build update-sign and make the manifest
+        if: steps.latest.outputs.go == 'true'
+        env:
+          TAG: ${{ steps.latest.outputs.tag }}
+          MINIMUM_VERSION: ${{ vars.UPDATE_MINIMUM_VERSION || '0.1.0' }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          cargo build --release --locked --manifest-path launcher/Cargo.toml -p anyplay-update-manifest --bin update-sign
+          mkdir -p out dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "AnyPlay-Launcher-$version-x64.exe" --dir dist
+          # The exe is the one the release published; its hash must still be the one SHA256SUMS.txt lists.
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt --dir dist
+          (cd dist && grep " \*AnyPlay-Launcher-$version-x64.exe$" SHA256SUMS.txt | sha256sum -c -)
+          launcher/target/release/update-sign manifest --version "$version" --minimum "$MINIMUM_VERSION" --days 30 \
+            --exe "dist/AnyPlay-Launcher-$version-x64.exe" --out out/latest.json
+          cp launcher/target/release/update-sign out/update-sign
+          cp launcher/data/update-keys.txt out/update-keys.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.latest.outputs.go == 'true'
+        with:
+          name: resign-input
+          path: out/*
+          if-no-files-found: error
+
+  sign:
+    needs: prepare
+    if: needs.prepare.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    environment: release-resigning
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: resign-input
+          path: out
+      - name: Sign
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          chmod +x out/update-sign
+          if [ -z "$UPDATE_SIGNING_KEY" ]; then
+            echo "::error::the latest release has a signed manifest but the secret UPDATE_SIGNING_KEY is not set in the environment release-resigning"
+            exit 1
+          fi
+          out/update-sign sign --manifest out/latest.json --out out/latest.json.sig --key-env UPDATE_SIGNING_KEY
+      - name: Verify against the trusted keys
+        run: out/update-sign verify --manifest out/latest.json --sig out/latest.json.sig --keys out/update-keys.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: resigned-manifest
+          path: |
+            out/latest.json
+            out/latest.json.sig
+          if-no-files-found: error
+
+  replace:
+    needs: [prepare, sign]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # replaces two assets of a release
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: resigned-manifest
+          path: out
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            out/latest.json
+            out/latest.json.sig
+      - name: Replace the two assets
+        run: gh release upload "$TAG" out/latest.json out/latest.json.sig --clobber --repo "$GITHUB_REPOSITORY"

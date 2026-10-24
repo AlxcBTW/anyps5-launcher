@@ -6,17 +6,31 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      network_ref:
+        description: The anyplay-gg/network commit to build the net service from (full SHA); empty takes NETWORK_REF
+        required: false
 
+# Nothing writes by default; the one job that publishes asks for what it needs (see `publish`).
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  # Build tools, installed from crates.io with --locked at exactly these versions. The release jobs
+  # use no build cache: a poisoned cache could put code into a binary that no commit holds.
+  CARGO_AUDITABLE_VERSION: 0.7.7
+  RUST_AUDIT_INFO_VERSION: 0.5.4
+  CARGO_CYCLONEDX_VERSION: 0.5.9
   # The installer compiler. Pinned, and checked against this SHA-256 before it runs.
   INNO_VERSION: 7.1.0
   INNO_SHA256: 0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40df2f
   # The anyplay-gg/network revision whose net service the launcher carries.
-  NETWORK_REF: main
+  # A full commit SHA, never a branch: a release is built from a revision somebody chose. Bump it by
+  # a pull request, or set the repository variable NETWORK_REF; a run by hand can take another one.
+  NETWORK_REF: ${{ inputs.network_ref || vars.NETWORK_REF || '81369391ce82c9b1dd46f7914c7e29af84c202dd' }}
+  # The compiler of every release build, an exact version.
+  RUST_TOOLCHAIN: 1.99.0
   # AnyPlay's own cloud, set as a repository variable once it runs; empty until then.
   ANYPLAY_DEFAULT_CLOUD: ${{ vars.ANYPLAY_DEFAULT_CLOUD }}
 
@@ -25,24 +39,33 @@ jobs:
   # package ships the file, and the release carries it beside the portable exe.
   notices:
     runs-on: ubuntu-latest
+    outputs:
+      # The exact anyplay-gg/network commit of NETWORK_REF, resolved once. Every job below builds
+      # from it, so the files of one release cannot come from two revisions of main.
+      network: ${{ steps.network.outputs.commit }}
     defaults:
       run:
         working-directory: launcher
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           path: launcher
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           repository: anyplay-gg/network
           ref: ${{ env.NETWORK_REF }}
           path: network
-      - uses: dtolnay/rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Network commit
+        id: network
+        run: echo "commit=$(git -C ../network rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Third-party licences
         run: tools/notices.sh dist/THIRD-PARTY-LICENSES.txt
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-notices
           path: launcher/dist/THIRD-PARTY-LICENSES.txt
@@ -58,14 +81,16 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           path: launcher
       # The online crates come from anyplay-gg/network, checked out beside the launcher.
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           repository: anyplay-gg/network
-          ref: ${{ env.NETWORK_REF }}
+          ref: ${{ needs.notices.outputs.network }}
           path: network
 
       - name: Version
@@ -81,15 +106,17 @@ jobs:
           }
           "version=$version" >> $env:GITHUB_OUTPUT
 
-      - uses: dtolnay/rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: x86_64-pc-windows-msvc
-      - uses: Swatinem/rust-cache@v2.9.3
-        with:
-          workspaces: |
-            launcher
-            network
+
+      # cargo auditable puts the list of every crate into the binary (a `.dep-v0` section), so a
+      # scanner can read what is inside an exe without the source. rust-audit-info reads it back.
+      - name: Install cargo-auditable
+        run: |
+          cargo install --locked cargo-auditable --version $env:CARGO_AUDITABLE_VERSION
+          cargo install --locked rust-audit-info --version $env:RUST_AUDIT_INFO_VERSION
 
       # The net service is built first, with the C runtime linked statically like the launcher,
       # and carried inside the launcher's exe.
@@ -97,13 +124,28 @@ jobs:
         working-directory: network
         run: |
           $env:RUSTFLAGS = '-C target-feature=+crt-static'
-          cargo build --release --locked -p anyplay-net --target x86_64-pc-windows-msvc
+          cargo auditable build --release --locked -p anyplay-net --target x86_64-pc-windows-msvc
           git rev-parse HEAD
           "ANYPLAY_NET_EMBED=$((Resolve-Path target/x86_64-pc-windows-msvc/release/anyplay-net.exe).Path)" >> $env:GITHUB_ENV
 
       # .cargo/config.toml links the C runtime statically (crt-static).
       - name: Build
-        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+        run: cargo auditable build --release --locked --target x86_64-pc-windows-msvc
+
+      # A build that lost the list (a changed profile, a wrapper) must fail here, not ship without.
+      - name: The dependency lists are in the binaries
+        run: |
+          $binaries = @{
+            'target/x86_64-pc-windows-msvc/release/anyplay-launcher.exe' = 'anyps5-launcher'
+            '../network/target/x86_64-pc-windows-msvc/release/anyplay-net.exe' = 'anyplay-net'
+          }
+          foreach ($path in $binaries.Keys) {
+            $json = rust-audit-info $path
+            if ($LASTEXITCODE -ne 0) { throw "$path carries no dependency list" }
+            $names = ($json | ConvertFrom-Json).packages.name
+            if ($names -notcontains $binaries[$path]) { throw "$path does not list $($binaries[$path])" }
+            "$path lists $($names.Count) packages"
+          }
 
       - name: Portable exe
         run: |
@@ -131,7 +173,7 @@ jobs:
           if (-not (Test-Path "$dir/ISCC.exe")) { throw 'Inno Setup did not install' }
           "INNO_DIR=$dir" >> $env:GITHUB_ENV
 
-      - uses: actions/download-artifact@v8.0.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist-notices
           path: launcher/notices
@@ -143,7 +185,7 @@ jobs:
           & "$env:INNO_DIR/ISCC.exe" "/DAppVersion=${{ steps.version.outputs.version }}" "/DExeSource=$exe" "/DNoticesSource=$notices" "/DOutputDir=$((Resolve-Path dist).Path)" tools/installer/anyplay-launcher.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
 
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-windows
           path: launcher/dist/*
@@ -158,14 +200,16 @@ jobs:
       run:
         working-directory: launcher
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           path: launcher
       # The online crates come from anyplay-gg/network, checked out beside the launcher.
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           repository: anyplay-gg/network
-          ref: ${{ env.NETWORK_REF }}
+          ref: ${{ needs.notices.outputs.network }}
           path: network
 
       - name: Version
@@ -184,26 +228,35 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkg-config libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev \
             libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-      - uses: dtolnay/rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@v2.9.3
-        with:
-          workspaces: |
-            launcher
-            network
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install cargo-auditable
+        run: |
+          cargo install --locked cargo-auditable --version "$CARGO_AUDITABLE_VERSION"
+          cargo install --locked rust-audit-info --version "$RUST_AUDIT_INFO_VERSION"
 
       - name: Net service
         working-directory: network
         run: |
-          cargo build --release --locked -p anyplay-net
+          cargo auditable build --release --locked -p anyplay-net
           git rev-parse HEAD
           echo "ANYPLAY_NET_EMBED=$PWD/target/release/anyplay-net" >> "$GITHUB_ENV"
 
       - name: Build
-        run: cargo build --release --locked
+        run: cargo auditable build --release --locked
 
-      - uses: actions/download-artifact@v8.0.2
+      - name: The dependency lists are in the binaries
+        run: |
+          check() { # binary, package it must list
+            rust-audit-info "$1" | jq -e --arg p "$2" '[.packages[].name] | index($p) != null' > /dev/null
+            echo "$1 lists $(rust-audit-info "$1" | jq '.packages | length') packages"
+          }
+          check target/release/anyplay-launcher anyps5-launcher
+          check ../network/target/release/anyplay-net anyplay-net
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist-notices
           path: launcher/notices
@@ -221,36 +274,78 @@ jobs:
           # The highest glibc symbol version the binary needs.
           objdump -T target/release/anyplay-launcher | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
 
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-linux
           path: launcher/dist/*
           if-no-files-found: error
 
-  # One checksum file for everything, the signed update manifest, and the release itself (tags
-  # only).
+  # SBOMs, build info and one checksum file for everything, and the signing tool. No secret and no
+  # write access: what signs and what publishes are the jobs `sign` and `release` below.
   publish:
     needs: [notices, windows, linux]
     runs-on: ubuntu-latest
     steps:
       # The signing tool is built from this repository (docs/UPDATES.md); it needs the network
       # checkout beside it only because the workspace names it.
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           path: launcher
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           repository: anyplay-gg/network
-          ref: ${{ env.NETWORK_REF }}
+          ref: ${{ needs.notices.outputs.network }}
           path: network
-      - uses: dtolnay/rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: stable
-      - uses: actions/download-artifact@v8.0.2
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: dist-*
           path: dist
           merge-multiple: true
+
+      # The software bill of materials: CycloneDX 1.5, one file for the launcher and one for the
+      # net service it carries, per platform, with the crates that go into the binary (no build
+      # tools, no crates of other platforms). Made from the same Cargo.lock files the builds used.
+      - name: SBOMs
+        env:
+          VERSION: ${{ needs.windows.outputs.version }}
+        run: |
+          set -euo pipefail
+          cargo install --locked cargo-cyclonedx --version "$CARGO_CYCLONEDX_VERSION"
+          # The time inside the file is the commit's, so the same commit gives the same file.
+          SOURCE_DATE_EPOCH=$(git -C launcher log -1 --format=%ct)
+          export SOURCE_DATE_EPOCH
+          sbom() { # workspace, crate folder, file the tool writes, platform, rust target, name suffix
+            (cd "$1" && cargo cyclonedx --manifest-path "crates/$2/Cargo.toml" --format json --spec-version 1.5 \
+              --describe binaries --no-build-deps --target "$5")
+            cp "$1/crates/$2/$3" "dist/AnyPlay-Launcher-$VERSION-$4$6.cdx.json"
+          }
+          sbom launcher anyps5-launcher anyplay-launcher_bin.cdx.json windows-x86_64 x86_64-pc-windows-msvc .sbom
+          sbom network net anyplay-net_bin.cdx.json windows-x86_64 x86_64-pc-windows-msvc .net-service.sbom
+          sbom launcher anyps5-launcher anyplay-launcher_bin.cdx.json linux-x86_64 x86_64-unknown-linux-gnu .sbom
+          sbom network net anyplay-net_bin.cdx.json linux-x86_64 x86_64-unknown-linux-gnu .net-service.sbom
+          for sbom in dist/*.cdx.json; do
+            jq -e '.bomFormat == "CycloneDX" and (.components | length) > 0' "$sbom" > /dev/null
+            echo "$sbom: $(jq '.components | length' "$sbom") components"
+          done
+
+      # What the attestation cannot say by itself: which network commit the net service came from.
+      - name: Build info
+        env:
+          VERSION: ${{ needs.windows.outputs.version }}
+          NETWORK_COMMIT: ${{ needs.notices.outputs.network }}
+        run: |
+          {
+            echo "AnyPlay Launcher $VERSION"
+            echo "launcher: https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
+            echo "network:  https://github.com/anyplay-gg/network/commit/$NETWORK_COMMIT (the net service inside the launcher)"
+            echo "workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > "dist/AnyPlay-Launcher-$VERSION-BUILD-INFO.txt"
+          cat "dist/AnyPlay-Launcher-$VERSION-BUILD-INFO.txt"
 
       - name: Checksums
         working-directory: dist
@@ -262,18 +357,92 @@ jobs:
           cmp "AnyPlay-Launcher-$v-x64.exe" "AnyPS5-Launcher-$v-x64.exe"
           grep -q " \*AnyPS5-Launcher-$v-x64\.exe$" SHA256SUMS.txt
 
-      # The signed manifest (docs/UPDATES.md): latest.json and latest.json.sig. Without the secret
-      # UPDATE_SIGNING_KEY there is none, which is right only while data/update-keys.txt holds no
-      # key; once it holds one, launchers refuse a release without a manifest, so this step fails
-      # the release instead of publishing one nobody can install.
-      - name: Signed update manifest
-        id: manifest
+      # Everything below that needs no secret is done here, in a job that never sees the signing
+      # key: the tool that signs is built here, from this commit, and handed over as an artifact,
+      # and the key list is checked with the parser the launcher itself uses.
+      - name: The key list is readable
+        working-directory: launcher
+        run: cargo test --locked -p anyps5-core the_key_list
+
+      - name: Build update-sign
+        working-directory: launcher
+        run: cargo build --release --locked -p anyplay-update-manifest --bin update-sign
+
+      # A dry run (started by hand) signs with a key made here and thrown away, so the whole
+      # manifest path is exercised without the real key. The result is not a release.
+      - name: Dry run of the signing
+        if: github.event_name != 'push'
+        env:
+          VERSION: ${{ needs.windows.outputs.version }}
+        run: |
+          set -euo pipefail
+          tool="$PWD/launcher/target/release/update-sign"
+          "$tool" keygen --secret-out "$RUNNER_TEMP/dry-run.key" --public-out "$RUNNER_TEMP/dry-run.line" --label dry-run
+          "$tool" manifest --version "$VERSION" --days 30 \
+            --exe "dist/AnyPlay-Launcher-$VERSION-x64.exe" --out dist/latest.json
+          "$tool" sign --manifest dist/latest.json --out dist/latest.json.sig --key-file "$RUNNER_TEMP/dry-run.key"
+          "$tool" verify --manifest dist/latest.json --sig dist/latest.json.sig --keys "$RUNNER_TEMP/dry-run.line"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: anyplay-launcher-${{ needs.windows.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: update-sign
+          path: launcher/target/release/update-sign
+          if-no-files-found: error
+
+  # The signed update manifest (docs/UPDATES.md): latest.json and latest.json.sig. The only job
+  # that can read UPDATE_SIGNING_KEY, and only for a pushed tag: the secret lives in the GitHub
+  # Environment "release-signing", which the operator restricts to the tags v* and to required
+  # reviewers (docs/UPDATES.md). A run from a branch or by hand never reaches it. Within the job
+  # only the step that signs has the secret in its environment, and the tool it runs was built
+  # in the job before, not here.
+  sign:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, publish]
+    runs-on: ubuntu-latest
+    environment: release-signing
+    permissions:
+      contents: read
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    env:
+      VERSION: ${{ needs.windows.outputs.version }}
+      # The oldest launcher that may update from this release; raise it when a release needs an
+      # intermediate step.
+      MINIMUM_VERSION: ${{ vars.UPDATE_MINIMUM_VERSION || '0.1.0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: launcher
+          sparse-checkout: data
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: anyplay-launcher-${{ needs.windows.outputs.version }}
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: update-sign
+          path: tool
+      - name: Manifest
+        run: |
+          set -euo pipefail
+          chmod +x tool/update-sign
+          tool/update-sign manifest --version "$VERSION" --minimum "$MINIMUM_VERSION" --days 30 \
+            --exe "dist/AnyPlay-Launcher-$VERSION-x64.exe" --out dist/latest.json
+      # Without the secret there is no signature, which is right only while data/update-keys.txt
+      # holds no key; once it holds one, launchers refuse a release without a manifest, so this
+      # step fails the release instead of publishing one nobody can install. The list was parsed
+      # by the launcher's own parser in `publish`, so the grep only has to tell "a key" from "none".
+      - name: Sign
+        id: sign
         env:
           UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
-          VERSION: ${{ needs.windows.outputs.version }}
-          # The oldest launcher that may update from this release; raise it when a release needs
-          # an intermediate step.
-          MINIMUM_VERSION: ${{ vars.UPDATE_MINIMUM_VERSION || '0.1.0' }}
         run: |
           set -euo pipefail
           keys=launcher/data/update-keys.txt
@@ -285,27 +454,61 @@ jobs:
             fi
             echo "No UPDATE_SIGNING_KEY and no trusted key: no signed manifest, signing is not switched on."
             echo "signed=false" >> "$GITHUB_OUTPUT"
+            rm dist/latest.json
             exit 0
           fi
-          cargo build --release --locked --manifest-path launcher/Cargo.toml -p anyplay-update-manifest --bin update-sign
-          tool="$PWD/launcher/target/release/update-sign"
-          "$tool" manifest --version "$VERSION" --minimum "$MINIMUM_VERSION" --days 30 \
-            --exe "dist/AnyPlay-Launcher-$VERSION-x64.exe" --out dist/latest.json
-          "$tool" sign --manifest dist/latest.json --out dist/latest.json.sig --key-env UPDATE_SIGNING_KEY
-          # The secret must belong to a key the launchers trust, or they would refuse the release.
-          if trusts_a_key; then
-            "$tool" verify --manifest dist/latest.json --sig dist/latest.json.sig --keys "$keys"
-          fi
+          tool/update-sign sign --manifest dist/latest.json --out dist/latest.json.sig --key-env UPDATE_SIGNING_KEY
           echo "signed=true" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/upload-artifact@v7.0.2
+      - name: Verify against the trusted keys
+        if: steps.sign.outputs.signed == 'true'
+        run: |
+          # The secret must belong to a key the launchers trust, or they would refuse the release.
+          if grep -qE '^[[:space:]]*ed25519[[:space:]]' launcher/data/update-keys.txt; then
+            tool/update-sign verify --manifest dist/latest.json --sig dist/latest.json.sig --keys launcher/data/update-keys.txt
+          fi
+      - if: steps.sign.outputs.signed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: anyplay-launcher-${{ needs.windows.outputs.version }}
-          path: dist/*
+          name: signed-manifest
+          path: |
+            dist/latest.json
+            dist/latest.json.sig
           if-no-files-found: error
 
-      - uses: softprops/action-gh-release@v3.0.3
-        if: startsWith(github.ref, 'refs/tags/v')
+  # The release itself (tags only): provenance for every file, then the GitHub release.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, sign]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the release and its files
+      id-token: write # the OIDC token the attestation is signed with
+      attestations: write # stores the attestation
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: anyplay-launcher-${{ needs.windows.outputs.version }}
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.sign.outputs.signed == 'true'
+        with:
+          name: signed-manifest
+          path: dist
+
+      # Signed provenance for every file of the release: which workflow, from which commit, built
+      # it. `gh attestation verify <file> --repo anyplay-gg/launcher` checks it (docs/UPDATES.md).
+      - name: Attest the release files
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/AnyPlay-Launcher-${{ needs.windows.outputs.version }}-*
+            dist/AnyPS5-Launcher-${{ needs.windows.outputs.version }}-x64.exe
+            dist/THIRD-PARTY-LICENSES.txt
+            dist/SHA256SUMS.txt
+            ${{ needs.sign.outputs.signed == 'true' && 'dist/latest.json' || '' }}
+            ${{ needs.sign.outputs.signed == 'true' && 'dist/latest.json.sig' || '' }}
+
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           name: AnyPlay Launcher ${{ needs.windows.outputs.version }}
           generate_release_notes: true
@@ -316,7 +519,12 @@ jobs:
             dist/AnyPlay-Launcher-${{ needs.windows.outputs.version }}-x86_64.AppImage
             dist/AnyPlay-Launcher-${{ needs.windows.outputs.version }}-linux-x86_64.tar.gz
             dist/AnyPS5-Launcher-${{ needs.windows.outputs.version }}-x64.exe
+            dist/AnyPlay-Launcher-${{ needs.windows.outputs.version }}-windows-x86_64.sbom.cdx.json
+            dist/AnyPlay-Launcher-${{ needs.windows.outputs.version }}-windows-x86_64.net-service.sbom.cdx.json
+            dist/AnyPlay-Launcher-${{ needs.windows.outputs.version }}-linux-x86_64.sbom.cdx.json
+            dist/AnyPlay-Launcher-${{ needs.windows.outputs.version }}-linux-x86_64.net-service.sbom.cdx.json
+            dist/AnyPlay-Launcher-${{ needs.windows.outputs.version }}-BUILD-INFO.txt
             dist/THIRD-PARTY-LICENSES.txt
             dist/SHA256SUMS.txt
-            ${{ steps.manifest.outputs.signed == 'true' && 'dist/latest.json' || '' }}
-            ${{ steps.manifest.outputs.signed == 'true' && 'dist/latest.json.sig' || '' }}
+            ${{ needs.sign.outputs.signed == 'true' && 'dist/latest.json' || '' }}
+            ${{ needs.sign.outputs.signed == 'true' && 'dist/latest.json.sig' || '' }}
