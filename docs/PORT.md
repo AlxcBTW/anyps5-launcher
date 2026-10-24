@@ -446,7 +446,7 @@ pub enum UnlockError {
 }
 pub enum ToolkitError { Missing(String) /* file */, MissingRuntime(Vec<String>), Network(String), BadArchive(String), Digest, Io(io::Error), NoRelease }
 pub enum LaunchError { NotUnlocked, Spawn(io::Error), Job(String), Log(io::Error) }
-pub enum SettingsError { NotSettingsFile /* "not an AnyPS5 settings file" */, Json(serde_json::Error), Io(io::Error) }
+pub enum SettingsError { NotSettingsFile /* "not an AnyPlay settings file" */, Json(serde_json::Error), Io(io::Error) }
 ```
 
 ### 5.7 Implementation notes (core-library)
@@ -540,7 +540,7 @@ Test vectors (appendix A) were produced with `tools/unwrap_self.py` from `cb20fd
 
 Version: `version = "<tag>-<fp>"` where `tag` is the release tag without a leading `v` (`0.1.3`), or `local` for an adopted folder, and `fp` = first 12 hex digits of SHA-256 over, in this order, the bytes of `relinker.exe`, then each regular file of `libs\` in ordinal ascending file-name order (all files, so DLLs count), then each `patches\*.toml` and `*.json` in ordinal order. ARM: `sha256(cat relinker libs/*.prx patches/*.json)[:12]`. `version.txt` caches the string (one line, newline) for installed toolkits; for adopted ones it is recomputed on `open` (hashing ~100 MB takes about 0.3 s, done on the `toolkit` thread, result cached by (path, mtime, size) of every file in `%LOCALAPPDATA%\AnyPS5\Toolkit\adopted.cache.json`). An unreadable `version.txt` gives `"unknown"` (Swift behaviour).
 
-`check_latest(repo)`: `GET https://api.github.com/repos/<repo>/releases/latest` with `User-Agent: anyps5-launcher/<version>`, `Accept: application/vnd.github+json`, 10 s timeout. Default repo `boykopovar/AnyPS5` (setting `toolkitRepository`). Result `ReleaseInfo { tag, published, relinker: Asset, libs: Asset, notes_url }` where the assets are found by name: `relinker-<tag>.exe` and `prx-windows-<tag>.zip` (exact). Missing asset: `ToolkitError::NoRelease`. Rate limit 403/429: `Network("rate limited, try again later")`. No token is ever sent. `Asset { name, url, size, sha256: Option<String> }` takes `digest` (`sha256:<hex>`) from the API when present.
+`check_latest(repo)`: `GET https://api.github.com/repos/<repo>/releases/latest` with `User-Agent: anyplay-launcher/<version>`, `Accept: application/vnd.github+json`, 10 s timeout. Default repo `boykopovar/AnyPS5` (setting `toolkitRepository`). Result `ReleaseInfo { tag, published, relinker: Asset, libs: Asset, notes_url }` where the assets are found by name: `relinker-<tag>.exe` and `prx-windows-<tag>.zip` (exact). Missing asset: `ToolkitError::NoRelease`. Rate limit 403/429: `Network("rate limited, try again later")`. No token is ever sent. `Asset { name, url, size, sha256: Option<String> }` takes `digest` (`sha256:<hex>`) from the API when present.
 
 `download_and_install(info)`: stages into `%LOCALAPPDATA%\AnyPS5\Toolkit\<tag>.partial\`: download `relinker` (progress stage `Relinker`), download the zip (`Libraries`, with `Content-Length` progress), verify the SHA-256 when the API gave one (else only the size), extract `libs/*` (entry names normalised; any entry with `..`, an absolute path or a drive prefix is rejected: `BadArchive`), copy the per-title patches shipped with the launcher (`<exe dir>\patches\*.toml|*.json`, section 6.9) into `patches\`, compute version, write `version.txt` and `toolkit.json` (`{tag, published, source: url, installedAt}`), then rename to `<tag>\`. An existing `<tag>\` is replaced only after the new one is complete. The previous toolkit folder stays until the next successful installation, after that all but the newest two are deleted. `prefs.toolkit` is set to `{kind: "release", tag}`.
 
@@ -791,7 +791,7 @@ Trophy banner: shown by the app above all windows (separate always-on-top, click
 **Report** (`DiagnosticReport.text`), lines in this order, then a trailing newline:
 
 ```
-AnyPS5 report, <ISO-8601 UTC now>
+AnyPlay Launcher report, <ISO-8601 UTC now>
 
 Game: <name> (<titleID>, version <version>)
 PC: <CPU brand string>, <logical cores> threads, <RAM GB> GB
@@ -986,7 +986,7 @@ Log samples in `log_samples` are written from the formats in 3.5 (no real logs):
 ## 10. Build and packaging (build_launcher_app.sh, install.sh)
 
 - `cargo build --release -p anyps5-launcher` (LTO thin, strip, panic abort per workspace). Resources compiled in: fonts (a freely redistributable face, not SF Pro), icons, sounds. App manifest (via `winres`): `longPathAware`, per-monitor DPI v2, `asInvoker`, Windows 10+ compatibility GUID.
-- Artifacts: NSIS installer (per user, `%LOCALAPPDATA%\Programs\AnyPS5 Launcher`, no admin rights) and a portable zip (`anyps5-launcher.exe` + `patches\`). The portable mode is on when a file `portable.flag` sits beside the exe: then `AppPaths` roots become `<exe dir>\data\{roaming,local}`.
+- Artifacts: NSIS installer (per user, `%LOCALAPPDATA%\Programs\AnyPlay Launcher`, no admin rights) and a portable zip (`AnyPlay-Launcher.exe` + `patches\`). The portable mode is on when a file `portable.flag` sits beside the exe: then `AppPaths` roots become `<exe dir>\data\{roaming,local}`.
 - ARM's `install.sh` has no equivalent; the installer replaces Rosetta installation, quarantine removal and `/Applications` copying.
 - Version string: `git describe --tags --always` at build (as `build_launcher_app.sh`), shown in the report as `Launcher:`.
 - Licence files shipped in the installer: GPL-2.0 text, the launcher's credits (utkuhalis/AnyPS5-ARM, boykopovar/AnyPS5), third-party licences (`cargo about`).

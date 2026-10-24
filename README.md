@@ -30,29 +30,29 @@ It is part of **[AnyPlay](https://github.com/anyplay-gg)**, which builds everyth
 - **Controls that match the game.** It reads a game's controls from its own files (Unreal Engine, including Enhanced Input), so every button shows what it does, and one choice gives you the game's own PC keys. Ready-made mouse and keyboard layouts are there too.
 - **Trophies, saves and playtime.** Trophies pop up while you play, save data is backed up before anything risky, and the home screen shows how long you played.
 - **Online with friends.** Sign in to the AnyPlay network, see what your friends play and join their game. This part is in development; see [Online play](#online-play).
-- **Links and folders.** `anyps5://game/<title ID>` links open a game from a website or a message, and folders get "Open with AnyPS5" ([docs/DESIGN.md](docs/DESIGN.md) 9.6).
+- **Links and folders.** `anyps5://game/<title ID>` links open a game from a website or a message, and folders get "Open with AnyPlay Launcher" ([docs/DESIGN.md](docs/DESIGN.md) 9.6).
 
 ## Download
 
-Get the latest version from the [releases page](https://github.com/anyplay-gg/launcher/releases/latest). The release files still carry the name AnyPS5 Launcher.
+Get the latest version from the [releases page](https://github.com/anyplay-gg/launcher/releases/latest). Each release also carries `AnyPS5-Launcher-<version>-x64.exe`, the same portable exe under the launcher's old name, so copies of v0.1.2 and v0.1.3 can update themselves; you do not need it.
 
 **Windows** (64-bit Windows 10 or 11, nothing else to install first):
 
-- **`AnyPS5-Launcher-<version>-Setup.exe`** installs the launcher for your user account, without administrator rights. It adds a Start menu entry, an optional desktop shortcut and an uninstaller.
-- **`AnyPS5-Launcher-<version>-x64.exe`** is the same launcher as a single file. Put it anywhere and run it.
+- **`AnyPlay-Launcher-<version>-Setup.exe`** installs the launcher for your user account, without administrator rights. It adds a Start menu entry, an optional desktop shortcut and an uninstaller.
+- **`AnyPlay-Launcher-<version>-x64.exe`** is the same launcher as a single file. Put it anywhere and run it.
 
 The files are not code-signed yet, so SmartScreen may say "Windows protected your PC". Click **More info**, then **Run anyway**; it asks once per file. Each release lists SHA-256 checksums in `SHA256SUMS.txt`: run `Get-FileHash <file>` in PowerShell and compare.
 
 **Linux** (64-bit x86-64 with glibc 2.35 or newer, such as Ubuntu 22.04, Debian 12 or Fedora 36, a Vulkan driver, and the ALSA and udev libraries every desktop has):
 
-- **`AnyPS5-Launcher-<version>-x86_64.AppImage`**: make it executable and run it. Without FUSE 2, add `--appimage-extract-and-run`.
+- **`AnyPlay-Launcher-<version>-x86_64.AppImage`**: make it executable and run it. Without FUSE 2, add `--appimage-extract-and-run`.
 
   ```sh
-  chmod +x AnyPS5-Launcher-*-x86_64.AppImage
-  ./AnyPS5-Launcher-*-x86_64.AppImage
+  chmod +x AnyPlay-Launcher-*-x86_64.AppImage
+  ./AnyPlay-Launcher-*-x86_64.AppImage
   ```
 
-- **`AnyPS5-Launcher-<version>-linux-x86_64.tar.gz`** holds the executable, a `.desktop` file and the icon. Unpack it anywhere; copy the `.desktop` file to `~/.local/share/applications` and the icon to `~/.local/share/icons` for a menu entry.
+- **`AnyPlay-Launcher-<version>-linux-x86_64.tar.gz`** holds the executable, a `.desktop` file and the icon. Unpack it anywhere; copy the `.desktop` file to `~/.local/share/applications` and the icon to `~/.local/share/icons` for a menu entry. Coming from AnyPS5 Launcher: replace `anyps5-launcher.desktop` and `anyps5-launcher.png` with the new files and pin the launcher again.
 
 The Linux build is new, and it does not update itself yet: download a new version from the releases page. What games need from your system is up to AnyPS5:
 
@@ -93,7 +93,7 @@ cargo test --workspace
 cargo build --release
 ```
 
-The executable is `target/release/anyps5-launcher.exe` (Linux: `target/release/anyps5-launcher`). For online play it looks for the net service `anyplay-net` next to itself, or where `ANYPLAY_NET` points; build it in the network repository with `cargo build --release -p anyplay-net`. A build names AnyPlay's own cloud with `ANYPLAY_DEFAULT_CLOUD`; without it the player enters a cloud.
+The executable is `target/release/anyplay-launcher.exe` (Linux: `target/release/anyplay-launcher`). For online play it looks for the net service `anyplay-net` next to itself, or where `ANYPLAY_NET` points; build it in the network repository with `cargo build --release -p anyplay-net`. A build names AnyPlay's own cloud with `ANYPLAY_DEFAULT_CLOUD`; without it the player enters a cloud.
 
 On Linux, install the development packages first (Debian and Ubuntu names: `pkg-config libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev`). `tools/linux/package.sh <version> <binary> <folder>` makes the AppImage and the tarball.
 
@@ -102,7 +102,7 @@ Two toolchains are used on Windows:
 - **MSVC** (`x86_64-pc-windows-msvc`, needs the Visual Studio Build Tools) is what CI builds and releases ship. `.cargo/config.toml` links the C runtime statically, so the exe needs no Visual C++ redistributable.
 - **GNU** (`x86_64-pc-windows-gnu`) works for local development without Visual Studio. If the linker fails, build with `RUSTFLAGS="-C link-self-contained=yes -C linker=rust-lld -C linker-flavor=ld.lld"` and make `libshlwapi.a` (from any MinGW-w64) available through an extra `-L native=<dir>`. Do not build in a path that contains an apostrophe: `windres` cannot embed the icon there.
 
-A release is made by pushing a tag `v<version>` that matches the version in `Cargo.toml`. The [release workflow](.github/workflows/release.yml) builds the portable exe and the installer (`tools/installer/anyps5-launcher.iss`, Inno Setup) and publishes both with their checksums. Started by hand it only builds them and keeps them as workflow artifacts.
+A release is made by pushing a tag `v<version>` that matches the version in `Cargo.toml`. The [release workflow](.github/workflows/release.yml) builds the portable exe and the installer (`tools/installer/anyplay-launcher.iss`, Inno Setup) and publishes both with their checksums. Started by hand it only builds them and keeps them as workflow artifacts.
 
 `crates/anyps5-core` holds all logic without UI; `crates/anyps5-launcher` is the application. The interface is specified in [docs/DESIGN.md](docs/DESIGN.md), the logic in [docs/PORT.md](docs/PORT.md) and the words in [CONTEXT.md](CONTEXT.md).
 
