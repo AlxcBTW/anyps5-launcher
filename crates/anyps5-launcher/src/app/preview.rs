@@ -1,8 +1,8 @@
 //! Made-up data and the hidden `--gallery=<scene>` / `--demo` modes.
 //!
 //! ```text
-//! anyps5-launcher --gallery=home [--screenshot=out.png] [--size=1600x900] [--tr] [--pad] [--intro] [--frames=100]
-//! anyps5-launcher --demo
+//! anyplay-launcher --gallery=home [--screenshot=out.png] [--size=1600x900] [--tr] [--pad] [--intro] [--frames=100]
+//! anyplay-launcher --demo
 //! ```
 //!
 //! Scenes: `onboarding0`, `onboarding1`, `onboarding2` (folder chosen), `onboarding2-empty`,
@@ -546,7 +546,7 @@ pub fn run(options: Options, inbox: Option<crate::instance::Inbox>) -> eframe::R
     }
     let mut native = eframe::NativeOptions {
         viewport: viewport
-            .with_title("AnyPS5 preview")
+            .with_title("AnyPlay Launcher preview")
             // Frameless like the launcher, so the demo shows its caption as users see it.
             .with_decorations(false)
             .with_inner_size([options.size.0, options.size.1])
@@ -556,7 +556,7 @@ pub fn run(options: Options, inbox: Option<crate::instance::Inbox>) -> eframe::R
     crate::ui::restrict_backends(&mut native);
     crate::startup::mark("preview: window requested");
     eframe::run_native(
-        "AnyPS5 preview",
+        "AnyPlay Launcher preview",
         native,
         Box::new(move |cc| {
             crate::startup::mark("window and GPU ready");

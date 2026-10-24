@@ -2,7 +2,7 @@
 //! be screenshotted and compared with the original (`docs/DESIGN.md` screenshot table).
 //!
 //! ```text
-//! anyps5-launcher --gallery=settings|settings1..6|game-settings|confirm|controls|controls-capture|
+//! anyplay-launcher --gallery=settings|settings1..6|game-settings|confirm|controls|controls-capture|
 //!                           controls-end|advanced|trophies|banner|start|unlocking|log|report|library|
 //!                           about-update|behavior-links|toolkit|toolkit-update|toolkit-newer|toolkit-pinned|toolkit-local|
 //!                           recommended|recommended-warning|whats-new|whats-new-loading|
@@ -85,7 +85,7 @@ pub enum ScreenPage {
     Toolkit(ToolkitLook),
     /// The About page with a downloaded launcher update waiting ("Restart Now").
     AboutUpdate,
-    /// Behavior with the AnyPS5 links registered to this launcher.
+    /// Behavior with the AnyPlay links registered to this launcher.
     BehaviourLinks,
     Recommended,
     RecommendedWarning,

@@ -83,7 +83,10 @@ mod tests {
 
     #[test]
     fn file_names_lose_reserved_characters() {
-        assert_eq!(safe_file_name("Stray - AnyPS5.json"), "Stray - AnyPS5.json");
+        assert_eq!(
+            safe_file_name("Stray - AnyPlay.json"),
+            "Stray - AnyPlay.json"
+        );
         assert_eq!(safe_file_name("Dungeons: Part 2/3?"), "Dungeons- Part 2-3-");
         assert_eq!(safe_file_name("  name. "), "name");
     }

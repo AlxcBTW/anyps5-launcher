@@ -71,7 +71,7 @@ pub fn diagnostic_text(input: &ReportInput) -> String {
     let system = &input.system;
     let settings = serde_json::to_string_pretty(&input.settings).unwrap_or_else(|_| "{}".into());
     let mut lines = vec![
-        format!("AnyPS5 report, {}", input.now),
+        format!("AnyPlay Launcher report, {}", input.now),
         String::new(),
         format!(
             "Game: {} ({}, version {})",
@@ -383,7 +383,7 @@ mod tests {
     #[test]
     fn golden_report() {
         let expected = "\
-AnyPS5 report, 2026-10-22T09:31:00Z
+AnyPlay Launcher report, 2026-10-22T09:31:00Z
 
 Game: Stray (PPSA02100, version 01.000.000)
 PC: AMD Ryzen 5 3600 6-Core Processor, 12 threads, 31 GB

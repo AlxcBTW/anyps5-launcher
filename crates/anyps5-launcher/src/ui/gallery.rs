@@ -2,7 +2,7 @@
 //! screenshotted and compared with the original (`docs/screenshots/launcher-themes.jpg`).
 //!
 //! ```text
-//! anyps5-launcher --gallery[=components|panels|artwork|themes|bg0|bg1|bg2]
+//! anyplay-launcher --gallery[=components|panels|artwork|themes|bg0|bg1|bg2]
 //!                 [--screenshot=out.png] [--size=1600x900] [--time=260] [--live]
 //! ```
 //!
@@ -108,14 +108,14 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Option<Options> {
 pub fn run(options: Options) -> eframe::Result {
     let mut native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("AnyPS5 gallery")
+            .with_title("AnyPlay Launcher gallery")
             .with_inner_size([options.size.0, options.size.1])
             .with_resizable(false),
         ..Default::default()
     };
     crate::ui::restrict_backends(&mut native);
     eframe::run_native(
-        "AnyPS5 gallery",
+        "AnyPlay Launcher gallery",
         native,
         Box::new(move |cc| Ok(Box::new(Gallery::new(cc, options)))),
     )
@@ -200,7 +200,7 @@ impl eframe::App for Gallery {
                     self.options.page = Page::Background(next);
                     self.shell.backdrop.set_theme(next);
                     ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-                        "AnyPS5 gallery: {}",
+                        "AnyPlay Launcher gallery: {}",
                         next.title(Language::English)
                     )));
                 }

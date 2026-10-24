@@ -1,8 +1,10 @@
 //! The self-update swap on a real program that is running: Windows refuses to overwrite or delete
 //! a running exe but allows renaming it, and the swap relies on exactly that.
 //!
-//! The "launcher" is the fake relinker copied to `AnyPS5-Launcher.exe`, kept running with its
-//! `--fake-sleeper` mode; the "update" is a second copy with a marker appended.
+//! The "launcher" is the fake relinker copied to the exe name an install has: the old
+//! `AnyPS5-Launcher.exe` in the first test (an install from v0.1.x keeps it), the new
+//! `AnyPlay-Launcher.exe` in the second. It is kept running with its `--fake-sleeper` mode; the
+//! "update" is a second copy with a marker appended.
 #![cfg(windows)]
 
 mod support;
@@ -40,7 +42,8 @@ fn a_running_exe_is_replaced_and_its_old_file_removed_after_it_stops() {
     // The update: the same program with a marker, staged where the downloader puts it.
     let mut updated = original.clone();
     updated.extend_from_slice(MARKER);
-    let path = updates_dir(&paths).join("AnyPS5-Launcher-0.2.0-x64.exe");
+    // An install of the old name takes an update that arrives under the new name.
+    let path = updates_dir(&paths).join("AnyPlay-Launcher-0.2.0-x64.exe");
     write(&path, &updated);
     let staged = pending(&paths, "0.1.1").expect("a staged update");
     assert_eq!(
@@ -108,12 +111,12 @@ fn a_running_exe_is_replaced_and_its_old_file_removed_after_it_stops() {
 fn restart_swaps_and_starts_the_new_exe() {
     let root = tempfile::tempdir().unwrap();
     let paths = AppPaths::under(root.path());
-    let exe = root.path().join("AnyPS5-Launcher.exe");
+    let exe = root.path().join("AnyPlay-Launcher.exe");
     fs::copy(fake_binary(), &exe).unwrap();
     configure_fake(root.path(), &["FAKE_CHILD_MS=1200"]);
     let mut updated = fs::read(&exe).unwrap();
     updated.extend_from_slice(MARKER);
-    let path = updates_dir(&paths).join("AnyPS5-Launcher-0.2.0-x64.exe");
+    let path = updates_dir(&paths).join("AnyPlay-Launcher-0.2.0-x64.exe");
     write(&path, &updated);
 
     let mut running = start(&exe);

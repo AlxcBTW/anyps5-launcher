@@ -126,7 +126,7 @@ fn form(input: &ReportInput, tier: &Tier) -> Vec<(&'static str, String)> {
         };
         format!("{windows}, {gpus}")
     };
-    let mut steps = format!("Started {name} from the AnyPS5 launcher.");
+    let mut steps = format!("Started {name} from the AnyPlay Launcher.");
     let settings = non_default_settings(&input.settings);
     if !tier.short {
         if settings.is_empty() {
@@ -470,7 +470,7 @@ mod tests {
         let clipboard = prepared
             .clipboard
             .expect("the report goes to the clipboard");
-        assert!(clipboard.starts_with("AnyPS5 report, 2026-10-22T09:31:00Z"));
+        assert!(clipboard.starts_with("AnyPlay Launcher report, 2026-10-22T09:31:00Z"));
         assert!(clipboard.contains("frame 3999"));
         let notes = decode(param(&prepared.url, "notes").unwrap());
         assert!(notes.contains("Paste it here"));

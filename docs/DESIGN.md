@@ -1,4 +1,4 @@
-# AnyPS5 Launcher: UI design specification
+# AnyPlay Launcher: UI design specification
 
 Source of truth for the UI of the Windows port. It specifies the macOS launcher of
 [utkuhalis/AnyPS5-ARM](https://github.com/utkuhalis/AnyPS5-ARM) (GPL-2.0, commit `cb20fd80c9f7a044c62d51da3cdd0475100b5554`,
@@ -1047,7 +1047,7 @@ range, step, display, default): leftDeadzone `leftDeadzone` 0..90 step 2 `NN%` 0
 (`mouseMinimum`) 0..90/2 `%` 20, max speed 1..100/1 `×` 10, smoothing 0..500/5 `N ms` or `Off` at 0, 10, decay (`mouseDecay`)
 5..1000/5 `N ms` 30; keyboard section: stickModifierScale 5..100/5 `%` 50, keyboardRamp 0..2000/50 `ms`/Off 0, triggerRamp 0..2000/50
 `ms`/Off 0; graphics section: `shaderCache` toggle (default on); sharing section: `exportSettings`, `importSettings` (file dialogs,
-JSON, name `"<game> - AnyPS5.json"`), `resetAdvanced`. Each stepper row has a detail line (`...Detail` keys). Only changed values
+JSON, name `"<game> - AnyPlay.json"`), `resetAdvanced`. Each stepper row has a detail line (`...Detail` keys). Only changed values
 are written to the game's input file; the whole group resets to `nil` when equal to defaults. Glyphs: left/right joystick, mouse,
 up-down arrows, curve, scope, gauge, waveform, timer, tortoise, keyboard, trigger, stack, upload, download, rotate.
 
@@ -1523,9 +1523,9 @@ started), ported from `DiscordPresence.swift` into `anyps5_core::discord`.
 - **Which application.** Discord's public list of detectable games
   (`https://discord.com/api/v9/applications/detectable`, cut to id, name and aliases, cached in
   `Cache/discord-games.json` for a week) is matched by lowercase words of the name or an alias.
-  A known game is shown as itself with details "AnyPS5 Launcher · Windows"; any other game shows
+  A known game is shown as itself with details "AnyPlay Launcher · Windows"; any other game shows
   under the AnyPS5 application (`1562749843724566549`, shared with the macOS launcher) with the
-  game's name as details and "AnyPS5 · Windows" as state. No image is named, so Discord shows the
+  game's name as details and "AnyPlay Launcher · Windows" as state. No image is named, so Discord shows the
   application's icon.
 - **When.** Set when the game's window appears (`PipelineEvent::WindowShown`), cleared when it
   exits or when the setting is turned off. Everything runs on a `discord` thread; the UI only
@@ -1785,9 +1785,9 @@ sizes use decimal units (1 GB = 10^9 bytes) with the language's decimal separato
 | Hidden, transparent title bar; window moves by dragging the background | **No title bar** (`with_decorations(false)`); the launcher draws its own caption (`ui::caption`): a drag strip along the top edge, 32 dp high, moves the window through the system move loop (`StartDrag`, so Snap still works) and a double click maximises or restores; minimise, maximise/restore and close sit in the top-right corner at the Windows 11 size (46 x 32 points; a large window does not grow it, a small one shrinks it with the UI so it stays above the top bar; 10 dp glyphs with 1 px strokes, white 0.6 at rest and white on hover, hover fill white 0.08, close hover #C42B1C), hidden while a controller is in use unless the pointer comes near the top; while the window is not maximised a 6 point band along each edge resizes it (`BeginResize` on the press). Fullscreen shows none of it. DWM keeps the shadow (`with_undecorated_shadow`), and is asked for dark mode (system menu), a black border and round corners. Window title `AnyPS5` (taskbar, Alt+Tab). |
 | Starts maximised to the screen's visible frame; green button = fullscreen | starts in borderless fullscreen on the screen it opens on, like a console (preference `fullscreen`, default on); `F11` or the caption's middle button switches to a maximised window and back, and the choice is remembered; min size 1100 x 650 |
 | Menu bar: `Cmd+,` Settings, no New | no menu bar; `Ctrl+,` opens Settings (when onboarded); `Alt+F4` closes; the "Quit" row in About stays |
-| `NSOpenPanel` / `NSSavePanel` | native Windows dialogs through the `rfd` crate: pick folder (games, screenshots, fonts), pick file (picture; video later; settings JSON import), save file (settings export, default name `"<game> - AnyPS5.json"`), dialog titles from `pickFolder`, `chooseFile`, `exportSettings`, `importSettings`. While a dialog is open the launcher ignores input. |
+| `NSOpenPanel` / `NSSavePanel` | native Windows dialogs through the `rfd` crate: pick folder (games, screenshots, fonts), pick file (picture; video later; settings JSON import), save file (settings export, default name `"<game> - AnyPlay.json"`), dialog titles from `pickFolder`, `chooseFile`, `exportSettings`, `importSettings`. While a dialog is open the launcher ignores input. |
 | Finder (reveal in Finder) | Explorer: `explorer.exe /select,"<path>"`; label `showInFinder` -> "Show in Explorer" |
-| `UserDefaults` | JSON file `%APPDATA%\AnyPS5 Launcher\preferences.json` (same fields, section 5.7) |
+| `UserDefaults` | JSON file `%APPDATA%\AnyPS5\preferences.json` (same fields, section 5.7) |
 | `~/Library/Logs/AnyPS5/<titleID>.log`, `.../Reports/` | `%LOCALAPPDATA%\AnyPS5\Logs\<titleID>.log`, `...\Logs\Reports\` |
 | `~/Library/Application Support/AnyPS5/Controls/<game>.ini` | `%APPDATA%\AnyPS5\Controls\<game>.ini` |
 | `~/Pictures/AnyPS5` (F12 screenshots) | `%USERPROFILE%\Pictures\AnyPS5` |
@@ -1809,14 +1809,17 @@ sizes use decimal units (1 GB = 10^9 bytes) with the language's decimal separato
 Removed outright (no Windows meaning): the **Rosetta row** (`rosettaMissing`, `rosettaInstall`, `rosettaInstalled`, the Behaviour category
 row and `installRosetta`), the **app translocation** machinery (`AppLocation`, `MoveBanner`, `moveToApplications`,
 `moveToApplicationsText`, `moveNow`, `later`, the About "Move to Applications" row), the Rosetta/MoltenVK wording in the About text and
-the APFS-clone sentence. Strings that mention the Mac are replaced (keys unchanged; these win over the table in section 8):
+the APFS-clone sentence. Strings that mention the Mac are replaced (keys unchanged; these win over the table in section 8), and so
+are strings that name the macOS app as the product: they take the launcher's own name (9.7).
 
 | Key | English (Windows) | Türkçe (Windows) |
 |---|---|---|
+| `welcome` | Welcome to AnyPlay | AnyPlay'e hoş geldin |
 | `welcomeSubtitle` | Play PS5 games on your PC. Let's set a few things up first. | PS5 oyunlarını PC'nde oyna. Önce birkaç şeyi ayarlayalım. |
 | `stepRelink` | Converting for Windows | Windows için çevriliyor |
 | `startingText` | The game is opening, please wait. The first start can take a few minutes while the game gets ready for Windows. | Oyun açılıyor, lütfen bekle. İlk açılış, oyun Windows için hazırlanırken birkaç dakika sürebilir. |
-| `aboutText` | AnyPS5 runs PS5 games natively on Windows. | AnyPS5, PS5 oyunlarını Windows'ta yerel olarak çalıştırır. |
+| `aboutText` | AnyPlay Launcher runs PS5 games natively on Windows with AnyPS5. | AnyPlay Launcher, PS5 oyunlarını AnyPS5 ile Windows'ta yerel olarak çalıştırır. |
+| `settingsFileFailed` | This is not an AnyPlay settings file | Bu dosya bir AnyPlay ayar dosyası değil |
 | `installedSize` | Unlocked games are kept in the .AnyPS5 folder inside your games folder. | Kilidi açılan oyunlar oyun klasörünün içindeki .AnyPS5 klasöründe saklanır. |
 | `showInFinder` | Show in Explorer | Dosya Gezgini'nde Göster |
 | `behaviour` | Behavior | Davranış |
@@ -1839,8 +1842,8 @@ list still updates.
 No counterpart in the macOS launcher (Sparkle there). Core module `anyps5_core::selfupdate`, host `app::selfupdate`.
 
 - **Check.** Once per start, in the background, when the *Check for Updates* preference is on: the latest release of `anyplay-gg/launcher` (the same request and HTTP client as the toolkit check). A newer semver (pre-release tags sort below their release) is downloaded and verified at once; garbage tags are never newer. Previews, the demo, the gallery and the tests never check.
-- **Verify.** The portable `AnyPS5-Launcher-<v>-x64.exe` goes to `%LOCALAPPDATA%AnyPS5Updates`. Its SHA-256 must match the line in the release's `SHA256SUMS.txt`; a missing line, a wrong hash or a file that does not start with `MZ` refuses the update and leaves nothing behind. The file gets its final name only after that, so a file of that name is always a verified one.
-- **Swap.** Windows cannot overwrite a running exe but can rename it. The staged file is copied beside the running exe (`<name>.new`, it may be on another drive), the running exe is renamed to `<name>.old`, the copy takes its place. A failure in the second step moves the old one back. The next start deletes `.old` files and stale downloads (one still in use stays until a later start). It works for the installed exe (`%LOCALAPPDATA%ProgramsAnyPS5 Launcher`) and for the portable exe in any writable folder. A folder that refuses new files is reported before anything is downloaded: About shows "<v> available, but this folder is read-only" and nothing else happens.
+- **Verify.** The portable `AnyPlay-Launcher-<v>-x64.exe` (or, in a release without it, `AnyPS5-Launcher-<v>-x64.exe`; every release carries both, 9.7) goes to `%LOCALAPPDATA%\AnyPS5\Updates`. Its SHA-256 must match the line in the release's `SHA256SUMS.txt`; a missing line, a wrong hash or a file that does not start with `MZ` refuses the update and leaves nothing behind. The file gets its final name only after that, so a file of that name is always a verified one.
+- **Swap.** Windows cannot overwrite a running exe but can rename it. The staged file is copied beside the running exe (`<name>.new`, it may be on another drive), the running exe is renamed to `<name>.old`, the copy takes its place. A failure in the second step moves the old one back. The next start deletes `.old` files and stale downloads (one still in use stays until a later start). It works for the installed exe (`%LOCALAPPDATA%\Programs\AnyPlay Launcher`, or `...\AnyPS5 Launcher` for an install from v0.1.x) and for the portable exe in any writable folder. The swap keeps the exe's file name; nothing depends on it. A folder that refuses new files is reported before anything is downloaded: About shows "<v> available, but this folder is read-only" and nothing else happens.
 - **When.** A calm toast when the update is ready: "Launcher <v> is ready. It installs when you close the launcher." The swap runs on exit, after the preferences are saved. An update staged by a run that closed too early is offered again at the next start without a second download.
 - **About.** The *Version* row reads "<v>" and, with a staged update, "<v> ready" with a *Restart Now* row above *Quit*. It closes the launcher, swaps, and starts the new exe with the same arguments.
 - **Not done.** The exe is not code-signed and the checksum list comes from the same release as the exe, so it guards against a damaged or substituted download, not against a compromised release.
@@ -1861,14 +1864,24 @@ The launcher answers `anyps5://` links and runs once per user. The grammar (`cra
 Safety rules, all in the one parser:
 
 - A link never starts a game, never unlocks, never deletes and never writes. It selects, focuses and opens. There is no `play`, `uninstall` or `env` action.
-- The closed vocabulary above; unknown actions, unknown query keys, extra segments and a second `path` are errors. An error shows "This is not a valid AnyPS5 link" and does nothing else.
+- The closed vocabulary above; unknown actions, unknown query keys, extra segments and a second `path` are errors. An error shows "This is not a valid AnyPlay link" and does nothing else.
 - At most 2048 bytes. No control characters, quotes, backticks or carets (a quote could add arguments to the registered command line). Of all arguments only the first counts.
 - A folder path must be an absolute drive path: no `..` or `.`, no network or device paths (`\`, `\?\`), no stream names, no empty parts, no names that end in a dot or space, no `CON`/`NUL`/`COM1`, at most 1024 bytes. It must then be a dump (`library::inspect`), and a dump outside the games folder is not added.
 - A link that arrives before the first-run setup or the first scan waits (at most eight) and is shown when the library is ready.
 
 Single instance (`crates/anyps5-launcher/src/instance.rs`): the first launcher takes the mutex `Local\AnyPS5Launcher-main` and serves the pipe `\.\pipe\AnyPS5Launcher-main-<user>` (message mode, remote clients refused, default security so only the user can write). A later launch, with a link or without, allows foreground activation, writes its arguments, waits up to 3 s for "ok" and exits; the running launcher restores and focuses its window and acts on the link. If nobody answers the later launch starts normally. Previews and `--gallery` take no part; `ANYPS5_INSTANCE=<name>` gives a test run its own mutex and pipe, so the demo can be the receiving instance without touching a real launcher, and `ANYPS5_LINK_SCHEME=anyps5-test...` makes a test run answer another scheme name.
 
-Registration (`anyps5_core::linkreg`): `HKCU\Software\Classes\anyps5` with `URL Protocol` and `shell\open\command` = `"<exe>" "%1"`, and `HKCU\Software\Classes\Directory\shell\AnyPS5\command` for the "Open with AnyPS5" entry (folders only). The installer writes both (`HKA`, removed on uninstall); the portable exe writes and removes the same keys with the Behavior toggle "Open AnyPS5 Links with This Launcher", which shows whether the keys point at this exe.
+Registration (`anyps5_core::linkreg`): `HKCU\Software\Classes\anyps5` with `URL Protocol` and `shell\open\command` = `"<exe>" "%1"`, and `HKCU\Software\Classes\Directory\shell\AnyPS5\command` for the "Open with AnyPlay Launcher" entry (folders only; the key names keep the old name). The installer writes both (`HKA`, removed on uninstall); the portable exe writes and removes the same keys with the Behavior toggle "Open AnyPlay Links with This Launcher", which shows whether the keys point at this exe.
+
+### 9.7 The launcher's name
+
+Up to v0.1.3 the launcher was called AnyPS5 Launcher. It is AnyPlay Launcher now: a platform trademark has no place in our names ([the clean line](https://github.com/anyplay-gg/network/blob/main/docs/adr/0003-the-clean-line.md)). AnyPS5 still names the engine the games run on, and the About text says so.
+
+- **Renamed:** every visible name of the product (window titles, texts in both languages, Discord, reports, the controls file header), the exe and the release files (`AnyPlay-Launcher-<v>-*`), the installer's name, folder and shortcuts, the Linux binary, desktop entry and icon, and the app id.
+- **Kept, because installs and links already use them:** the data folders (`%APPDATA%\AnyPS5`, `%LOCALAPPDATA%\AnyPS5`, `~/.config/anyps5`, `~/.local/share/anyps5`, `Pictures\AnyPS5`), the `.AnyPS5` store in games folders, `org.anyps5.<titleid>`, the `anyps5://` scheme and the registry key names, the `ANYPS5_*` variables, the single-instance mutex and pipe names, the log-start marker, the settings format tag, the installer's AppId, the Discord application and the crate names.
+- **Self-update across the rename:** v0.1.2 and v0.1.3 update only from `AnyPS5-Launcher-<v>-x64.exe`. Every release therefore also carries the portable exe under that name, byte for byte the same and listed in `SHA256SUMS.txt`; the release workflow checks both. This launcher prefers the new name and falls back to the old one.
+- **Installer upgrade:** the same AppId upgrades an old install in place and keeps its folder (`...\AnyPS5 Launcher`). It closes a running old launcher, removes `AnyPS5-Launcher.exe`, its `.new`/`.old` leftovers and the old shortcuts. Taskbar and Start pins of the old exe do not carry over.
+- **Linux:** the app id is `anyplay-launcher`, the same as the desktop entry's file name, `Icon` and `StartupWMClass` (a test holds them together). A desktop entry copied from an older tarball no longer matches the window: replace it and pin the launcher again.
 
 ---
 

@@ -48,8 +48,8 @@ jobs:
         run: cargo build --release --target x86_64-pc-windows-msvc
       - uses: actions/upload-artifact@v7.0.2
         with:
-          name: anyps5-launcher-windows-x64
-          path: launcher/target/x86_64-pc-windows-msvc/release/anyps5-launcher.exe
+          name: anyplay-launcher-windows-x64
+          path: launcher/target/x86_64-pc-windows-msvc/release/anyplay-launcher.exe
           if-no-files-found: error
 
   linux:
@@ -101,12 +101,12 @@ jobs:
           mkdir -p shots
           for scene in home controls online-friends; do
             xvfb-run -a -s "-screen 0 1920x1080x24" \
-              target/release/anyps5-launcher --gallery=$scene --screenshot=shots/$scene.png
+              target/release/anyplay-launcher --gallery=$scene --screenshot=shots/$scene.png
           done
           ls -l shots
       - uses: actions/upload-artifact@v7.0.2
         with:
-          name: anyps5-launcher-linux-screenshots
+          name: anyplay-launcher-linux-screenshots
           path: launcher/shots/*.png
           if-no-files-found: error
 

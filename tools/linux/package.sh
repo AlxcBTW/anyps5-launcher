@@ -29,13 +29,13 @@ fetch() { # url sha256 file
   echo "$2  $3" | sha256sum -c -
 }
 
-name="AnyPS5-Launcher-$version-linux-x86_64"
+name="AnyPlay-Launcher-$version-linux-x86_64"
 
 # 1. The tarball: the binary, the desktop entry, the icon and the licences, in one folder.
 folder="$work/$name"
 mkdir -p "$folder"
-install -m 755 "$binary" "$folder/anyps5-launcher"
-install -m 644 "$here/anyps5-launcher.desktop" "$here/anyps5-launcher.png" "$root/LICENSE" "$folder/"
+install -m 755 "$binary" "$folder/anyplay-launcher"
+install -m 644 "$here/anyplay-launcher.desktop" "$here/anyplay-launcher.png" "$root/LICENSE" "$folder/"
 install -m 644 "$notices" "$folder/THIRD-PARTY-LICENSES.txt"
 tar -C "$work" --owner=0 --group=0 -czf "$out/$name.tar.gz" "$name"
 
@@ -46,23 +46,23 @@ fetch "https://github.com/AppImage/type2-runtime/releases/download/$RUNTIME_VERS
   "$RUNTIME_SHA256" "$work/runtime-x86_64"
 chmod +x "$work/appimagetool"
 
-appdir="$work/AnyPS5.AppDir"
+appdir="$work/AnyPlay.AppDir"
 mkdir -p "$appdir/usr/bin"
-install -m 755 "$binary" "$appdir/usr/bin/anyps5-launcher"
-install -m 644 "$here/anyps5-launcher.desktop" "$here/anyps5-launcher.png" "$appdir/"
-mkdir -p "$appdir/usr/share/doc/anyps5-launcher"
-install -m 644 "$root/LICENSE" "$appdir/usr/share/doc/anyps5-launcher/"
-install -m 644 "$notices" "$appdir/usr/share/doc/anyps5-launcher/THIRD-PARTY-LICENSES.txt"
-ln -s anyps5-launcher.png "$appdir/.DirIcon"
+install -m 755 "$binary" "$appdir/usr/bin/anyplay-launcher"
+install -m 644 "$here/anyplay-launcher.desktop" "$here/anyplay-launcher.png" "$appdir/"
+mkdir -p "$appdir/usr/share/doc/anyplay-launcher"
+install -m 644 "$root/LICENSE" "$appdir/usr/share/doc/anyplay-launcher/"
+install -m 644 "$notices" "$appdir/usr/share/doc/anyplay-launcher/THIRD-PARTY-LICENSES.txt"
+ln -s anyplay-launcher.png "$appdir/.DirIcon"
 cat > "$appdir/AppRun" <<'RUN'
 #!/bin/sh
 HERE=$(dirname "$(readlink -f "$0")")
-exec "$HERE/usr/bin/anyps5-launcher" "$@"
+exec "$HERE/usr/bin/anyplay-launcher" "$@"
 RUN
 chmod 755 "$appdir/AppRun"
 
 # appimagetool is an AppImage itself; extract-and-run avoids needing FUSE on the build machine.
 APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$work/appimagetool" --no-appstream \
-  --runtime-file "$work/runtime-x86_64" "$appdir" "$out/AnyPS5-Launcher-$version-x86_64.AppImage"
-chmod 755 "$out/AnyPS5-Launcher-$version-x86_64.AppImage"
+  --runtime-file "$work/runtime-x86_64" "$appdir" "$out/AnyPlay-Launcher-$version-x86_64.AppImage"
+chmod 755 "$out/AnyPlay-Launcher-$version-x86_64.AppImage"
 ls -l "$out"

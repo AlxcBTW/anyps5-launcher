@@ -290,7 +290,7 @@ pub fn apply_change(settings: &mut GameSettings, change: &Change) -> bool {
     *settings != before
 }
 
-/// Writes the game's settings to `path` as an AnyPS5 settings file.
+/// Writes the game's settings to `path` as an AnyPlay settings file.
 pub fn export_settings(
     path: &std::path::Path,
     game: &Game,
@@ -441,7 +441,7 @@ impl AdvancedPanel {
 
 fn export_flow(shell: &mut Shell, data: &AdvancedData<'_>) -> Option<ToastRequest> {
     let language = data.language;
-    let name = format!("{} - AnyPS5.json", data.game.name);
+    let name = format!("{} - AnyPlay.json", data.game.name);
     let path = dialogs::save_file(
         shell,
         language.text(Key::ExportSettings),
@@ -641,7 +641,7 @@ mod tests {
     fn export_then_import_round_trips_and_drops_foreign_resolutions() {
         let dir = std::env::temp_dir().join(format!("anyps5-adv-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("Stray - AnyPS5.json");
+        let file = dir.join("Stray - AnyPlay.json");
         let stray = game("PPSA02100", "Stray");
         let settings = GameSettings {
             vsync: false,

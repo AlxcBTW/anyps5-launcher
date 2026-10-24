@@ -144,13 +144,13 @@ pub fn activity(game: &str, since_unix: i64, games: &DiscordGames) -> (Value, St
     match games.application_id(game) {
         Some(id) => {
             let mut activity = base;
-            activity["details"] = json!("AnyPS5 Launcher · Windows");
+            activity["details"] = json!("AnyPlay Launcher · Windows");
             (activity, id.to_owned())
         }
         None => {
             let mut activity = base;
             activity["details"] = json!(game);
-            activity["state"] = json!("AnyPS5 · Windows");
+            activity["state"] = json!("AnyPlay Launcher · Windows");
             (activity, ANYPS5_APPLICATION_ID.to_owned())
         }
     }
@@ -382,13 +382,13 @@ mod tests {
         let games = DiscordGames::from_json(br#"[{"id": "42", "name": "Stray", "aliases": []}]"#);
         let (known, as_known) = activity("Stray", 100, &games);
         assert_eq!(as_known, "42");
-        assert_eq!(known["details"], "AnyPS5 Launcher · Windows");
+        assert_eq!(known["details"], "AnyPlay Launcher · Windows");
         assert!(known.get("state").is_none());
         assert_eq!(known["timestamps"]["start"], 100);
         let (other, as_other) = activity("Hollow Orchard", 100, &games);
         assert_eq!(as_other, ANYPS5_APPLICATION_ID);
         assert_eq!(other["details"], "Hollow Orchard");
-        assert_eq!(other["state"], "AnyPS5 · Windows");
+        assert_eq!(other["state"], "AnyPlay Launcher · Windows");
         assert_eq!(other["type"], 0);
     }
 

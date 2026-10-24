@@ -1,8 +1,16 @@
-# AnyPS5 Launcher
+# AnyPlay Launcher
 
-A Windows launcher that finds a player's own PS5 game dumps, unlocks them for AnyPS5 and starts them. This file is the glossary; the specification of the logic is in [docs/PORT.md](docs/PORT.md).
+A launcher for Windows and Linux that finds a player's own PS5 game dumps, unlocks them for AnyPS5 and starts them. This file is the glossary; the specification of the logic is in [docs/PORT.md](docs/PORT.md).
 
 ## Language
+
+**AnyPlay Launcher**:
+This program. Up to v0.1.3 it was AnyPS5 Launcher; data folders, the store, the `anyps5://` scheme and the `ANYPS5_*` variables keep that name.
+_Avoid_: AnyPS5 Launcher, AnyPS5 (that is the engine)
+
+**AnyPS5**:
+The compatibility layer of boykopovar/AnyPS5 that the launcher unlocks games for and starts them on. Never an emulator.
+_Avoid_: Emulator
 
 ### Games and files
 
@@ -191,11 +199,11 @@ _Avoid_: Dump (that is the game)
 ### Links
 
 **Deep link**:
-An `anyps5://` address that opens a place in the launcher: a game, a game's unlock, a page of the settings or a dump folder. It only shows the place; the player presses the button that does something.
+An `anyps5://` address that opens a place in the launcher: a game, a game's unlock, a page of the settings or a dump folder. It only shows the place; the player presses the button that does something. The interface calls them AnyPlay links; the scheme keeps its old name so links already out there work.
 _Avoid_: Command, URL scheme (that is how Windows finds the launcher), protocol
 
 **Link handler**:
-The launcher that Windows starts for deep links and for the "Open with AnyPS5" entry of folders. Only one copy is the handler at a time.
+The launcher that Windows starts for deep links and for the "Open with AnyPlay Launcher" entry of folders. Only one copy is the handler at a time.
 _Avoid_: Default app, association
 
 **Single instance**:

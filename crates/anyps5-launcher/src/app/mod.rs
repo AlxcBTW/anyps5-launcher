@@ -692,13 +692,18 @@ fn enter_fullscreen(ctx: &Context, fullscreen: bool) {
 
 /// Runs the launcher. `inbox` brings the arguments of later launches; `arguments` are the ones this
 /// launch got (a link or a folder).
+/// The app id on Linux: Wayland's app_id and X11's WM_CLASS. It must match the desktop entry's
+/// file name, `StartupWMClass` and `Icon` (tools/linux/anyplay-launcher.desktop).
+#[cfg(any(not(windows), test))]
+const APP_ID: &str = "anyplay-launcher";
+
 pub fn run(inbox: Option<crate::instance::Inbox>, arguments: Vec<String>) -> eframe::Result {
     // Read before the window exists: it opens filling its screen unless the player chose a window.
     let fullscreen = AppPaths::from_env()
         .map(|paths| Preferences::load(&paths).fullscreen)
         .unwrap_or(true);
     let viewport = egui::ViewportBuilder::default()
-        .with_title("AnyPS5")
+        .with_title("AnyPlay Launcher")
         // The launcher draws its own caption (ui::caption).
         .with_decorations(false)
         .with_inner_size([1600.0, 900.0])
@@ -710,7 +715,7 @@ pub fn run(inbox: Option<crate::instance::Inbox>, arguments: Vec<String>) -> efr
         .with_maximized(!fullscreen);
     // X11 and Wayland match the window to its desktop entry by this name.
     #[cfg(not(windows))]
-    let viewport = viewport.with_app_id("anyps5-launcher");
+    let viewport = viewport.with_app_id(APP_ID);
     let mut options = eframe::NativeOptions {
         viewport,
         ..Default::default()
@@ -718,7 +723,7 @@ pub fn run(inbox: Option<crate::instance::Inbox>, arguments: Vec<String>) -> efr
     crate::ui::restrict_backends(&mut options);
     crate::startup::mark("window requested");
     let result = eframe::run_native(
-        "AnyPS5",
+        "AnyPlay Launcher",
         options,
         Box::new(|cc| {
             crate::startup::mark("window and GPU ready");
@@ -805,4 +810,20 @@ impl eframe::App for App {
 /// Where the preview writes its generated game art.
 pub fn preview_dir() -> PathBuf {
     std::env::temp_dir().join(format!("anyps5-preview-{}", std::process::id()))
+}
+
+#[cfg(test)]
+mod desktop_entry_tests {
+    #[test]
+    fn the_desktop_entry_matches_the_app_id() {
+        let entry = include_str!("../../../../tools/linux/anyplay-launcher.desktop");
+        let has = |line: String| entry.lines().any(|l| l == line);
+        assert!(has(format!("StartupWMClass={}", super::APP_ID)));
+        assert!(has(format!("Icon={}", super::APP_ID)));
+        assert!(
+            entry
+                .lines()
+                .any(|l| l.starts_with(&format!("Exec={} ", super::APP_ID)))
+        );
+    }
 }

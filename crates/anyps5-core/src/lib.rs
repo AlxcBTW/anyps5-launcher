@@ -1,4 +1,4 @@
-//! UI-free logic of the AnyPS5 launcher. The launcher binary depends on this crate; it never depends on the UI.
+//! UI-free logic of the AnyPlay Launcher. The launcher binary depends on this crate; it never depends on the UI.
 
 pub mod community;
 pub mod compat;

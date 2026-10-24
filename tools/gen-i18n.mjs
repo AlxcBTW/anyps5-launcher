@@ -19,7 +19,8 @@ function table(name) {
 const tr = table("turkish");
 const en = table("english");
 
-// docs/DESIGN.md 9.3: Windows replacements (keys unchanged, these win over the macOS text).
+// docs/DESIGN.md 9.3: replacements (keys unchanged, these win over the macOS text): the Mac's
+// words, and the macOS app's name where it means the launcher (section 9.7).
 const windows = {
   welcomeSubtitle: [
     "Play PS5 games on your PC. Let's set a few things up first.",
@@ -30,10 +31,12 @@ const windows = {
     "The game is opening, please wait. The first start can take a few minutes while the game gets ready for Windows.",
     "Oyun açılıyor, lütfen bekle. İlk açılış, oyun Windows için hazırlanırken birkaç dakika sürebilir.",
   ],
+  welcome: ["Welcome to AnyPlay", "AnyPlay'e hoş geldin"],
   aboutText: [
-    "AnyPS5 runs PS5 games natively on Windows.",
-    "AnyPS5, PS5 oyunlarını Windows'ta yerel olarak çalıştırır.",
+    "AnyPlay Launcher runs PS5 games natively on Windows with AnyPS5.",
+    "AnyPlay Launcher, PS5 oyunlarını AnyPS5 ile Windows'ta yerel olarak çalıştırır.",
   ],
+  settingsFileFailed: ["This is not an AnyPlay settings file", "Bu dosya bir AnyPlay ayar dosyası değil"],
   installedSize: [
     "Unlocked games are kept in the .AnyPS5 folder inside your games folder.",
     "Kilidi açılan oyunlar oyun klasörünün içindeki .AnyPS5 klasöründe saklanır.",

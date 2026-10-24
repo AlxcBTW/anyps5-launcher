@@ -553,7 +553,7 @@ pub(crate) fn agent(timeout: Option<Duration>) -> ureq::Agent {
 }
 
 pub(crate) fn user_agent() -> String {
-    format!("anyps5-launcher/{}", env!("CARGO_PKG_VERSION"))
+    format!("anyplay-launcher/{}", env!("CARGO_PKG_VERSION"))
 }
 
 /// Asks GitHub for the latest release of `repo`. Blocking: call from the `toolkit` thread.

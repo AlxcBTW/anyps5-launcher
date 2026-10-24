@@ -411,7 +411,7 @@ fn viewport_id() -> ViewportId {
 /// the window sits centred at its top.
 pub fn viewport_builder(monitor_width: f32) -> ViewportBuilder {
     ViewportBuilder::default()
-        .with_title("AnyPS5 trophy")
+        .with_title("AnyPlay Launcher trophy")
         .with_inner_size([WINDOW.0, WINDOW.1])
         .with_position([(monitor_width - WINDOW.0) * 0.5, 0.0])
         .with_decorations(false)
