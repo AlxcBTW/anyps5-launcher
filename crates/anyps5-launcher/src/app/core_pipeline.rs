@@ -178,7 +178,13 @@ impl CorePipeline {
         }
     }
 
-    fn play(&mut self, game: &anyps5_core::library::Game, root: &Path, prefs: &Preferences) {
+    fn play(
+        &mut self,
+        game: &anyps5_core::library::Game,
+        root: &Path,
+        prefs: &Preferences,
+        extra_env: Option<&std::collections::BTreeMap<String, String>>,
+    ) {
         if self.runs.values().any(RunHandle::is_alive) {
             return;
         }
@@ -213,6 +219,11 @@ impl CorePipeline {
             self.paths.log_file(&game.title_id),
         );
         request.env = env;
+        if let Some(extra) = extra_env {
+            request
+                .env
+                .extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
         request.create_dirs = screenshots.into_iter().chain([shader_cache]).collect();
         request.window = WindowPrefs {
             fullscreen: settings.fullscreen,
@@ -273,7 +284,7 @@ impl Pipeline for CorePipeline {
             PipelineCommand::Cancel(game) => self.queue.cancel(&game),
             PipelineCommand::Play(game_id) => {
                 if let (Some(game), Some(root)) = (cx.game, cx.root) {
-                    self.play(game, root, cx.prefs);
+                    self.play(game, root, cx.prefs, cx.extra_env);
                 } else {
                     self.push(PipelineEvent::StartFailed {
                         game: game_id,

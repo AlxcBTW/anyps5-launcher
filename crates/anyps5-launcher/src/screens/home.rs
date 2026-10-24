@@ -19,7 +19,8 @@ use crate::screens::{
 use crate::ui::anim::{AnimExt, Motion, lerp};
 use crate::ui::chrome::{self, TileImage, TileOverlay, TileStyle};
 use crate::ui::components::{
-    ConsoleButton, IconButton, IndeterminateLine, ProgressLine, hint_bar, hint_bar_size,
+    self as components, ConsoleButton, FOCUS_GROW, IconButton, IndeterminateLine, ProgressLine,
+    hint_bar, hint_bar_size,
 };
 use crate::ui::focus::HomeFocus;
 use crate::ui::i18n::{Key, Language, byte_text};
@@ -194,37 +195,6 @@ fn top_bar(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<P
     );
     x -= group_gap;
 
-    let name = cx.model.prefs.profile_name.as_str();
-    let name_width = text::width(&painter, ty::PROFILE, name);
-    let profile_width = size::AVATAR + 10.0 + name_width;
-    x -= profile_width;
-    let avatar = pos2(x + size::AVATAR * 0.5, mid);
-    paint_gradient_circle(
-        &painter,
-        avatar,
-        size::AVATAR * 0.5,
-        accent,
-        theme::fade(accent, 0.55),
-    );
-    let initial: String = name.chars().take(1).flat_map(char::to_uppercase).collect();
-    text::paint(
-        &painter,
-        avatar,
-        Align2::CENTER_CENTER,
-        theme::TextStyle::new(16.0, Weight::Bold),
-        &initial,
-        Color32::WHITE,
-    );
-    text::paint(
-        &painter,
-        pos2(x + size::AVATAR + 10.0, mid),
-        Align2::LEFT_CENTER,
-        ty::PROFILE,
-        name,
-        white(0.9),
-    );
-    x -= group_gap;
-
     let visible = focus_visible(cx.model);
     let buttons = [
         (1u8, Icon::GEAR_SIX, language.text(Key::Settings)),
@@ -238,6 +208,19 @@ fn top_bar(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<P
             .layout(Layout::right_to_left(Align::Center)),
     );
     row.spacing_mut().item_spacing.x = button_gap;
+    // The profile opens the online area. Signed in, it carries the network name and, while the
+    // cloud answers, a dot in the accent: the player is online.
+    let online = &cx.model.online;
+    let name = online
+        .account
+        .as_ref()
+        .map_or(cx.model.prefs.profile_name.as_str(), |a| a.handle.as_str());
+    let focused = visible && cx.model.focus == HomeFocus::Top(2);
+    let label = crate::screens::online_strings::OnlineText::Online.text(language);
+    if profile_button(&mut row, name, accent, focused, online.is_online(), label).clicked() {
+        presses.push(Press::Focus(HomeFocus::Top(2)));
+    }
+    row.add_space(group_gap - button_gap);
     for (index, icon, label) in buttons {
         let focused = visible && cx.model.focus == HomeFocus::Top(index);
         let response = IconButton::new(icon, label).focused(focused).show(&mut row);
@@ -245,6 +228,84 @@ fn top_bar(ui: &mut Ui, cx: &mut ScreenCx<'_>, screen: Rect, presses: &mut Vec<P
             presses.push(Press::Focus(HomeFocus::Top(index)));
         }
     }
+}
+
+/// The avatar and name as one button: no surface at rest, the button surface on hover, white
+/// with dark ink when focused, like the icon buttons beside it. The pill's radius is the
+/// avatar's plus the inset, so the two stay concentric.
+fn profile_button(
+    ui: &mut Ui,
+    name: &str,
+    accent: Color32,
+    focused: bool,
+    online: bool,
+    label: &str,
+) -> egui::Response {
+    let painter = ui.painter().clone();
+    let inset = (size::ICON_BUTTON - size::AVATAR) * 0.5;
+    let name_width = text::width(&painter, ty::PROFILE, name);
+    let width = inset + size::AVATAR + 10.0 + name_width + 16.0;
+    let it = components::interact(
+        ui,
+        vec2(width, size::ICON_BUTTON),
+        focused,
+        true,
+        None,
+        FOCUS_GROW,
+    );
+    it.response
+        .widget_info(|| WidgetInfo::labeled(Role::Button, true, label));
+    if !ui.is_rect_visible(it.rect) {
+        return it.response;
+    }
+    let rect = components::snap_rect(
+        &painter,
+        components::scale_rect(it.grown(FOCUS_GROW), it.press_scale()),
+    );
+    let s = rect.height() / size::ICON_BUTTON;
+    let r = (rect.height() * 0.5).round();
+    let rest = if it.hovered {
+        color::surface_hover()
+    } else {
+        Color32::TRANSPARENT
+    };
+    let fill = theme::mix(rest, color::surface_focused(), it.focus);
+    components::paint_shadow(&painter, rect, r, theme::shadows::icon_button(it.focus));
+    painter.rect_filled(rect, components::corner(r), fill);
+    let avatar_r = size::AVATAR * 0.5 * s;
+    let avatar = pos2(rect.min.x + inset * s + avatar_r, rect.center().y);
+    paint_gradient_circle(
+        &painter,
+        avatar,
+        avatar_r,
+        accent,
+        theme::fade(accent, 0.55),
+    );
+    let initial: String = name.chars().take(1).flat_map(char::to_uppercase).collect();
+    text::paint(
+        &painter,
+        avatar,
+        Align2::CENTER_CENTER,
+        theme::TextStyle::new(text::quantize_size(16.0 * s), Weight::Bold),
+        &initial,
+        Color32::WHITE,
+    );
+    if online {
+        // The ring takes the colour of the pill around it, so the dot sits apart from the avatar.
+        let dot = avatar + vec2(avatar_r, avatar_r) * 0.72;
+        let ring = theme::mix(Color32::from_black_alpha(160), Color32::WHITE, it.focus);
+        painter.circle_filled(dot, 6.0 * s, ring);
+        painter.circle_filled(dot, 4.0 * s, accent);
+    }
+    text::paint(
+        &painter,
+        pos2(avatar.x + avatar_r + 10.0 * s, rect.center().y),
+        Align2::LEFT_CENTER,
+        ty::PROFILE,
+        name,
+        theme::mix(white(0.9), Color32::BLACK, it.focus),
+    );
+    it.response
 }
 
 // ---------------------------------------------------------------------------------------------

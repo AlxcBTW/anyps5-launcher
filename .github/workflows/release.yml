@@ -15,17 +15,58 @@ env:
   # The installer compiler. Pinned, and checked against this SHA-256 before it runs.
   INNO_VERSION: 7.1.0
   INNO_SHA256: 0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40df2f
+  # The anyplay-gg/network revision whose net service the launcher carries.
+  NETWORK_REF: main
+  # AnyPlay's own cloud, set as a repository variable once it runs; empty until then.
+  ANYPLAY_DEFAULT_CLOUD: ${{ vars.ANYPLAY_DEFAULT_CLOUD }}
 
 jobs:
+  # The licences of every third-party crate in the launcher and the net service it carries. Every
+  # package ships the file, and the release carries it beside the portable exe.
+  notices:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: launcher
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          path: launcher
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: anyplay-gg/network
+          ref: ${{ env.NETWORK_REF }}
+          path: network
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: Third-party licences
+        run: tools/notices.sh dist/THIRD-PARTY-LICENSES.txt
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: dist-notices
+          path: launcher/dist/THIRD-PARTY-LICENSES.txt
+          if-no-files-found: error
+
   windows:
+    needs: notices
     runs-on: windows-latest
     defaults:
       run:
         shell: pwsh
+        working-directory: launcher
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          path: launcher
+      # The online crates come from anyplay-gg/network, checked out beside the launcher.
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: anyplay-gg/network
+          ref: ${{ env.NETWORK_REF }}
+          path: network
 
       - name: Version
         id: version
@@ -45,6 +86,20 @@ jobs:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          workspaces: |
+            launcher
+            network
+
+      # The net service is built first, with the C runtime linked statically like the launcher,
+      # and carried inside the launcher's exe.
+      - name: Net service
+        working-directory: network
+        run: |
+          $env:RUSTFLAGS = '-C target-feature=+crt-static'
+          cargo build --release --locked -p anyplay-net --target x86_64-pc-windows-msvc
+          git rev-parse HEAD
+          "ANYPLAY_NET_EMBED=$((Resolve-Path target/x86_64-pc-windows-msvc/release/anyplay-net.exe).Path)" >> $env:GITHUB_ENV
 
       # .cargo/config.toml links the C runtime statically (crt-static).
       - name: Build
@@ -74,24 +129,42 @@ jobs:
           if (-not (Test-Path "$dir/ISCC.exe")) { throw 'Inno Setup did not install' }
           "INNO_DIR=$dir" >> $env:GITHUB_ENV
 
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: dist-notices
+          path: launcher/notices
+
       - name: Installer
         run: |
           $exe = (Resolve-Path "dist/AnyPS5-Launcher-${{ steps.version.outputs.version }}-x64.exe").Path
-          & "$env:INNO_DIR/ISCC.exe" "/DAppVersion=${{ steps.version.outputs.version }}" "/DExeSource=$exe" "/DOutputDir=$((Resolve-Path dist).Path)" tools/installer/anyps5-launcher.iss
+          $notices = (Resolve-Path notices/THIRD-PARTY-LICENSES.txt).Path
+          & "$env:INNO_DIR/ISCC.exe" "/DAppVersion=${{ steps.version.outputs.version }}" "/DExeSource=$exe" "/DNoticesSource=$notices" "/DOutputDir=$((Resolve-Path dist).Path)" tools/installer/anyps5-launcher.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
 
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: dist-windows
-          path: dist/*
+          path: launcher/dist/*
           if-no-files-found: error
 
   # Built on the oldest runner image still offered: a binary links against the glibc it is built
   # with, and an older one runs on more distributions.
   linux:
+    needs: notices
     runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: launcher
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          path: launcher
+      # The online crates come from anyplay-gg/network, checked out beside the launcher.
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: anyplay-gg/network
+          ref: ${{ env.NETWORK_REF }}
+          path: network
 
       - name: Version
         id: version
@@ -113,12 +186,28 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          workspaces: |
+            launcher
+            network
+
+      - name: Net service
+        working-directory: network
+        run: |
+          cargo build --release --locked -p anyplay-net
+          git rev-parse HEAD
+          echo "ANYPLAY_NET_EMBED=$PWD/target/release/anyplay-net" >> "$GITHUB_ENV"
 
       - name: Build
         run: cargo build --release --locked
 
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: dist-notices
+          path: launcher/notices
+
       - name: Package
-        run: tools/linux/package.sh "${{ steps.version.outputs.version }}" target/release/anyps5-launcher dist
+        run: tools/linux/package.sh "${{ steps.version.outputs.version }}" target/release/anyps5-launcher notices/THIRD-PARTY-LICENSES.txt dist
 
       - name: Check the AppImage
         run: |
@@ -133,12 +222,12 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: dist-linux
-          path: dist/*
+          path: launcher/dist/*
           if-no-files-found: error
 
   # One checksum file for everything, and the release itself (tags only).
   publish:
-    needs: [windows, linux]
+    needs: [notices, windows, linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8.0.2
@@ -150,7 +239,7 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: |
-          sha256sum -b AnyPS5-Launcher-* > SHA256SUMS.txt
+          sha256sum -b AnyPS5-Launcher-* THIRD-PARTY-LICENSES.txt > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v7.0.2
@@ -170,4 +259,5 @@ jobs:
             dist/AnyPS5-Launcher-${{ needs.windows.outputs.version }}-Setup.exe
             dist/AnyPS5-Launcher-${{ needs.windows.outputs.version }}-x86_64.AppImage
             dist/AnyPS5-Launcher-${{ needs.windows.outputs.version }}-linux-x86_64.tar.gz
+            dist/THIRD-PARTY-LICENSES.txt
             dist/SHA256SUMS.txt

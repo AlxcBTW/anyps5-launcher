@@ -6,7 +6,9 @@
 //!                           controls-end|advanced|trophies|banner|start|unlocking|log|report|library|
 //!                           about-update|behavior-links|toolkit|toolkit-update|toolkit-newer|toolkit-pinned|toolkit-local|
 //!                           recommended|recommended-warning|whats-new|whats-new-loading|
-//!                           saves|saves-empty|restore
+//!                           saves|saves-empty|restore|
+//!                           online|online-code|online-handle|online-friends|online-friend|
+//!                           online-account|online-picker
 //!                 [--screenshot=out.png] [--size=WxH] [--tr]
 //! ```
 //!
@@ -94,6 +96,19 @@ pub enum ScreenPage {
     SavesEmpty,
     /// The question before one is put back.
     Restore,
+    /// The online area on one of its pages, over invented friends.
+    Online(OnlineLook),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnlineLook {
+    Start,
+    Code,
+    Handle,
+    Friends,
+    Friend,
+    Account,
+    Picker,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,12 +152,122 @@ pub fn parse(name: &str) -> Option<ScreenPage> {
         "saves" => ScreenPage::Saves,
         "saves-empty" => ScreenPage::SavesEmpty,
         "restore" => ScreenPage::Restore,
+        "online" => ScreenPage::Online(OnlineLook::Start),
+        "online-code" => ScreenPage::Online(OnlineLook::Code),
+        "online-handle" => ScreenPage::Online(OnlineLook::Handle),
+        "online-friends" => ScreenPage::Online(OnlineLook::Friends),
+        "online-friend" => ScreenPage::Online(OnlineLook::Friend),
+        "online-account" => ScreenPage::Online(OnlineLook::Account),
+        "online-picker" => ScreenPage::Online(OnlineLook::Picker),
         other => {
             let n: usize = other.strip_prefix("settings")?.parse().ok()?;
             (n < crate::screens::settings::Category::ALL.len())
                 .then_some(ScreenPage::Settings(n))?
         }
     })
+}
+
+/// What the online panel shows over the invented online state: AnyPlay's own cloud.
+fn online_data(
+    online: &anyps5_core::online::Online,
+    language: crate::ui::i18n::Language,
+    accent: Color32,
+) -> crate::screens::online::OnlineData<'_> {
+    crate::screens::online::OnlineData {
+        online,
+        cloud: Some("https://cloud.example.org"),
+        custom_cloud: false,
+        official_cloud: true,
+        language,
+        accent,
+    }
+}
+
+/// Invented friends: one plays a game you can join, one plays, one is online, one is not; a
+/// request waits, one was sent, and a friend invited you.
+fn sample_online(look: OnlineLook) -> anyps5_core::online::Online {
+    use anyps5_core::online::api::{
+        Account, AccountId, Activity, Friend, FriendLists, Invitation, Presence, Request,
+        SessionRef,
+    };
+    use anyps5_core::online::{Cloud, Dialog, Online, Pending, SignedIn, Status};
+    let account = |id: u64, handle: &str| Account {
+        id: AccountId(id),
+        handle: handle.into(),
+    };
+    let playing = |title: &str, joinable: bool| {
+        Some(Activity {
+            title_id: "TEST00001".into(),
+            title: title.into(),
+            version: "01.000".into(),
+            session: joinable.then(|| SessionRef {
+                id: "s1".into(),
+                joinable: true,
+                members: 2,
+                max_members: 4,
+            }),
+        })
+    };
+    let friend = |id, handle, online, activity| Friend {
+        account: account(id, handle),
+        since: 0,
+        presence: Presence { online, activity },
+    };
+    let mut state = Online::default();
+    state.status = Status::Running;
+    state.cloud = Some(Cloud::Online);
+    match look {
+        OnlineLook::Start => return state,
+        OnlineLook::Code => {
+            state.pending = Some(Pending::Code);
+            state.email = "mira@example.org".into();
+            return state;
+        }
+        OnlineLook::Handle => {
+            state.pending = Some(Pending::Handle);
+            return state;
+        }
+        _ => {}
+    }
+    state.account = Some(SignedIn {
+        id: AccountId(1),
+        handle: "Mira".into(),
+        email: "mira@example.org".into(),
+    });
+    state.friends = FriendLists {
+        friends: vec![
+            friend(2, "Lumen", true, playing(NAMES[1], true)),
+            friend(3, "Juno", true, playing(NAMES[4], false)),
+            friend(4, "Kit", true, None),
+            friend(5, "Rook", false, None),
+        ],
+        incoming: vec![Request {
+            account: account(6, "Vale"),
+            since: 0,
+        }],
+        outgoing: vec![Request {
+            account: account(7, "Ash"),
+            since: 0,
+        }],
+        blocked: vec![account(8, "Spamford")],
+    };
+    state.invitations = vec![Invitation {
+        id: "i1".into(),
+        from: account(3, "Juno"),
+        session: "s2".into(),
+        title_id: "TEST00002".into(),
+        title: NAMES[4].into(),
+        version: "01.000".into(),
+        expires: 0,
+    }];
+    if look == OnlineLook::Picker {
+        state.dialog = Some(Dialog {
+            id: 1,
+            title: NAMES[1].into(),
+            max: 3,
+        });
+    }
+    state
 }
 
 /// Three backups of the invented game: one before an unlock, a manual one, one after playing.
@@ -400,6 +525,8 @@ pub struct ScreenGallery {
     uninstall: UninstallPanel,
     saves: SavesPanel,
     restore: RestorePanel,
+    online_panel: crate::screens::online::OnlinePanel,
+    online: anyps5_core::online::Online,
     recommended: RecommendedPanel,
     whats_new: WhatsNewPanel,
     notes: Published,
@@ -465,6 +592,11 @@ impl ScreenGallery {
             uninstall: UninstallPanel::default(),
             saves: SavesPanel::default(),
             restore: RestorePanel::default(),
+            online_panel: crate::screens::online::OnlinePanel::default(),
+            online: match page {
+                ScreenPage::Online(look) => sample_online(look),
+                _ => anyps5_core::online::Online::default(),
+            },
             controls: ControlsPanel::default(),
             game_input: sample_game_input(),
             community: sample_community(),
@@ -615,6 +747,10 @@ impl ScreenGallery {
                 .show(shell, &ctx, &events, &stamp, language, accent);
         }
         {
+            let data = online_data(&self.online, language, accent);
+            self.online_panel.show(shell, &ctx, &events, &data);
+        }
+        {
             let plan = sample_plan(matches!(self.page, ScreenPage::RecommendedWarning));
             let data = RecommendedData {
                 title: name,
@@ -723,6 +859,25 @@ impl ScreenGallery {
             ScreenPage::Confirm => self.uninstall.open(),
             ScreenPage::Saves | ScreenPage::SavesEmpty => self.saves.open(),
             ScreenPage::Restore => self.restore.open(),
+            ScreenPage::Online(look) => {
+                use crate::screens::online::Page;
+                let language = shell.language;
+                let data = online_data(&self.online, language, shell.accent_color());
+                self.online_panel.open(&data);
+                match look {
+                    OnlineLook::Code => self.online_panel.code = "4817".into(),
+                    OnlineLook::Handle => {
+                        self.online_panel.handle = "Mira".into();
+                        self.online_panel.age_confirmed = true;
+                    }
+                    OnlineLook::Friend => self
+                        .online_panel
+                        .show_page(Page::Friend(anyps5_core::online::api::AccountId(2)), &data),
+                    OnlineLook::Account => self.online_panel.show_page(Page::Account, &data),
+                    OnlineLook::Start => self.online_panel.email = "mira@example.org".into(),
+                    _ => {}
+                }
+            }
             ScreenPage::Controls => self.controls.open(),
             ScreenPage::ControlsCapture => {
                 self.controls.open_row(3);

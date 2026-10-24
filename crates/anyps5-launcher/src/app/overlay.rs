@@ -32,6 +32,8 @@ pub enum Overlay {
     Recommended,
     /// The notes of a toolkit release (a full-screen panel).
     WhatsNew,
+    /// Sign-in, friends and invitations of the AnyPlay network (a side panel).
+    Online,
 }
 
 impl Overlay {
@@ -46,6 +48,7 @@ impl Overlay {
                 | Overlay::Controls
                 | Overlay::Advanced
                 | Overlay::Recommended
+                | Overlay::Online
         )
     }
 

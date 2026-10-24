@@ -36,6 +36,8 @@ pub mod home;
 pub mod library;
 pub mod log;
 pub mod onboarding;
+pub mod online;
+pub mod online_strings;
 pub mod recommended;
 pub mod rows;
 pub mod saves;

@@ -1,0 +1,120 @@
+# What the crates of this repository may depend on (cargo-deny). The launcher is GPL-2.0-only, so
+# every dependency must allow use under it: Apache-2.0 alone does not (it is compatible with
+# GPL-3.0, not with GPL-2.0), nor does the OpenSSL licence. A crate offered under several licences
+# passes when one of them is allowed.
+
+[graph]
+all-features = true
+# Only what we build: the wasm crates of iroh never reach a binary of ours.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-pc-windows-gnu",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+[advisories]
+# A vulnerability anywhere fails the check; an unmaintained crate only when we depend on it
+# directly. An exception names its ID and why it does not apply.
+unmaintained = "workspace"
+ignore = [
+    # zip before 9: extract() can follow symlinks and keep setuid bits. The launcher never calls
+    # extract(); it checks every entry name itself and writes plain files (toolkit::extract_libs,
+    # saves::unpack). The move to zip 9 is planned.
+    { id = "RUSTSEC-2026-0367", reason = "extract() is never called" },
+    { id = "RUSTSEC-2026-0368", reason = "extract() is never called" },
+    { id = "RUSTSEC-2026-0369", reason = "extract() is never called" },
+    # quick-xml before 0.41, through zbus_xml (accessibility on Linux): it parses D-Bus
+    # introspection data from the local session bus, never from the network. Goes with the next
+    # eframe update.
+    { id = "RUSTSEC-2026-0194", reason = "local D-Bus introspection only" },
+    { id = "RUSTSEC-2026-0195", reason = "local D-Bus introspection only" },
+]
+
+[licenses]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+allow = [
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "BSL-1.0",
+    "0BSD",
+    "MPL-2.0",
+    "GPL-2.0-only",
+    "GPL-2.0-or-later",
+    "LGPL-2.1-or-later",
+    "Unlicense",
+]
+
+# Offered under Apache-2.0 only, which the FSF does not count as compatible with GPL-2.0. They come
+# with egui, wgpu, winit and the sound and TLS stacks and have no alternative here; the licence
+# question is being settled. No new crate of this kind may be added.
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "ab_glyph"
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "ab_glyph_rasterizer"
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "accesskit_winit"
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "codespan-reporting"
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "cpal"
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "dpi"
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "gethostname"
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "gl_generator"
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "glutin_wgl_sys"
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "khronos_api"
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "owned_ttf_parser"
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "spirv"
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "unicode-general-category"
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "winit"
+[[licenses.exceptions]]
+allow = ["Apache-2.0"]
+crate = "zopfli"
+[[licenses.exceptions]]
+allow = ["Apache-2.0", "ISC"]
+crate = "ring"
+# The default fonts of egui carry their font licences.
+[[licenses.exceptions]]
+allow = ["OFL-1.1", "Ubuntu-font-1.0"]
+crate = "epaint_default_fonts"
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

@@ -10,18 +10,34 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # The anyplay-gg/network revision the online crates come from.
+  NETWORK_REF: main
+
+defaults:
+  run:
+    working-directory: launcher
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          path: launcher
+      # The online crates come from anyplay-gg/network, checked out beside the launcher.
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: anyplay-gg/network
+          ref: ${{ env.NETWORK_REF }}
+          path: network
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          workspaces: launcher
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -33,13 +49,21 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: anyps5-launcher-windows-x64
-          path: target/x86_64-pc-windows-msvc/release/anyps5-launcher.exe
+          path: launcher/target/x86_64-pc-windows-msvc/release/anyps5-launcher.exe
           if-no-files-found: error
 
   linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          path: launcher
+      # The online crates come from anyplay-gg/network, checked out beside the launcher.
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: anyplay-gg/network
+          ref: ${{ env.NETWORK_REF }}
+          path: network
       # alsa for cpal (sound), udev for gilrs (gamepads), xkbcommon/xcb for winit's X11 and
       # Wayland input. rfd uses the XDG portal over D-Bus and needs no GTK.
       - name: System packages
@@ -53,6 +77,8 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          workspaces: launcher
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -61,6 +87,9 @@ jobs:
         run: cargo test --workspace --no-fail-fast
       - name: Release build
         run: cargo build --release
+      # A crate whose licence cannot be read would stop the next release; find it here first.
+      - name: Third-party licences
+        run: tools/notices.sh "$RUNNER_TEMP/THIRD-PARTY-LICENSES.txt"
       # Renders the real UI on a software Vulkan device (lavapipe) in a virtual X server.
       - name: Smoke packages
         run: |
@@ -70,7 +99,7 @@ jobs:
       - name: Smoke screenshots
         run: |
           mkdir -p shots
-          for scene in home controls; do
+          for scene in home controls online-friends; do
             xvfb-run -a -s "-screen 0 1920x1080x24" \
               target/release/anyps5-launcher --gallery=$scene --screenshot=shots/$scene.png
           done
@@ -78,5 +107,13 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: anyps5-launcher-linux-screenshots
-          path: shots/*.png
+          path: launcher/shots/*.png
           if-no-files-found: error
+
+  # Links, licences and advisories: the rules every AnyPlay repository shares. The launcher handles
+  # title IDs as data, so that rule is off here.
+  rules:
+    uses: anyplay-gg/.github/.github/workflows/rules.yml@main
+    with:
+      network: true
+      title-ids: false

@@ -3,6 +3,7 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/icon.ico");
+    embed_net_service();
     #[cfg(windows)]
     if std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows") {
         let out = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
@@ -18,6 +19,26 @@ fn main() {
             .manifest_optional()
             .expect("icon resource must compile");
     }
+}
+
+/// A release build carries the net service (`anyplay-net` from anyplay-gg/network) inside the
+/// launcher, so every download and every self-update brings the service that matches it.
+/// `ANYPLAY_NET_EMBED` names the built service; without it the launcher looks for one beside
+/// itself.
+fn embed_net_service() {
+    println!("cargo::rustc-check-cfg=cfg(embedded_net)");
+    println!("cargo:rerun-if-env-changed=ANYPLAY_NET_EMBED");
+    let Some(source) = std::env::var_os("ANYPLAY_NET_EMBED") else {
+        return;
+    };
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
+    std::fs::copy(&source, out.join("anyplay-net.bin"))
+        .expect("ANYPLAY_NET_EMBED must be readable");
+    println!(
+        "cargo:rerun-if-changed={}",
+        std::path::Path::new(&source).display()
+    );
+    println!("cargo:rustc-cfg=embedded_net");
 }
 
 #[cfg(windows)]

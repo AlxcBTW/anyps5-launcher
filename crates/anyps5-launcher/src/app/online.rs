@@ -1,0 +1,674 @@
+//! The net service behind [`Model::online`]: it starts and stops the process, hands it the
+//! commands the panels queued and brings its answers back, turns what the player should know
+//! into toasts, and holds a game's start until the net service gave it the bridge's variables.
+//!
+//! A start never waits long on the network: without an answer in three seconds the game starts
+//! offline, as it would without an account. Only a join, which makes no sense offline, is
+//! called off when it fails.
+
+use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
+
+use anyps5_core::events::Notifier;
+use anyps5_core::library::Game;
+use anyps5_core::online::api::{ErrorCode, FriendState};
+use anyps5_core::online::{
+    self as net, Command, Failure, Join, NetProcess, Notice, Purpose, Status,
+};
+use anyps5_core::paths::GameId;
+
+use crate::app::model::{Effect, Model};
+use crate::app::overlay::Overlay;
+use crate::screens::online_strings::OnlineText as T;
+use crate::ui::focus::HomeFocus;
+use crate::ui::i18n::{Arg, Language};
+use crate::ui::icons::Icon;
+
+/// How long a game start waits for the bridge's variables.
+const START_PATIENCE: Duration = Duration::from_secs(3);
+
+/// A start the net service was asked about.
+struct WaitingStart {
+    game: GameId,
+    number: u64,
+    since: Instant,
+    joining: bool,
+}
+
+pub struct OnlineService {
+    process: Option<NetProcess>,
+    /// Previews, the demo and tests: never start a process.
+    simulated: bool,
+    wake: Notifier,
+    waiting: Option<WaitingStart>,
+    starts: u64,
+    /// The session the next start of this title joins.
+    join: Option<Join>,
+    /// The game the net service was told about and that has not ended yet.
+    started: Option<GameId>,
+}
+
+/// A game ready to start, with the variables it gets beyond its settings.
+pub struct ReadyStart {
+    pub game: GameId,
+    pub env: BTreeMap<String, String>,
+}
+
+impl OnlineService {
+    pub fn new(wake: Notifier, simulated: bool) -> Self {
+        Self {
+            process: None,
+            simulated,
+            wake,
+            waiting: None,
+            starts: 0,
+            join: None,
+            started: None,
+        }
+    }
+
+    /// Starts the net service and says hello with the cloud of the preferences. Already running,
+    /// it starts again: a new cloud needs a new hello.
+    pub fn start(&mut self, model: &mut Model) {
+        let Some(cloud) = net::cloud(model.prefs.online_cloud.as_deref()).map(str::to_owned) else {
+            return;
+        };
+        if self.process.is_some() {
+            self.stop(model);
+        }
+        if self.simulated {
+            return;
+        }
+        let Some(binary) = NetProcess::locate().or_else(|| bundled(&model.paths)) else {
+            tracing::warn!("no {} next to the launcher", net::BINARY);
+            model.online.status = Status::Missing;
+            return;
+        };
+        match NetProcess::spawn(
+            &binary,
+            &model.paths.network_dir(),
+            &model.paths.network_log(),
+            self.wake.clone(),
+        ) {
+            Ok(process) => {
+                tracing::info!("net service started: {}", binary.display());
+                self.process = Some(process);
+                model.online.status = Status::Running;
+                model.online.send(
+                    Purpose::Hello,
+                    Command::Hello {
+                        launcher: env!("CARGO_PKG_VERSION").to_owned(),
+                        cloud,
+                    },
+                );
+            }
+            Err(error) => {
+                tracing::warn!("the net service could not start: {error}");
+                model.online.status = Status::Ended(error.to_string());
+            }
+        }
+    }
+
+    pub fn stop(&mut self, model: &mut Model) {
+        self.process = None;
+        self.waiting = None;
+        self.started = None;
+        model.online.stopped(Status::Off);
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.process.is_some()
+    }
+
+    /// Every frame: the queued commands go out, the output comes in. Returns the starts that may
+    /// go ahead now.
+    pub fn frame(&mut self, model: &mut Model) -> Vec<ReadyStart> {
+        let mut ready = Vec::new();
+        if let Some(process) = &mut self.process {
+            let lines = model.online.take_outbox();
+            if !lines.is_empty()
+                && let Err(error) = process.write(&lines)
+            {
+                tracing::warn!("cannot write to the net service: {error}");
+            }
+            for line in process.drain() {
+                let ended = line == net::Line::Ended;
+                for notice in model.online.apply(line) {
+                    self.notice(model, notice, &mut ready);
+                }
+                if ended {
+                    self.process = None;
+                    break;
+                }
+            }
+        } else {
+            // Nothing to send to: commands fail at once instead of waiting forever.
+            let _ = model.online.take_outbox();
+        }
+        if let Some(waiting) = &self.waiting
+            && waiting.since.elapsed() >= START_PATIENCE
+        {
+            let waiting = self.waiting.take().expect("checked above");
+            tracing::info!("no answer to the game start in time; starting offline");
+            if waiting.joining {
+                self.call_off_start(model);
+                let text = T::Offline.text(model.language()).to_owned();
+                model.toast(text, Icon::WARNING);
+            } else {
+                ready.push(ReadyStart {
+                    env: record_env(model, &waiting.game),
+                    game: waiting.game,
+                });
+            }
+        }
+        ready
+    }
+
+    /// A game is about to start. `Some` starts it now with these variables; `None` holds it
+    /// until the net service answers (see [`OnlineService::frame`]).
+    pub fn on_play(&mut self, model: &mut Model, game: &Game) -> Option<BTreeMap<String, String>> {
+        let join = self.join.take().filter(|j| j.title_id == game.title_id);
+        if model.online.status != Status::Running || !model.online.is_signed_in() {
+            return Some(record_env(model, &game.id));
+        }
+        self.starts += 1;
+        model.online.send(
+            Purpose::GameStart(self.starts),
+            Command::GameStart {
+                title_id: game.title_id.clone(),
+                title: game.name.clone(),
+                version: game.version.clone(),
+                build: build(model),
+                join: join.as_ref().map(|j| j.session.clone()),
+            },
+        );
+        self.waiting = Some(WaitingStart {
+            game: game.id.clone(),
+            number: self.starts,
+            since: Instant::now(),
+            joining: join.is_some(),
+        });
+        self.started = Some(game.id.clone());
+        None
+    }
+
+    /// The game's process ended (or never started).
+    pub fn on_exited(&mut self, model: &mut Model, game: &GameId) {
+        if self.started.as_ref() == Some(game) {
+            self.started = None;
+            if self.waiting.as_ref().is_some_and(|w| &w.game == game) {
+                self.waiting = None;
+            }
+            model.online.send(Purpose::GameEnd, Command::GameEnd);
+        }
+    }
+
+    /// Asks the net service whether the player may join `join`; the answer starts the game.
+    pub fn request_join(model: &mut Model, join: Join) {
+        let language = model.language();
+        let Some(game) = model
+            .games
+            .iter()
+            .find(|g| g.title_id == join.title_id)
+            .cloned()
+        else {
+            let text = T::NotOwned.format(language, &[Arg::Str(&join.title)]);
+            model.toast(text, Icon::WARNING);
+            return;
+        };
+        if !matches!(
+            model.state_of(&game),
+            crate::app::model::GameState::Installed { .. }
+        ) {
+            let text = T::NotUnlocked.format(language, &[Arg::Str(&game.name)]);
+            model.toast(text, Icon::LOCK);
+            return;
+        }
+        let command = Command::CheckJoin {
+            session: join.session.clone(),
+            title_id: join.title_id.clone(),
+            version: game.version.clone(),
+            build: build(model),
+        };
+        model.online.send(
+            Purpose::CheckJoin(Join {
+                version: game.version.clone(),
+                build: build(model),
+                ..join
+            }),
+            command,
+        );
+    }
+
+    fn notice(&mut self, model: &mut Model, notice: Notice, ready: &mut Vec<ReadyStart>) {
+        let language = model.language();
+        match notice {
+            Notice::Answered(purpose, result) => self.answered(model, purpose, result, ready),
+            Notice::Request(account) => {
+                let text = T::RequestArrived.format(language, &[Arg::Str(&account.handle)]);
+                model.toast(text, Icon::USER_PLUS);
+            }
+            Notice::Invitation(invitation) => {
+                let text = T::InvitationArrived.format(
+                    language,
+                    &[
+                        Arg::Str(&invitation.from.handle),
+                        Arg::Str(&invitation.title),
+                    ],
+                );
+                model.toast(text, Icon::ENVELOPE_SIMPLE);
+            }
+            Notice::Dialog(_) => {
+                // The game asked to invite friends: the launcher comes forward with the picker.
+                model.effects.push(Effect::RestoreWindow);
+                if model.overlay != Some(Overlay::Online) {
+                    model.open(Overlay::Online);
+                }
+            }
+            Notice::Ended => {
+                self.process = None;
+                if model.prefs.online {
+                    let text = T::ServiceEnded.text(language).to_owned();
+                    model.toast(text, Icon::WARNING);
+                }
+            }
+        }
+    }
+
+    fn answered(
+        &mut self,
+        model: &mut Model,
+        purpose: Purpose,
+        result: Result<serde_json::Value, Failure>,
+        ready: &mut Vec<ReadyStart>,
+    ) {
+        let language = model.language();
+        let handle_of = |model: &Model, id| {
+            model
+                .online
+                .known(id)
+                .map(|a| a.handle.clone())
+                .unwrap_or_default()
+        };
+        match (purpose, result) {
+            (Purpose::GameStart(number), result) => {
+                let Some(waiting) = self.waiting.take_if(|w| w.number == number) else {
+                    return;
+                };
+                match result {
+                    Ok(value) => {
+                        let bridge = serde_json::from_value::<net::control::GameStarted>(value)
+                            .map(|g| g.env)
+                            .ok();
+                        let mut env = record_env(model, &waiting.game);
+                        env.extend(net::game_environment(bridge.as_ref(), None));
+                        ready.push(ReadyStart {
+                            game: waiting.game,
+                            env,
+                        });
+                    }
+                    Err(failure) if waiting.joining => {
+                        self.call_off_start(model);
+                        let text = failure_text(&failure, language);
+                        model.toast(text, Icon::WARNING);
+                    }
+                    Err(failure) => {
+                        tracing::info!("game start without the network: {}", failure.message);
+                        ready.push(ReadyStart {
+                            env: record_env(model, &waiting.game),
+                            game: waiting.game,
+                        });
+                    }
+                }
+            }
+            (Purpose::CheckJoin(join), Ok(_)) => {
+                let Some(index) = model.games.iter().position(|g| g.title_id == join.title_id)
+                else {
+                    return;
+                };
+                let text =
+                    T::Joining.format(language, &[Arg::Str(&join.friend), Arg::Str(&join.title)]);
+                model.toast(text, Icon::GAME_CONTROLLER);
+                let id = model.games[index].id.clone();
+                model.selected = index;
+                model.focus = HomeFocus::Tiles;
+                model.dismiss_overlay();
+                self.join = Some(join);
+                model.play(&id);
+            }
+            (Purpose::CheckJoin(join), Err(failure)) => {
+                let text = match &failure.expected {
+                    Some(expected) if failure.is(ErrorCode::VersionMismatch) => T::VersionMismatch
+                        .format(
+                            language,
+                            &[
+                                Arg::Str(&join.friend),
+                                Arg::Str(&expected.version),
+                                Arg::Str(&expected.build),
+                                Arg::Str(&join.version),
+                                Arg::Str(&join.build),
+                            ],
+                        ),
+                    _ => failure_text(&failure, language),
+                };
+                model.toast(text, Icon::WARNING);
+            }
+            (Purpose::Code, Ok(value)) => {
+                if value.get("result").and_then(|r| r.as_str()) == Some("signed_in") {
+                    self.signed_in(model);
+                }
+            }
+            (Purpose::SignUp, Ok(_)) => self.signed_in(model),
+            (Purpose::SignOut, _) => {
+                model.edit_prefs(|p| p.online = false);
+                let text = T::SignedOut.text(language).to_owned();
+                model.toast(text, Icon::SIGN_OUT);
+                model.effects.push(Effect::StopOnline);
+            }
+            (Purpose::DeleteAccount, Ok(_)) => {
+                model.edit_prefs(|p| p.online = false);
+                let text = T::Deleted.text(language).to_owned();
+                model.toast(text, Icon::TRASH);
+                model.effects.push(Effect::StopOnline);
+            }
+            (Purpose::AddFriend(handle), Ok(value)) => {
+                let friends = serde_json::from_value::<net::control::FriendAdded>(value)
+                    .is_ok_and(|a| a.result == FriendState::Friends);
+                let text = if friends {
+                    T::NowFriends
+                } else {
+                    T::RequestSent
+                }
+                .format(language, &[Arg::Str(&handle)]);
+                model.toast(text, Icon::USER_PLUS);
+            }
+            (Purpose::Accept(id), Ok(_)) => {
+                let text = T::NowFriends.format(language, &[Arg::Str(&handle_of(model, id))]);
+                model.toast(text, Icon::USERS);
+            }
+            (Purpose::Block(id), Ok(_)) => {
+                let text = T::BlockedToast.format(language, &[Arg::Str(&handle_of(model, id))]);
+                model.toast(text, Icon::PROHIBIT);
+            }
+            (Purpose::Report(_), Ok(_)) => {
+                let text = T::Reported.text(language).to_owned();
+                model.toast(text, Icon::FLAG);
+            }
+            (Purpose::Invite | Purpose::Dialog, Ok(_)) => {}
+            (Purpose::Hello | Purpose::Playing | Purpose::GameEnd, Err(failure)) => {
+                tracing::info!("net service: {}: {}", failure.code, failure.message);
+            }
+            (_, Ok(_)) => {}
+            (_, Err(failure)) => {
+                let text = failure_text(&failure, language);
+                model.toast(text, Icon::WARNING);
+            }
+        }
+    }
+
+    fn signed_in(&mut self, model: &mut Model) {
+        model.edit_prefs(|p| p.online = true);
+        if let Some(account) = &model.online.account {
+            let text = T::Welcome.format(model.language(), &[Arg::Str(&account.handle)]);
+            model.toast(text, Icon::USER_CIRCLE);
+        }
+    }
+
+    /// A join failed before its game started: the splash goes away.
+    fn call_off_start(&mut self, model: &mut Model) {
+        self.started = None;
+        model.cancel_start();
+    }
+}
+
+/// The net service this launcher carries (release builds), written once per version to
+/// `Network\bin` and run from there.
+#[cfg(embedded_net)]
+fn bundled(paths: &anyps5_core::paths::AppPaths) -> Option<std::path::PathBuf> {
+    static NET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/anyplay-net.bin"));
+    let folder = paths.network_dir().join("bin");
+    let name = format!(
+        "anyplay-net-{}-{}{}",
+        env!("CARGO_PKG_VERSION"),
+        NET.len(),
+        std::env::consts::EXE_SUFFIX
+    );
+    let path = folder.join(&name);
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() == NET.len() as u64) {
+        return Some(path);
+    }
+    let write = || -> std::io::Result<()> {
+        std::fs::create_dir_all(&folder)?;
+        let partial = folder.join(format!("{name}.partial"));
+        std::fs::write(&partial, NET)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o755))?;
+        }
+        std::fs::rename(&partial, &path)?;
+        // Older versions go; one that still runs keeps its file until the next start.
+        for entry in std::fs::read_dir(&folder)?.flatten() {
+            let file = entry.file_name();
+            if file != name.as_str() && file.to_string_lossy().starts_with("anyplay-net-") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+        Ok(())
+    };
+    match write() {
+        Ok(()) => Some(path),
+        Err(error) => {
+            tracing::warn!("cannot write the net service: {error}");
+            None
+        }
+    }
+}
+
+#[cfg(not(embedded_net))]
+fn bundled(_paths: &anyps5_core::paths::AppPaths) -> Option<std::path::PathBuf> {
+    None
+}
+
+/// The AnyPS5 build the version guard compares: the toolkit's version.
+fn build(model: &Model) -> String {
+    model
+        .toolkit
+        .clone()
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+/// The observation log's variable, when the player records network calls.
+fn record_env(model: &Model, game: &GameId) -> BTreeMap<String, String> {
+    let record = model.prefs.record_network.then(|| {
+        let title = model
+            .game(game)
+            .map(|g| g.title_id.clone())
+            .unwrap_or_default();
+        model.paths.network_record(&title)
+    });
+    if let Some(path) = &record
+        && let Some(parent) = path.parent()
+    {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    net::game_environment(None, record.as_deref())
+}
+
+/// What a failure means for the player, and what to do about it.
+pub fn failure_text(failure: &Failure, language: Language) -> String {
+    let code = |c: ErrorCode| failure.is(c);
+    let text = if failure.code == Failure::OFFLINE {
+        T::Offline
+    } else if code(ErrorCode::CodeWrong) {
+        T::CodeWrong
+    } else if code(ErrorCode::CodeExpired) {
+        T::CodeExpired
+    } else if code(ErrorCode::HandleTaken) {
+        T::HandleTaken
+    } else if code(ErrorCode::HandleInvalid) {
+        T::HandleInvalid
+    } else if code(ErrorCode::NotFound) {
+        T::NotFound
+    } else if code(ErrorCode::RateLimited) {
+        T::RateLimited
+    } else if code(ErrorCode::Banned) {
+        T::Banned
+    } else if code(ErrorCode::Full) {
+        T::Full
+    } else {
+        return T::Failed.format(language, &[Arg::Str(&failure.message)]);
+    };
+    text.text(language).to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use anyps5_core::library::ExecutableKind;
+    use anyps5_core::online::SignedIn;
+    use anyps5_core::online::api::AccountId;
+    use anyps5_core::paths::AppPaths;
+    use anyps5_core::settings::Preferences;
+
+    use super::*;
+
+    fn game() -> Game {
+        let folder = PathBuf::from("C:/games/test");
+        Game {
+            id: GameId::from_path(&folder),
+            folder,
+            title_id: "TEST00001".to_owned(),
+            name: "Test Game".to_owned(),
+            names: Default::default(),
+            version: "01.000".to_owned(),
+            content_id: None,
+            icon: None,
+            background: None,
+            music: None,
+            executable: ExecutableKind::Elf,
+            size: None,
+            unlocked_with: Some("v1".to_owned()),
+        }
+    }
+
+    fn signed_in_model() -> Model {
+        let prefs = Preferences {
+            onboarded: true,
+            games_folder: Some(PathBuf::from("C:/games")),
+            ..Preferences::default()
+        };
+        let mut model = Model::new(
+            prefs,
+            AppPaths::under(std::path::Path::new("C:/none")),
+            false,
+        );
+        model.toolkit = Some("v1".to_owned());
+        model.games = vec![game()];
+        model.online.status = Status::Running;
+        model.online.account = Some(SignedIn {
+            id: AccountId(1),
+            handle: "Alec".into(),
+            email: "a@example.org".into(),
+        });
+        model
+    }
+
+    fn service() -> OnlineService {
+        OnlineService::new(std::sync::Arc::new(|| {}), true)
+    }
+
+    #[test]
+    fn offline_a_game_starts_at_once_without_the_bridge() {
+        let mut model = signed_in_model();
+        model.online.account = None;
+        let env = service().on_play(&mut model, &game()).expect("starts now");
+        assert!(env.is_empty());
+    }
+
+    #[test]
+    fn signed_in_a_start_waits_for_the_bridge_and_then_carries_it() {
+        let mut model = signed_in_model();
+        let mut online = service();
+        assert_eq!(online.on_play(&mut model, &game()), None);
+        let sent = model.online.take_outbox();
+        assert!(sent[0].contains("\"do\":\"game_start\""));
+        assert!(sent[0].contains("\"build\":\"v1\""));
+        let mut ready = Vec::new();
+        let answer = serde_json::json!({"env": {"ANYPS5_NET_ENDPOINT": "127.0.0.1:5000", "ANYPS5_NET_TOKEN": "ab"}});
+        online.answered(&mut model, Purpose::GameStart(1), Ok(answer), &mut ready);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].game, game().id);
+        assert_eq!(ready[0].env["ANYPS5_NET_TOKEN"], "ab");
+        // The end of the game is reported once.
+        online.on_exited(&mut model, &game().id);
+        online.on_exited(&mut model, &game().id);
+        let ends = model.online.take_outbox();
+        assert_eq!(ends.len(), 1);
+        assert!(ends[0].contains("game_end"));
+    }
+
+    #[test]
+    fn a_failed_join_calls_the_start_off_but_a_failed_start_plays_offline() {
+        let mut model = signed_in_model();
+        let mut online = service();
+        online.join = Some(Join {
+            session: "s1".into(),
+            title_id: "TEST00001".into(),
+            title: "Test Game".into(),
+            version: "01.000".into(),
+            build: "v1".into(),
+            friend: "Lumen".into(),
+        });
+        model.play(&game().id);
+        assert!(model.starting.is_some());
+        assert_eq!(online.on_play(&mut model, &game()), None);
+        assert!(model.online.take_outbox()[0].contains("\"join\":\"s1\""));
+        let mut ready = Vec::new();
+        online.answered(
+            &mut model,
+            Purpose::GameStart(1),
+            Err(Failure::new("full", "Full.")),
+            &mut ready,
+        );
+        assert!(ready.is_empty());
+        assert!(model.starting.is_none());
+        assert_eq!(
+            model.toast.as_ref().map(|t| t.text.as_str()),
+            Some("The game is full.")
+        );
+
+        // Without a join, a start the network refuses goes ahead offline.
+        assert_eq!(online.on_play(&mut model, &game()), None);
+        online.answered(
+            &mut model,
+            Purpose::GameStart(2),
+            Err(Failure::new("offline", "x")),
+            &mut ready,
+        );
+        assert_eq!(ready.len(), 1);
+        assert!(ready[0].env.is_empty());
+    }
+
+    #[test]
+    fn failures_say_what_to_do() {
+        let en = |code: &str| failure_text(&Failure::new(code, "x"), Language::English);
+        assert_eq!(
+            en("offline"),
+            "The cloud cannot be reached. Check your connection and try again."
+        );
+        assert_eq!(
+            en("code_wrong"),
+            "That code does not match. Check the latest e-mail."
+        );
+        assert_eq!(en("handle_taken"), "That name is taken. Try another one.");
+        assert_eq!(
+            failure_text(
+                &Failure::new("limit", "Too many friends."),
+                Language::English
+            ),
+            "That did not work: Too many friends."
+        );
+    }
+}

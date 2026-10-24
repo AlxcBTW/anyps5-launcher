@@ -2031,3 +2031,39 @@ Decisions and deviations:
 - **Window chrome** (`app::window_chrome`, Windows only): after the first frame `DwmSetWindowAttribute` sets immersive dark mode (attribute 19 before 20H1), caption colour black, caption text white, border colour black (Windows 11) and round corners. A refused attribute keeps the system look; other platforms do nothing. The backdrop type stays the system default (no Mica): 9.2 asks for a black title bar that merges with the black backdrop.
 
 Deviations: the diagnosis sentence in the log view is derived from the log text only (a crash known only from its exit code appears in the toast and the hero line, not in the log box); the diagnosis stored by the model stays a localised sentence.
+
+## 17. Online area (crate `anyps5-launcher`, modules `screens::online`, `app::online`, `app::panels::online`)
+
+The launcher's side of the AnyPlay network ([anyplay-gg/network](https://github.com/anyplay-gg/network)): signing in, friends and their presence, requests, invitations and joining a friend's game. The launcher shows; the net service (`anyplay-net`) acts. They talk over the net service's standard streams with the control protocol (`spec/control-protocol.md` there); `anyps5_core::online` holds the process and the state, and `Model::online` is that state.
+
+**Entry.** The profile in the top bar becomes the third stop of `HomeFocus::Top` (library, settings, profile; right from settings). It is a pill as tall as the icon buttons: no surface at rest, the button surface on hover, white with dark ink when focused, the same focus grow and glow as its neighbours. Its radius is the avatar's plus the 4 dp inset, so pill and avatar stay concentric. Signed in, it shows the account's handle instead of the profile name, and while the cloud answers a 4 dp accent dot sits at the avatar's lower right in a 6 dp ring of the pill's own colour. Select opens `Overlay::Online`, a side panel on the game sheet's frame.
+
+**Pages.** One panel whose pages swap in place (no slide); Back leads up a page and closes at the top, the scrim closes. Each page opens on its first focusable row.
+
+| Page | Title / subtitle | Rows |
+|---|---|---|
+| Start | "Online" / "Play with your friends over the internet" | Cloud (action, detail "AnyPlay" or the address), E-mail (text), Send Code (command), note: no password, nothing goes online before sign-in |
+| Cloud | "Cloud" / "The address of the cloud you sign in to" | Address (text), Use This Cloud (command; detail when the address is not https or loopback http), Use the AnyPlay Cloud (only with an own cloud), note |
+| Code | "Online" / "Code sent to …" | Code (text), Sign In, note "valid for 10 minutes", Use Another Address |
+| Handle | "Create Your Account" / "Choose the name your friends see" | Name (text) with its rule as a note below, "I Am 16 or Older" (toggle) with the consent note, Create Account (asks for the toggle first) |
+| Home | the handle / Online, Connecting… or Offline, trying again | Invitations, Friend Requests, Playing Together (members with Direct, Through a relay or Connecting…), Friends (joinable first, then playing, online, offline; by name), Add a Friend, Sent Requests, Account |
+| Friend | the handle / what they play | Join Game (only when their session is open to friends; detail "2 of 4 players"), Invite to Your Game (when you are in a session they are not), Remove Friend, Block (destructive), Report |
+| Request, Sent, Blocked, Invitation | the handle or "… invites you" | Accept / Decline / Block; Withdraw Request; Unblock; Join Game / Decline |
+| Add a Friend, Report, Account, Delete | | the name field and Send Request; the reason choice and Send Report; e-mail, cloud, the blocked, Sign Out, Delete Account; the deletion asks on its own page, opened on Delete with Cancel below |
+| Invitation picker | "Invite to …" / "Pick up to … friends" | one toggle per online friend, Send Invitations, Cancel |
+
+Hints that explain a text field or a toggle stand under it with the normal 8 dp row gap, not attached: the focused row grows 3 dp and would touch an attached note. A command waiting for the net service says "Sending…" in its detail line.
+
+**Icons** (Phosphor, added to `tools/gen-icons.mjs`): `users`, `user-plus`, `user-minus`, `envelope-simple`, `paper-plane-right`, `cloud`, `sign-in`, `sign-out`, `prohibit`, `flag`, `key`. A friend's row shows a game controller while they play, the user circle while online and a dashed circle while offline; the words say the same, so the icon is never the only cue.
+
+**Rules.**
+
+- Nothing goes online before the player signs in. The net service starts when the Online area opens (it stays local until a code is requested) or, once the player signed in on this PC (`Preferences::online`), with the launcher. Signing out or deleting the account stops it.
+- The cloud is AnyPlay's own unless the player picks another (`Preferences::online_cloud`). A build names AnyPlay's with `ANYPLAY_DEFAULT_CLOUD`; without one the player has to enter a cloud. Only https addresses, and http on loopback for a cloud under test, are accepted.
+- Signed in, Play first asks the net service for the bridge variables and holds the start (the splash already shows) until they come, at most 3 s; without an answer the game starts offline. A join is checked first (`check_join`: the game is in the library, unlocked, same version and AnyPS5 build) and called off with a toast when it fails, since a join makes no sense offline. The game's end is reported once.
+- A game that opens its invitation dialog brings the launcher forward on the picker; closing the panel answers "cancelled".
+- Toasts: signed in, signed out, request sent, now friends, a request or an invitation arrived, blocked, report sent, account deleted, joining; failures say what to do (code wrong or expired, name taken, no such account, too many tries, cloud unreachable, game full, version mismatch naming both sides).
+- The net service is found through `ANYPLAY_NET`, next to the launcher, or in the launcher itself: a release build embeds it (`ANYPLAY_NET_EMBED` at build time) and writes it once per version to `Network\bin`, removing older copies. Its log goes to `Logs\network.log`.
+- *Record Network Calls* (Settings, Advanced, off by default) adds `ANYPS5_NET_OBSERVE=Logs\<TITLEID>-network.jsonl` to every game start, signed in or not.
+
+Gallery scenes: `online`, `online-code`, `online-handle`, `online-friends`, `online-friend`, `online-account`, `online-picker`.

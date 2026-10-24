@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Packs a built Linux launcher as a .tar.gz and an AppImage.
 #
-#   package.sh <version> <launcher binary> <output folder>
+#   package.sh <version> <launcher binary> <licence file> <output folder>
+#
+# The licence file is THIRD-PARTY-LICENSES.txt from tools/notices.sh.
 #
 # The AppImage needs two pinned downloads, both checked against their SHA-256 before use:
 # appimagetool and the type 2 runtime it puts in front of the image. Their versions and hashes
@@ -15,7 +17,8 @@ RUNTIME_SHA256=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
 
 version=${1:?version}
 binary=$(realpath "${2:?launcher binary}")
-out=$(mkdir -p "${3:?output folder}" && realpath "$3")
+notices=$(realpath "${3:?licence file}")
+out=$(mkdir -p "${4:?output folder}" && realpath "$4")
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 work=$(mktemp -d)
@@ -28,11 +31,12 @@ fetch() { # url sha256 file
 
 name="AnyPS5-Launcher-$version-linux-x86_64"
 
-# 1. The tarball: the binary, the desktop entry and the icon, in one folder.
+# 1. The tarball: the binary, the desktop entry, the icon and the licences, in one folder.
 folder="$work/$name"
 mkdir -p "$folder"
 install -m 755 "$binary" "$folder/anyps5-launcher"
 install -m 644 "$here/anyps5-launcher.desktop" "$here/anyps5-launcher.png" "$root/LICENSE" "$folder/"
+install -m 644 "$notices" "$folder/THIRD-PARTY-LICENSES.txt"
 tar -C "$work" --owner=0 --group=0 -czf "$out/$name.tar.gz" "$name"
 
 # 2. The AppImage.
@@ -46,6 +50,9 @@ appdir="$work/AnyPS5.AppDir"
 mkdir -p "$appdir/usr/bin"
 install -m 755 "$binary" "$appdir/usr/bin/anyps5-launcher"
 install -m 644 "$here/anyps5-launcher.desktop" "$here/anyps5-launcher.png" "$appdir/"
+mkdir -p "$appdir/usr/share/doc/anyps5-launcher"
+install -m 644 "$root/LICENSE" "$appdir/usr/share/doc/anyps5-launcher/"
+install -m 644 "$notices" "$appdir/usr/share/doc/anyps5-launcher/THIRD-PARTY-LICENSES.txt"
 ln -s anyps5-launcher.png "$appdir/.DirIcon"
 cat > "$appdir/AppRun" <<'RUN'
 #!/bin/sh

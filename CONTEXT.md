@@ -125,8 +125,8 @@ A game's settings exported to a file so another player can import them.
 _Avoid_: Preset, profile
 
 **Profile**:
-The player's display name on the home screen. It has nothing to do with input files.
-_Avoid_: Account, user
+The player's display name on the home screen, and the button that opens the online area. Signed in to the network, it shows the account's handle instead. It has nothing to do with input files.
+_Avoid_: Account (that is the network's), user
 
 **Input profile**:
 An input file the engine reads for one title ID, beside the shared input file. Not used by the launcher yet.
@@ -201,3 +201,24 @@ _Avoid_: Default app, association
 **Single instance**:
 Only one launcher runs per user. A second launch hands its link to the running launcher, which comes to the front, and exits.
 _Avoid_: Lock, mutex (how it is done)
+
+### Online
+
+The network's own words (account, handle, friend, presence, session, invitation, join intent, version guard, cloud) are defined in [anyplay-gg/network](https://github.com/anyplay-gg/network/blob/main/CONTEXT.md). The launcher adds these:
+
+**Online area**:
+The side panel the profile opens: signing in, the friends and their presence, requests, invitations and the account.
+_Avoid_: Social, community (that is the layout gallery), friends list (one part of it)
+
+**Net service**:
+The program `anyplay-net` that the launcher starts as its child once the player signs in on a PC, and talks to over its standard streams. A release build of the launcher carries it inside and writes it to `Network\bin` on first use.
+_Avoid_: Daemon, background service, client
+
+**Bridge variables**:
+`ANYPS5_NET_ENDPOINT` and `ANYPS5_NET_TOKEN`, which the net service hands out for one game start and the launcher adds to the game's environment. Without them the game plays offline.
+_Avoid_: Network config, token (alone)
+
+**Recording network calls**:
+The setting that has a game write its observation log, the record of what it asks the network for, to `Logs\<TITLEID>-network.jsonl`. Nothing of it leaves the PC.
+_Avoid_: Network log, trace, capture
+
