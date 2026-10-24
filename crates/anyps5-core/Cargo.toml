@@ -19,10 +19,15 @@ regex.workspace = true
 sha2.workspace = true
 time.workspace = true
 ureq.workspace = true
+url = "2"
 zip.workspace = true
 anyplay-update-manifest = { path = "../update-manifest" }
 flate2 = "1"
 oozextract = "0.5"
+
+[build-dependencies]
+# build.rs parses data/update-keys.txt with the same parser the launcher uses at run time.
+anyplay-update-manifest = { path = "../update-manifest" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

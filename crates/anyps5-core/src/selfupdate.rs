@@ -15,7 +15,9 @@
 //! 4. [`cleanup`] at the next start deletes the `.old` files and stale downloads.
 //!
 //! [`pending`] finds an update staged by an earlier run (the player closed the launcher before the
-//! swap could happen, or it failed), so it is offered again without a second download.
+//! swap could happen, or it failed), so it is offered again without a second download. For a signed
+//! update the manifest and its signature are kept beside the staged exe and checked again, in full,
+//! before it is offered; nothing on disk is trusted just for being there.
 //!
 //! Nothing here keeps state: the host owns the threads and decides when to swap.
 //!
@@ -27,7 +29,9 @@
 //! release's signed manifest** (`latest.json` and `latest.json.sig`, see
 //! [`anyplay_update_manifest`]): the signature, the expiry, a version newer than the running one
 //! and the download's SHA-256 and size are all checked, and the release's tag, its
-//! `SHA256SUMS.txt` and its asset names are not used.
+//! `SHA256SUMS.txt` and its asset names are not used. The download is cut off as soon as it is
+//! longer than the manifest's size, a stalled one times out, and every address must be https (the
+//! manifest and its signature also from GitHub's own hosts).
 //!
 //! The rule is a single switch with no way back, [`signing_required`]:
 //!
@@ -47,11 +51,13 @@ use std::process::Command;
 
 use anyplay_update_manifest::{
     Artifact, MAX_MANIFEST_BYTES, MAX_SIGNATURE_BYTES, Manifest, ManifestError, TrustedKeys,
-    WINDOWS_X64,
+    WINDOWS_X64, verify_signed,
 };
 pub use anyplay_update_manifest::{Version, is_newer};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
+use ureq::ResponseExt as _;
+use url::Url;
 
 use crate::error::CancelToken;
 use crate::paths::AppPaths;
@@ -64,8 +70,15 @@ const SUMS_NAME: &str = "SHA256SUMS.txt";
 /// The signed manifest of a release and its signature.
 const MANIFEST_NAME: &str = "latest.json";
 const MANIFEST_SIG_NAME: &str = "latest.json.sig";
-/// Beside a staged exe, the SHA-256 it was verified with. Only signed updates have one.
-const VERIFIED_SUFFIX: &str = ".verified";
+/// Beside a staged signed exe: the manifest and the signature that vouched for it, checked again
+/// by [`pending`].
+const MANIFEST_SUFFIX: &str = ".manifest";
+const SIGNATURE_SUFFIX: &str = ".manifest.sig";
+/// What earlier builds wrote beside a staged exe: a bare hash that authenticated nothing. It is
+/// ignored, and cleaned up.
+const LEGACY_MARKER_SUFFIX: &str = ".verified";
+/// The longest a download may take as a whole; a transfer that stops moving is cut off sooner.
+const DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 /// The keys this build trusts. Comments only until the operator adds one.
 const EMBEDDED_KEYS: &str = include_str!("../../../data/update-keys.txt");
 /// The portable exe is `AnyPlay-Launcher-<v>-x64.exe`.
@@ -109,6 +122,7 @@ impl From<ToolkitError> for SelfUpdateError {
         match error {
             ToolkitError::NoRelease => SelfUpdateError::NoRelease,
             ToolkitError::Digest => SelfUpdateError::Digest,
+            ToolkitError::TooLarge => SelfUpdateError::Size,
             ToolkitError::Cancelled => SelfUpdateError::Cancelled,
             ToolkitError::Io(error) => SelfUpdateError::Io(error),
             other => SelfUpdateError::Network(other.to_string()),
@@ -124,8 +138,12 @@ impl From<ToolkitError> for SelfUpdateError {
 enum Vouch {
     /// Not signed: the release's `SHA256SUMS.txt`. Only while no key is trusted.
     Checksums(Asset),
-    /// A verified manifest; the exe asset carries the manifest's hash and size.
-    Manifest,
+    /// A verified manifest; the exe asset carries the manifest's hash and size. The manifest's
+    /// exact bytes and its signature are kept, to be stored beside the staged exe.
+    Manifest {
+        manifest: Vec<u8>,
+        signature: String,
+    },
 }
 
 /// A newer launcher release with what [`stage`] needs.
@@ -165,7 +183,7 @@ fn version_of_exe_name(name: &str) -> Option<&str> {
 /// Reads the JSON of `releases/latest`: the release when its tag is newer than `current`, `None`
 /// when it is not (its files are then not looked at), an error when it is newer but lacks the
 /// portable exe or the checksum list.
-pub fn parse_latest(json: &str, current: &str) -> Result<Option<Release>, SelfUpdateError> {
+pub(crate) fn parse_latest(json: &str, current: &str) -> Result<Option<Release>, SelfUpdateError> {
     let value: serde_json::Value = serde_json::from_str(json)
         .map_err(|e| SelfUpdateError::Network(format!("bad release data: {e}")))?;
     let text =
@@ -252,11 +270,13 @@ pub fn check_with(
 
 /// Downloads at most `max` bytes (the manifest and its signature).
 fn get_small(url: &str, max: u64) -> Result<Vec<u8>, SelfUpdateError> {
-    let mut response = toolkit::agent(Some(std::time::Duration::from_secs(20)))
+    let mut response = toolkit::update_agent(Some(std::time::Duration::from_secs(20)))
         .get(url)
         .header("User-Agent", toolkit::user_agent())
         .call()
         .map_err(|e| SelfUpdateError::Network(e.to_string()))?;
+    // After the redirects the answer must still come from a host we trust.
+    vet_url(&response.get_uri().to_string(), true)?;
     if response.status().as_u16() != 200 {
         return Err(SelfUpdateError::Network(format!(
             "download failed: HTTP {}",
@@ -302,15 +322,20 @@ fn parse_signed(
     else {
         return Err(SelfUpdateError::NoManifest);
     };
+    // The release JSON is not signed: where it sends us is checked before anything is fetched.
+    vet_url(&manifest_url, true)?;
+    vet_url(&sig_url, true)?;
     let manifest_bytes = fetch(&manifest_url, MAX_MANIFEST_BYTES)?;
     let signature = fetch(&sig_url, MAX_SIGNATURE_BYTES)?;
-    let signature = String::from_utf8_lossy(&signature);
-    let manifest = anyplay_update_manifest::verify(&manifest_bytes, &signature, keys, now)?;
+    let signature = String::from_utf8_lossy(&signature).into_owned();
+    let manifest = verify_signed(&manifest_bytes, &signature, keys)?;
+    // Newer first: a launcher that is up to date must not call a stale manifest an error.
     match manifest.allows_update_from(current) {
         Ok(()) => {}
         Err(ManifestError::NotNewer { .. }) => return Ok(None),
         Err(other) => return Err(other.into()),
     }
+    manifest.check_time(now)?;
     let artifact = signed_artifact(&manifest)?;
     Ok(Some(Release {
         tag: format!("v{}", manifest.version),
@@ -320,13 +345,63 @@ fn parse_signed(
             size: artifact.size,
             sha256: Some(artifact.sha256.clone()),
         },
-        vouch: Vouch::Manifest,
+        vouch: Vouch::Manifest {
+            manifest: manifest_bytes,
+            signature,
+        },
     }))
+}
+
+/// Plain http to this machine: only the tests' servers speak it. A release build has no such
+/// allowance, so it takes https and nothing else.
+#[cfg(test)]
+fn loopback_http_allowed(url: &Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(name)) => name == "localhost",
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
+#[cfg(not(test))]
+fn loopback_http_allowed(_: &Url) -> bool {
+    false
+}
+
+/// Whether `host` is one of GitHub's: the site, or the hosts its release files are served from.
+fn github_host(host: &str) -> bool {
+    host == "github.com" || host.ends_with(".githubusercontent.com")
+}
+
+/// Parses an address of an update and applies the rules for all of them: https, no user name or
+/// password in it (`https://github.com@evil.example/` is a request to evil.example), and, with
+/// `github_only`, a GitHub host on the default port. The host is the parsed one, never a prefix
+/// of the text.
+fn vet_url(raw: &str, github_only: bool) -> Result<Url, SelfUpdateError> {
+    let refuse = |why: &str| Err(ManifestError::Malformed(why.to_owned()).into());
+    let Ok(url) = Url::parse(raw) else {
+        return refuse("an address is not a URL");
+    };
+    if !url.username().is_empty() || url.password().is_some() {
+        return refuse("an address carries a user name");
+    }
+    let local = loopback_http_allowed(&url);
+    if url.scheme() != "https" && !(url.scheme() == "http" && local) {
+        return refuse("an address is not https");
+    }
+    let Some(host) = url.host_str() else {
+        return refuse("an address has no host");
+    };
+    if github_only && !local && !(github_host(host) && url.port().is_none()) {
+        return refuse("an address is not on a GitHub host");
+    }
+    Ok(url)
 }
 
 /// The exe of a verified manifest, once its name and address pass: the name must be exactly one
 /// the launcher stages under (so it cannot point outside the updates folder), and the address
-/// must be https (plain http only to this machine, for tests).
+/// must be https (see [`vet_url`]).
 fn signed_artifact(manifest: &Manifest) -> Result<&Artifact, SelfUpdateError> {
     let refuse = |why: &str| Err(ManifestError::Malformed(why.to_owned()).into());
     let artifact = manifest
@@ -337,17 +412,8 @@ fn signed_artifact(manifest: &Manifest) -> Result<&Artifact, SelfUpdateError> {
     {
         return refuse("the exe has an unexpected file name");
     }
-    let local_http = ["http://127.0.0.1", "http://localhost", "http://[::1]"]
-        .iter()
-        .any(|prefix| {
-            artifact
-                .url
-                .strip_prefix(prefix)
-                .is_some_and(|rest| rest.starts_with([':', '/']))
-        });
-    if !artifact.url.starts_with("https://") && !local_http {
-        return refuse("the exe address is not https");
-    }
+    // The hash is signed, so the exe may sit on any https host.
+    vet_url(&artifact.url, false)?;
     Ok(artifact)
 }
 
@@ -371,6 +437,9 @@ pub struct Staged {
     /// Without the leading `v`.
     pub version: String,
     pub path: PathBuf,
+    /// The SHA-256 the file must have when it is installed (a signed update only): the swap hashes
+    /// its own copy against it, whatever happened to the staged file since it was checked.
+    pub sha256: Option<String>,
 }
 
 /// Where downloads wait: `%LOCALAPPDATA%\AnyPS5\Updates`.
@@ -392,13 +461,20 @@ pub fn stage(
     ensure_writable(exe.parent().unwrap_or(Path::new(".")))?;
     let dir = updates_dir(paths);
     fs::create_dir_all(&dir)?;
-    let staged = Staged {
+    let mut staged = Staged {
         version: release.version().to_owned(),
         path: dir.join(&release.exe.name),
+        sha256: None,
     };
     let sums_asset = match &release.vouch {
         Vouch::Checksums(sums) => sums,
-        Vouch::Manifest => return stage_signed(release, staged, progress, cancel),
+        Vouch::Manifest {
+            manifest,
+            signature,
+        } => {
+            staged.sha256 = release.exe.sha256.clone();
+            return stage_signed(release, staged, (manifest, signature), progress, cancel);
+        }
     };
     let size = release.exe.size;
     if let Ok(meta) = fs::metadata(&staged.path)
@@ -416,7 +492,7 @@ pub fn stage(
         ..release.exe.clone()
     };
     let part = staged.path.with_extension("exe.part");
-    let result = toolkit::download_to(&toolkit::agent(None), &verified, &part, progress, cancel)
+    let result = toolkit::download_to(&download_agent(), &verified, &part, progress, cancel)
         .map_err(SelfUpdateError::from)
         .and_then(|()| check_executable(&part));
     match result {
@@ -431,42 +507,60 @@ pub fn stage(
     }
 }
 
+/// The agent for the exe: connect and stall timeouts, https only, few redirects, and a limit on
+/// the whole transfer.
+fn download_agent() -> ureq::Agent {
+    toolkit::update_agent(Some(DOWNLOAD_TIMEOUT))
+}
+
 /// [`stage`] for a release whose manifest was verified: the download must have exactly the
-/// SHA-256 and the size the manifest states. The file gets its final name and its `.verified`
-/// marker only after that, and a file left by an earlier run is reused only when it hashes to the
-/// manifest's value.
+/// SHA-256 and the size the manifest states, and is cut off as soon as it is longer. The manifest
+/// and its signature are written beside the exe before it gets its final name, so a staged exe
+/// never exists without the proof that [`pending`] checks. A file left by an earlier run is
+/// reused only when it hashes to the manifest's value.
 fn stage_signed(
     release: &Release,
     staged: Staged,
+    (manifest, signature): (&[u8], &str),
     progress: &mut dyn FnMut(f64),
     cancel: &CancelToken,
 ) -> Result<Staged, SelfUpdateError> {
     let want = release.exe.sha256.clone().unwrap_or_default();
-    let marker = verified_marker(&staged.path);
     if let Ok(meta) = fs::metadata(&staged.path)
         && meta.is_file()
         && meta.len() == release.exe.size
         && hash_file(&staged.path).is_ok_and(|have| have == want)
     {
-        fs::write(&marker, &want)?;
+        write_proof(&staged.path, manifest, signature)?;
         return Ok(staged);
     }
     let part = staged.path.with_extension("exe.part");
-    let result = toolkit::download_to(&toolkit::agent(None), &release.exe, &part, progress, cancel)
-        .map_err(SelfUpdateError::from)
-        .and_then(|()| {
-            if fs::metadata(&part)?.len() == release.exe.size {
-                Ok(())
-            } else {
-                Err(SelfUpdateError::Size)
-            }
-        })
-        .and_then(|()| check_executable(&part));
+    let result = toolkit::download_capped(
+        &download_agent(),
+        &release.exe,
+        &part,
+        Some(release.exe.size),
+        progress,
+        cancel,
+    )
+    .map_err(SelfUpdateError::from)
+    .and_then(|()| {
+        if fs::metadata(&part)?.len() == release.exe.size {
+            Ok(())
+        } else {
+            Err(SelfUpdateError::Size)
+        }
+    })
+    .and_then(|()| check_executable(&part));
     match result {
         Ok(()) => {
-            fs::rename(&part, &staged.path)?;
-            if let Err(error) = fs::write(&marker, &want) {
-                let _ = fs::remove_file(&staged.path);
+            if let Err(error) = write_proof(&staged.path, manifest, signature) {
+                let _ = fs::remove_file(&part);
+                return Err(error);
+            }
+            if let Err(error) = fs::rename(&part, &staged.path) {
+                remove_proof(&staged.path);
+                let _ = fs::remove_file(&part);
                 return Err(error.into());
             }
             Ok(staged)
@@ -478,19 +572,63 @@ fn stage_signed(
     }
 }
 
-/// The marker beside a staged exe: `<exe>.verified`, holding the SHA-256 it was verified with.
-fn verified_marker(exe: &Path) -> PathBuf {
+/// `<exe><suffix>`: a file kept beside a staged exe.
+fn sidecar(exe: &Path, suffix: &str) -> PathBuf {
     let mut name = exe.as_os_str().to_owned();
-    name.push(VERIFIED_SUFFIX);
+    name.push(suffix);
     PathBuf::from(name)
 }
 
-/// Whether a staged exe has its marker and still hashes to what the marker says.
-fn still_verified(exe: &Path) -> bool {
-    let Ok(recorded) = fs::read_to_string(verified_marker(exe)) else {
-        return false;
-    };
-    hash_file(exe).is_ok_and(|have| have == recorded.trim())
+/// Keeps the manifest and the signature that vouched for a staged exe beside it.
+fn write_proof(exe: &Path, manifest: &[u8], signature: &str) -> Result<(), SelfUpdateError> {
+    let result = fs::write(sidecar(exe, MANIFEST_SUFFIX), manifest)
+        .and_then(|()| fs::write(sidecar(exe, SIGNATURE_SUFFIX), signature));
+    if let Err(error) = result {
+        remove_proof(exe);
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+fn remove_proof(exe: &Path) {
+    for suffix in [MANIFEST_SUFFIX, SIGNATURE_SUFFIX, LEGACY_MARKER_SUFFIX] {
+        let _ = fs::remove_file(sidecar(exe, suffix));
+    }
+}
+
+/// A small file, or `None` when it is missing or longer than `max`.
+fn read_small(path: &Path, max: u64) -> Option<Vec<u8>> {
+    let meta = fs::metadata(path).ok()?;
+    (meta.is_file() && meta.len() <= max)
+        .then(|| fs::read(path).ok())
+        .flatten()
+}
+
+/// Checks a staged exe the way a fresh download is checked: its manifest and signature (kept beside
+/// it) must verify against `keys` and not be expired, name a version newer than `current` and the
+/// version and file name of this exe, and the exe must have the size and SHA-256 the manifest
+/// states. Returns that SHA-256. A marker or any other file next to the exe proves nothing.
+fn vouched_hash(
+    exe: &Path,
+    version: &str,
+    current: &str,
+    keys: &TrustedKeys,
+    now: OffsetDateTime,
+) -> Option<String> {
+    let manifest_bytes = read_small(&sidecar(exe, MANIFEST_SUFFIX), MAX_MANIFEST_BYTES)?;
+    let signature = read_small(&sidecar(exe, SIGNATURE_SUFFIX), MAX_SIGNATURE_BYTES)?;
+    let signature = String::from_utf8(signature).ok()?;
+    let manifest = verify_signed(&manifest_bytes, &signature, keys).ok()?;
+    manifest.allows_update_from(current).ok()?;
+    manifest.check_time(now).ok()?;
+    let artifact = signed_artifact(&manifest).ok()?;
+    let file_name = exe.file_name()?.to_str()?;
+    if manifest.version != version || artifact.name != file_name {
+        return None;
+    }
+    let meta = fs::metadata(exe).ok()?;
+    (meta.is_file() && meta.len() == artifact.size && hash_file(exe).ok()? == artifact.sha256)
+        .then(|| artifact.sha256.clone())
 }
 
 fn hash_file(path: &Path) -> io::Result<String> {
@@ -530,14 +668,26 @@ fn ensure_writable(dir: &Path) -> Result<(), SelfUpdateError> {
 }
 
 /// An update staged by an earlier run: the newest staged exe that is newer than `current`. Once
-/// signing is required ([`signing_required`]) only an exe that a signed manifest vouched for
-/// counts: one with its `.verified` marker, whose content still hashes to what the marker says.
-/// What an unsigned launcher left behind is not offered.
+/// signing is required ([`signing_required`]) only an exe that a signed manifest vouches for
+/// counts: the manifest and signature kept beside it are verified again (signature, expiry,
+/// version) and the exe must hash to the manifest's value. What an unsigned launcher left behind,
+/// or anything planted in the folder, is not offered.
 pub fn pending(paths: &AppPaths, current: &str) -> Option<Staged> {
-    pending_with(paths, current, signing_required())
+    let now = OffsetDateTime::now_utc();
+    match embedded_keys() {
+        Ok(keys) if keys.is_empty() => pending_with(paths, current, None, now),
+        Ok(keys) => pending_with(paths, current, Some(&keys), now),
+        Err(_) => None,
+    }
 }
 
-fn pending_with(paths: &AppPaths, current: &str, signed: bool) -> Option<Staged> {
+/// [`pending`] with the trusted keys given (`None`: signing is not required) and the time.
+fn pending_with(
+    paths: &AppPaths,
+    current: &str,
+    keys: Option<&TrustedKeys>,
+    now: OffsetDateTime,
+) -> Option<Staged> {
     fs::read_dir(updates_dir(paths))
         .ok()?
         .flatten()
@@ -547,13 +697,18 @@ fn pending_with(paths: &AppPaths, current: &str, signed: bool) -> Option<Staged>
             if !is_newer(&version, current) || !entry.path().is_file() {
                 return None;
             }
-            if signed && !still_verified(&entry.path()) {
-                return None;
-            }
-            Some((Version::parse(&version)?, version, entry.path()))
+            let expect = match keys {
+                Some(keys) => Some(vouched_hash(&entry.path(), &version, current, keys, now)?),
+                None => None,
+            };
+            Some((Version::parse(&version)?, version, entry.path(), expect))
         })
         .max_by(|a, b| a.0.cmp(&b.0))
-        .map(|(_, version, path)| Staged { version, path })
+        .map(|(_, version, path, expect)| Staged {
+            version,
+            path,
+            sha256: expect,
+        })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -566,6 +721,10 @@ impl Staged {
     /// needs one), then `exe` is renamed to `<name>.old` and the copy to `exe`. If the second
     /// rename fails the first is undone, so `exe` is never left missing. The staged file is
     /// deleted afterwards. The running process keeps running from the `.old` file.
+    ///
+    /// For a signed update the copy is hashed before it is renamed into place and refused if it
+    /// is not the exact file the manifest vouched for; the staged file may have been changed
+    /// since it was checked.
     pub fn swap_in(&self, exe: &Path) -> Result<(), SelfUpdateError> {
         let dir = exe.parent().unwrap_or(Path::new("."));
         let name = exe
@@ -576,6 +735,18 @@ impl Staged {
         let incoming = dir.join(format!("{name}.new"));
         let _ = fs::remove_file(&incoming);
         fs::copy(&self.path, &incoming).map_err(|e| writable_or(e, dir))?;
+        if let Some(want) = &self.sha256 {
+            match hash_file(&incoming) {
+                Ok(have) if have == *want => {}
+                other => {
+                    let _ = fs::remove_file(&incoming);
+                    return Err(match other {
+                        Ok(_) => SelfUpdateError::Digest,
+                        Err(error) => error.into(),
+                    });
+                }
+            }
+        }
         let old = free_old_name(dir, &name);
         if let Err(error) = fs::rename(exe, &old) {
             let _ = fs::remove_file(&incoming);
@@ -587,7 +758,7 @@ impl Staged {
             return Err(writable_or(error, dir));
         }
         let _ = fs::remove_file(&self.path);
-        let _ = fs::remove_file(verified_marker(&self.path));
+        remove_proof(&self.path);
         Ok(())
     }
 
@@ -646,12 +817,16 @@ pub fn cleanup(exe: &Path, paths: &AppPaths, current: &str) {
         .flatten()
     {
         let name = entry.file_name().to_string_lossy().into_owned();
-        // A marker goes with its exe: it is stale when the exe is gone or stale itself.
-        let marked = name.strip_suffix(VERIFIED_SUFFIX);
-        let orphan = marked.is_some_and(|exe| !updates_dir(paths).join(exe).exists());
+        // A manifest, signature or old marker goes with its exe: it is stale when the exe is gone
+        // or stale itself.
+        let belongs_to = [SIGNATURE_SUFFIX, MANIFEST_SUFFIX, LEGACY_MARKER_SUFFIX]
+            .iter()
+            .find_map(|suffix| name.strip_suffix(suffix));
+        let orphan = belongs_to.is_some_and(|exe| !updates_dir(paths).join(exe).exists());
         let stale = name.ends_with(".part")
             || orphan
-            || version_of_exe_name(marked.unwrap_or(&name)).is_some_and(|v| !is_newer(v, current));
+            || version_of_exe_name(belongs_to.unwrap_or(&name))
+                .is_some_and(|v| !is_newer(v, current));
         if stale {
             remove(&entry.path());
         }
@@ -1007,6 +1182,7 @@ mod tests {
         Staged {
             version: version.into(),
             path,
+            sha256: None,
         }
     }
 
@@ -1047,6 +1223,7 @@ mod tests {
         let staged = Staged {
             version: "0.2.0".into(),
             path: updates_dir(&paths).join(exe_name("0.2.0")),
+            sha256: None,
         };
         assert!(staged.swap_in(&exe).is_err());
         assert_eq!(fs::read(&exe).unwrap(), b"MZ-old-launcher");

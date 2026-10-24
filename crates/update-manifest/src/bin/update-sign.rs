@@ -12,6 +12,10 @@
 //!
 //! The secret key is read from a file or an environment variable and written to a file; it is
 //! never printed. `keygen` prints only the public line for `data/update-keys.txt`.
+//!
+//! On Unix `keygen` creates the secret file with mode 0600. **On Windows the file inherits the
+//! ACL of its folder**, so write it into a private folder (not a shared or synced one) and move it
+//! into the password manager at once.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -20,15 +24,15 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyplay_update_manifest::{
-    Artifact, Manifest, SCHEMA, TrustedKeys, Version, WINDOWS_X64, format_time,
+    Artifact, MAX_VALIDITY_DAYS, Manifest, SCHEMA, TrustedKeys, Version, WINDOWS_X64, format_time,
     generate_signing_key, key_line, seed_hex, sign, signing_key_from_hex, to_hex, verify,
 };
 use sha2::{Digest, Sha256};
 use time::{Duration, OffsetDateTime};
+use zeroize::Zeroizing;
 
-/// The longest a manifest may stay valid. A longer one only widens the window in which a stale
-/// answer is believed.
-const MAX_DAYS: i64 = 90;
+/// The longest a manifest may stay valid; `Manifest::validate` enforces the same line when signing.
+const MAX_DAYS: i64 = MAX_VALIDITY_DAYS;
 const DEFAULT_BASE: &str = "https://github.com/anyplay-gg/launcher/releases/download";
 
 type Result<T> = std::result::Result<T, String>;
@@ -57,7 +61,9 @@ fn run(args: &[String]) -> Result<()> {
 }
 
 fn usage() -> String {
-    "usage: update-sign keygen|manifest|sign|verify (see the header of crates/update-manifest/src/bin/update-sign.rs)".into()
+    "usage: update-sign keygen|manifest|sign|verify (see the header of crates/update-manifest/src/bin/update-sign.rs)
+     keygen: on Windows the secret file inherits the ACL of its folder; write it to a private folder"
+        .into()
 }
 
 /// `--name value` pairs.
@@ -103,7 +109,7 @@ fn keygen(flags: &Flags) -> Result<()> {
     let mut file = options
         .open(&secret_out)
         .map_err(|e| format!("cannot create {}: {e}", secret_out.display()))?;
-    writeln!(file, "{}", seed_hex(&key)).map_err(|e| e.to_string())?;
+    writeln!(file, "{}", seed_hex(&key).as_str()).map_err(|e| e.to_string())?;
     drop(file);
     let line = key_line(&key.verifying_key(), label);
     if let Some(public_out) = flags.get("public-out") {
@@ -169,14 +175,14 @@ fn manifest(flags: &Flags) -> Result<()> {
     Ok(())
 }
 
-fn read_secret(flags: &Flags) -> Result<String> {
+fn read_secret(flags: &Flags) -> Result<Zeroizing<String>> {
     match (flags.get("key-env"), flags.get("key-file")) {
-        (Some(name), None) => {
-            std::env::var(name).map_err(|_| format!("the environment variable {name} is not set"))
-        }
-        (None, Some(path)) => {
-            fs::read_to_string(path).map_err(|e| format!("cannot read the key file: {e}"))
-        }
+        (Some(name), None) => std::env::var(name)
+            .map(Zeroizing::new)
+            .map_err(|_| format!("the environment variable {name} is not set")),
+        (None, Some(path)) => fs::read_to_string(path)
+            .map(Zeroizing::new)
+            .map_err(|e| format!("cannot read the key file: {e}")),
         _ => Err("give exactly one of --key-env and --key-file".into()),
     }
 }
@@ -191,13 +197,16 @@ fn sign_command(flags: &Flags) -> Result<()> {
     // Never sign what the launcher would refuse.
     let parsed: Manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     parsed.validate().map_err(|e| e.to_string())?;
+    parsed
+        .check_time(OffsetDateTime::now_utc())
+        .map_err(|e| e.to_string())?;
     let signature = sign(&bytes, &key);
     // Check the signature with the public key before it leaves this machine.
     verify(
         &bytes,
         &signature,
         &TrustedKeys::of(key.verifying_key()),
-        OffsetDateTime::UNIX_EPOCH,
+        OffsetDateTime::now_utc(),
     )
     .map_err(|e| format!("the new signature does not verify: {e}"))?;
     fs::write(out, signature).map_err(|e| format!("cannot write the signature: {e}"))?;
