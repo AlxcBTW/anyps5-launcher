@@ -108,13 +108,15 @@ jobs:
       - name: Portable exe
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          $exe = "dist/AnyPS5-Launcher-${{ steps.version.outputs.version }}-x64.exe"
-          Copy-Item target/x86_64-pc-windows-msvc/release/anyps5-launcher.exe $exe
+          $exe = "dist/AnyPlay-Launcher-${{ steps.version.outputs.version }}-x64.exe"
+          Copy-Item target/x86_64-pc-windows-msvc/release/anyplay-launcher.exe $exe
           # A statically linked runtime leaves no import of the Visual C++ runtime DLLs.
           $text = [Text.Encoding]::Latin1.GetString([IO.File]::ReadAllBytes($exe))
           foreach ($dll in 'VCRUNTIME140', 'MSVCP140') {
             if ($text -match $dll) { throw "$dll is still imported: the runtime is not static" }
           }
+          # Launchers up to v0.1.3 (AnyPS5 Launcher) update only from this name: the same exe under it.
+          Copy-Item $exe "dist/AnyPS5-Launcher-${{ steps.version.outputs.version }}-x64.exe"
 
       - name: Install Inno Setup
         run: |
@@ -136,9 +138,9 @@ jobs:
 
       - name: Installer
         run: |
-          $exe = (Resolve-Path "dist/AnyPS5-Launcher-${{ steps.version.outputs.version }}-x64.exe").Path
+          $exe = (Resolve-Path "dist/AnyPlay-Launcher-${{ steps.version.outputs.version }}-x64.exe").Path
           $notices = (Resolve-Path notices/THIRD-PARTY-LICENSES.txt).Path
-          & "$env:INNO_DIR/ISCC.exe" "/DAppVersion=${{ steps.version.outputs.version }}" "/DExeSource=$exe" "/DNoticesSource=$notices" "/DOutputDir=$((Resolve-Path dist).Path)" tools/installer/anyps5-launcher.iss
+          & "$env:INNO_DIR/ISCC.exe" "/DAppVersion=${{ steps.version.outputs.version }}" "/DExeSource=$exe" "/DNoticesSource=$notices" "/DOutputDir=$((Resolve-Path dist).Path)" tools/installer/anyplay-launcher.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
 
       - uses: actions/upload-artifact@v7.0.2
@@ -207,17 +209,17 @@ jobs:
           path: launcher/notices
 
       - name: Package
-        run: tools/linux/package.sh "${{ steps.version.outputs.version }}" target/release/anyps5-launcher notices/THIRD-PARTY-LICENSES.txt dist
+        run: tools/linux/package.sh "${{ steps.version.outputs.version }}" target/release/anyplay-launcher notices/THIRD-PARTY-LICENSES.txt dist
 
       - name: Check the AppImage
         run: |
-          appimage="dist/AnyPS5-Launcher-${{ steps.version.outputs.version }}-x86_64.AppImage"
+          appimage="dist/AnyPlay-Launcher-${{ steps.version.outputs.version }}-x86_64.AppImage"
           file "$appimage"
           file "$appimage" | grep -q 'ELF 64-bit'
           # 64-bit ELF with the AppImage type 2 magic after the ELF header.
           test "$(dd if="$appimage" bs=1 skip=8 count=3 2>/dev/null | xxd -p)" = 414902
           # The highest glibc symbol version the binary needs.
-          objdump -T target/release/anyps5-launcher | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+          objdump -T target/release/anyplay-launcher | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
 
       - uses: actions/upload-artifact@v7.0.2
         with:
@@ -239,25 +241,30 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: |
-          sha256sum -b AnyPS5-Launcher-* THIRD-PARTY-LICENSES.txt > SHA256SUMS.txt
+          sha256sum -b AnyPlay-Launcher-* AnyPS5-Launcher-* THIRD-PARTY-LICENSES.txt > SHA256SUMS.txt
           cat SHA256SUMS.txt
+          # The old-name copy is what v0.1.2 and v0.1.3 update from: the same file, with its checksum.
+          v=${{ needs.windows.outputs.version }}
+          cmp "AnyPlay-Launcher-$v-x64.exe" "AnyPS5-Launcher-$v-x64.exe"
+          grep -q " \*AnyPS5-Launcher-$v-x64\.exe$" SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v7.0.2
         with:
-          name: anyps5-launcher-${{ needs.windows.outputs.version }}
+          name: anyplay-launcher-${{ needs.windows.outputs.version }}
           path: dist/*
           if-no-files-found: error
 
       - uses: softprops/action-gh-release@v3.0.3
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          name: AnyPS5 Launcher ${{ needs.windows.outputs.version }}
+          name: AnyPlay Launcher ${{ needs.windows.outputs.version }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
+            dist/AnyPlay-Launcher-${{ needs.windows.outputs.version }}-x64.exe
+            dist/AnyPlay-Launcher-${{ needs.windows.outputs.version }}-Setup.exe
+            dist/AnyPlay-Launcher-${{ needs.windows.outputs.version }}-x86_64.AppImage
+            dist/AnyPlay-Launcher-${{ needs.windows.outputs.version }}-linux-x86_64.tar.gz
             dist/AnyPS5-Launcher-${{ needs.windows.outputs.version }}-x64.exe
-            dist/AnyPS5-Launcher-${{ needs.windows.outputs.version }}-Setup.exe
-            dist/AnyPS5-Launcher-${{ needs.windows.outputs.version }}-x86_64.AppImage
-            dist/AnyPS5-Launcher-${{ needs.windows.outputs.version }}-linux-x86_64.tar.gz
             dist/THIRD-PARTY-LICENSES.txt
             dist/SHA256SUMS.txt
