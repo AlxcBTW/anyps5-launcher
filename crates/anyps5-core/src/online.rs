@@ -270,6 +270,8 @@ pub enum Purpose {
     Cards,
     Privacy,
     SetPrivacy,
+    /// Minutes per title and day, as sent.
+    UploadPlaytime(Vec<api::PlaytimeEntry>),
 }
 
 /// The game's invitation dialog, waiting for the player to pick friends.
@@ -314,6 +316,8 @@ pub struct Online {
     pub privacy: Option<api::Privacy>,
     /// How many trophies of each title the cloud has recorded since this sign-in.
     uploaded: BTreeMap<String, usize>,
+    /// The minutes the cloud has recorded per title and day since this sign-in.
+    playtime_sent: BTreeMap<(String, String), u32>,
     waiting: BTreeMap<u64, Purpose>,
     next: u64,
     outbox: Vec<String>,
@@ -409,6 +413,15 @@ impl Online {
                     self.privacy = Some(privacy);
                 }
             }
+            Purpose::UploadPlaytime(entries) => {
+                for entry in entries {
+                    let known = self
+                        .playtime_sent
+                        .entry((entry.title_id.clone(), entry.day.clone()))
+                        .or_default();
+                    *known = (*known).max(entry.minutes);
+                }
+            }
             _ => {}
         }
     }
@@ -460,6 +473,32 @@ impl Online {
                 Command::UploadTrophies {
                     title_id: title_id.to_owned(),
                     trophies: chunk.to_vec(),
+                },
+            );
+        }
+    }
+
+    /// Sends the days whose minutes grew since the cloud last recorded them. The cloud keeps the
+    /// highest count of a day, so a repeat is harmless; this only saves the request. While an
+    /// upload waits, the next call tries again.
+    pub fn upload_playtime(&mut self, entries: Vec<api::PlaytimeEntry>) {
+        if !self.is_online() || self.is_waiting(|p| matches!(p, Purpose::UploadPlaytime(_))) {
+            return;
+        }
+        let fresh: Vec<api::PlaytimeEntry> = entries
+            .into_iter()
+            .filter(|e| e.minutes > 0 && api::is_title_id(&e.title_id))
+            .filter(|e| {
+                self.playtime_sent
+                    .get(&(e.title_id.clone(), e.day.clone()))
+                    .is_none_or(|&known| known < e.minutes)
+            })
+            .collect();
+        for chunk in fresh.chunks(api::MAX_PLAYTIME_UPLOAD) {
+            self.send(
+                Purpose::UploadPlaytime(chunk.to_vec()),
+                Command::UploadPlaytime {
+                    entries: chunk.to_vec(),
                 },
             );
         }
@@ -522,6 +561,7 @@ impl Online {
                     self.cards.clear();
                     self.privacy = None;
                     self.uploaded.clear();
+                    self.playtime_sent.clear();
                 }
                 if !was_online && self.is_online() {
                     self.send(Purpose::Privacy, Command::Privacy);
@@ -617,6 +657,35 @@ impl Online {
 
 /// The variables a game gets beyond its own settings: the bridge's from the net service, and
 /// the observation log when the player records network calls.
+/// The playtime the network records: whole minutes per title and UTC day, the days of every copy
+/// of a title added up, at most a day's minutes. `title_of` names the title of a game ID.
+pub fn playtime_entries(
+    days: &BTreeMap<String, BTreeMap<String, u64>>,
+    title_of: impl Fn(&str) -> Option<String>,
+) -> Vec<api::PlaytimeEntry> {
+    let mut seconds: BTreeMap<(String, String), u64> = BTreeMap::new();
+    for (game, per_day) in days {
+        let Some(title) = title_of(game) else {
+            continue;
+        };
+        for (day, played) in per_day {
+            let sum = seconds.entry((title.clone(), day.clone())).or_default();
+            *sum = sum.saturating_add(*played);
+        }
+    }
+    seconds
+        .into_iter()
+        .map(|((title_id, day), played)| api::PlaytimeEntry {
+            title_id,
+            day,
+            minutes: u32::try_from(played / 60)
+                .unwrap_or(u32::MAX)
+                .min(api::MAX_DAY_MINUTES),
+        })
+        .filter(|e| e.minutes > 0)
+        .collect()
+}
+
 pub fn game_environment(
     bridge: Option<&BTreeMap<String, String>>,
     record: Option<&Path>,
@@ -815,6 +884,68 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn playtime_goes_up_per_title_and_day_once_it_grew() {
+        let days = BTreeMap::from([
+            (
+                "d:/a".to_owned(),
+                BTreeMap::from([
+                    ("2026-10-24".to_owned(), 600),
+                    ("2026-10-25".to_owned(), 59),
+                ]),
+            ),
+            (
+                "e:/a-copy".to_owned(),
+                BTreeMap::from([("2026-10-24".to_owned(), 130)]),
+            ),
+            (
+                "d:/b".to_owned(),
+                BTreeMap::from([("2026-10-24".to_owned(), 200_000)]),
+            ),
+            (
+                "d:/gone".to_owned(),
+                BTreeMap::from([("2026-10-24".to_owned(), 600)]),
+            ),
+        ]);
+        let title = |game: &str| match game {
+            "d:/a" | "e:/a-copy" => Some("GAME00001".to_owned()),
+            "d:/b" => Some("GAME00002".to_owned()),
+            _ => None,
+        };
+        let entries = playtime_entries(&days, title);
+        let entry = |title: &str, day: &str, minutes| api::PlaytimeEntry {
+            title_id: title.into(),
+            day: day.into(),
+            minutes,
+        };
+        assert_eq!(
+            entries,
+            [
+                entry("GAME00001", "2026-10-24", 12),
+                entry("GAME00002", "2026-10-24", api::MAX_DAY_MINUTES),
+            ],
+            "copies add up, minutes are whole and capped, a removed game is left out"
+        );
+
+        let mut online = Online::default();
+        online.upload_playtime(entries.clone());
+        assert!(
+            online.take_outbox().is_empty(),
+            "nothing goes up signed out"
+        );
+        signed_in(&mut online);
+        online.take_outbox();
+        online.upload_playtime(entries.clone());
+        online.upload_playtime(entries.clone());
+        let lines = online.take_outbox();
+        assert_eq!(lines.len(), 1, "a second call waits for the first");
+        answer(&mut online, 2, api::PlaytimeAdded { changed: 2 });
+        online.upload_playtime(entries.clone());
+        assert!(online.take_outbox().is_empty(), "the cloud has these");
+        online.upload_playtime(vec![entry("GAME00001", "2026-10-24", 13)]);
+        assert_eq!(online.take_outbox().len(), 1, "a minute more goes up");
     }
 
     #[test]

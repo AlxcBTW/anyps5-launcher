@@ -171,6 +171,7 @@ impl OnlineService {
         let online = model.online.is_online();
         if online && !self.was_online {
             model.effects.push(Effect::SyncTrophies);
+            model.sync_playtime();
         }
         self.was_online = online;
         if let Some(waiting) = &self.waiting
@@ -431,6 +432,7 @@ impl OnlineService {
                 | Purpose::Playing
                 | Purpose::GameEnd
                 | Purpose::UploadTrophies { .. }
+                | Purpose::UploadPlaytime(_)
                 | Purpose::Cards
                 | Purpose::Privacy,
                 Err(failure),

@@ -92,6 +92,22 @@ impl Playtime {
     }
 }
 
+/// How many days of [`Preferences::playtime_days`] are kept.
+pub const PLAYTIME_DAYS: i64 = 60;
+
+/// The UTC day of a Unix time, as `YYYY-MM-DD`.
+pub fn utc_day(unix_secs: i64) -> String {
+    let date = time::OffsetDateTime::from_unix_timestamp(unix_secs)
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
+        .date();
+    format!(
+        "{:04}-{:02}-{:02}",
+        date.year(),
+        u8::from(date.month()),
+        date.day()
+    )
+}
+
 /// The per-game choices passed to a started game. Fields are in alphabetical order of their JSON
 /// names so serialised files have sorted keys like the Swift launcher's.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -479,6 +495,10 @@ pub struct Preferences {
     /// Time played of each game, by [`GameId` string](GameId).
     #[serde(default)]
     pub playtime: BTreeMap<String, Playtime>,
+    /// Seconds played of each game on each UTC day (`YYYY-MM-DD`), by [`GameId` string](GameId):
+    /// what the network's playtime records are made of. Only the last [`PLAYTIME_DAYS`] days stay.
+    #[serde(default)]
+    pub playtime_days: BTreeMap<String, BTreeMap<String, u64>>,
     /// A toolkit folder the player picked instead of the downloaded one.
     #[serde(default)]
     pub toolkit: Option<PathBuf>,
@@ -534,6 +554,7 @@ impl Default for Preferences {
             games: BTreeMap::new(),
             last_played: BTreeMap::new(),
             playtime: BTreeMap::new(),
+            playtime_days: BTreeMap::new(),
             toolkit: None,
             check_for_updates: true,
             toolkit_checked_at: None,
@@ -644,6 +665,21 @@ impl Preferences {
     pub fn add_playtime(&mut self, id: &GameId, seconds: u64) {
         let entry = self.playtime.entry(id.as_str().to_owned()).or_default();
         entry.seconds = entry.seconds.saturating_add(seconds);
+    }
+
+    /// Adds seconds played to a game's day (`now` in Unix seconds), and forgets days older than
+    /// [`PLAYTIME_DAYS`].
+    pub fn add_playtime_day(&mut self, id: &GameId, seconds: u64, now: i64) {
+        let today = utc_day(now);
+        let oldest = utc_day(now - PLAYTIME_DAYS * 86_400);
+        let days = self
+            .playtime_days
+            .entry(id.as_str().to_owned())
+            .or_default();
+        let day = days.entry(today).or_default();
+        *day = day.saturating_add(seconds);
+        days.retain(|day, _| *day >= oldest);
+        self.playtime_days.retain(|_, days| !days.is_empty());
     }
 
     /// The folder for F12 screenshots: the chosen one or `Pictures\AnyPS5`.
@@ -1000,6 +1036,36 @@ mod tests {
             prefs.game_settings(&GameId::from_key("other")),
             GameSettings::default()
         );
+    }
+
+    #[test]
+    fn days_are_utc_dates() {
+        assert_eq!(utc_day(0), "1970-01-01");
+        assert_eq!(utc_day(1_792_800_000), "2026-10-24");
+        assert_eq!(utc_day(1_792_800_000 + 86_399), "2026-10-24");
+        assert_eq!(utc_day(951_782_400), "2000-02-29");
+    }
+
+    #[test]
+    fn playtime_per_day_adds_up_and_old_days_go() {
+        let mut prefs = Preferences::default();
+        let id = GameId::from_key("d:/dumps/stray");
+        let day = 1_792_800_000;
+        prefs.add_playtime_day(&id, 60, day);
+        prefs.add_playtime_day(&id, 90, day + 3_600);
+        prefs.add_playtime_day(&id, 30, day + 86_400);
+        let days = &prefs.playtime_days[id.as_str()];
+        assert_eq!(days["2026-10-24"], 150);
+        assert_eq!(days["2026-10-25"], 30);
+        // Sixty-one days later the first two are gone.
+        prefs.add_playtime_day(&id, 10, day + 61 * 86_400);
+        let days = &prefs.playtime_days[id.as_str()];
+        assert_eq!(
+            days.keys().collect::<Vec<_>>(),
+            ["2026-10-25", "2026-12-24"]
+        );
+        let old: Preferences = serde_json::from_str(r#"{"version":1}"#).unwrap();
+        assert!(old.playtime_days.is_empty());
     }
 
     #[test]

@@ -365,8 +365,26 @@ impl Model {
 
     fn bank(&mut self, counted: Option<Counted>) {
         if let Some((game, seconds)) = counted.filter(|(_, seconds)| *seconds > 0) {
-            self.edit_prefs(|p| p.add_playtime(&game, seconds));
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
+            self.edit_prefs(|p| {
+                p.add_playtime(&game, seconds);
+                p.add_playtime_day(&game, seconds, now);
+            });
+            self.sync_playtime();
         }
+    }
+
+    /// Sends the network the minutes per title and day that grew (nothing while signed out).
+    pub fn sync_playtime(&mut self) {
+        let entries = anyps5_core::online::playtime_entries(&self.prefs.playtime_days, |id| {
+            self.games
+                .iter()
+                .find(|g| g.id.as_str() == id)
+                .map(|g| g.title_id.clone())
+        });
+        self.online.upload_playtime(entries);
     }
 
     /// Shows a toast; a warning also plays the error cue.
